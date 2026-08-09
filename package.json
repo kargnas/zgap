@@ -1,0 +1,22 @@
+{
+  "name": "zgap",
+  "version": "0.1.0",
+  "description": "OAuth-authenticated Codex wrapper for ai-proxy.zz.gg",
+  "type": "module",
+  "bin": {
+    "zgap": "bin/zgap.mjs"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kargnas/zgap.git"
+  },
+  "homepage": "https://github.com/kargnas/zgap#readme",
+  "bugs": "https://github.com/kargnas/zgap/issues",
+  "license": "MIT"
+}
