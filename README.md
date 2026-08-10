@@ -21,7 +21,7 @@ npm install -g github:kargnas/zgap
 zgap login
 ```
 
-The command opens `ai-proxy.zz.gg` in your browser, completes OAuth with PKCE, and stores the issued API key at `~/.config/zgap/credentials.json` with mode `0600` on macOS and Linux.
+The command opens `ai-proxy.zz.gg` in your browser, completes OAuth with PKCE, and stores a device-bound access token and rotating refresh token at `~/.config/zgap/credentials.json` with mode `0600` on macOS and Linux. Access tokens last 24 hours; refresh tokens last 4 days.
 
 It also adds a fixed `zgap` provider definition to `~/.codex/config.toml` so Codex App can reopen zgap sessions. It does not change the default `model_provider`; only `zgap codex` activates the proxy.
 
@@ -39,7 +39,7 @@ All arguments after `zgap codex` are passed to the installed `codex` command.
 
 `zgap` does not create a separate `CODEX_HOME`, profile, model catalog, database, or session directory. It launches Codex with the user's default `~/.codex` state and selects the fixed `zgap` provider only for that process.
 
-The API key is not passed through argv or environment variables. Codex reads the credential file through its provider auth command.
+Tokens are not passed through argv or environment variables. Codex obtains an access token through the provider auth command, and `zgap` refreshes it before expiry. A successful refresh replaces both tokens, so the previous access and refresh tokens stop working immediately.
 
 ## Development
 
