@@ -1,16 +1,19 @@
 {
   "name": "zgap",
   "version": "0.1.0",
-  "description": "OAuth-authenticated Codex wrapper for ai-proxy.zz.gg",
+  "description": "OAuth-authenticated Codex and Claude Code wrapper for ai-proxy.zz.gg",
   "type": "module",
+  "packageManager": "bun@1.3.6",
   "bin": {
     "zgap": "bin/zgap.mjs"
   },
+  "files": [
+    "bin",
+    "src",
+    "install.sh"
+  ],
   "scripts": {
-    "test": "node --test"
-  },
-  "engines": {
-    "node": ">=20"
+    "test": "bun test"
   },
   "repository": {
     "type": "git",
@@ -18,5 +21,9 @@
   },
   "homepage": "https://github.com/kargnas/zgap#readme",
   "bugs": "https://github.com/kargnas/zgap/issues",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "@opentui/core": "^0.5.1",
+    "i18next": "^26.3.6"
+  }
 }

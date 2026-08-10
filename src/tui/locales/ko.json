@@ -1,0 +1,21 @@
+{
+  "title": "zgap",
+  "tagline": "ai-proxy.zz.gg를 통한 에이전트",
+  "signedIn": "로그인됨",
+  "sessionExpired": "세션 만료",
+  "notSignedIn": "로그인 필요",
+  "proxyChecking": "프록시 확인 중…",
+  "proxyOnline": "프록시 접속됨 · {{latency}} ms",
+  "proxyUnreachable": "프록시 접속 불가",
+  "ready": "준비됨",
+  "login": "로그인",
+  "loginAgain": "다시 로그인",
+  "loginDescription": "브라우저에서 로그인합니다",
+  "loginAgainDescription": "계속하려면 다시 로그인하세요",
+  "codex": "Codex 열기",
+  "codexDescription": "ai-proxy.zz.gg를 통해 실행합니다",
+  "claude": "Claude 열기",
+  "claudeDescription": "ai-proxy.zz.gg를 통해 실행합니다",
+  "hint": "Up/Down 이동  ·  Enter 선택  ·  Ctrl+C 두 번 또는 Esc 두 번 종료",
+  "compactHint": "Up/Down 이동  ·  Enter 선택  ·  Esc 두 번 종료"
+}
