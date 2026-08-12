@@ -85,6 +85,72 @@ test("TUI는 proxy 확인 중 상태를 먼저 그리고 응답속도로 갱신�
   assert.equal(await resultPromise, 130);
 });
 
+test("TUI는 proxy ms를 계속 갱신하되 측정을 초당 네 번으로 제한한다", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runStartMenu } = await import("../src/tui/menu.mjs");
+  const setup = await createTestRenderer({ width: 72, height: 12 });
+  t.after(() => setup.renderer.destroy());
+  const requests = [];
+  const resultPromise = runStartMenu({
+    rendererFactory: async () => setup,
+    credentialState: "signed-in",
+    proxyHealthCheck: ({ signal }) => new Promise((resolve) => requests.push({ resolve, signal })),
+    actions: { codex: async () => 0, claude: async () => 0 },
+  });
+
+  await flushMenu(setup);
+  assert.equal(requests.length, 1);
+  requests[0].resolve({ state: "online", latencyMs: 85 });
+  await flushMenu(setup);
+  assert.match(setup.captureCharFrame(), /Proxy online · 85 ms/);
+  assert.equal(requests.length, 1);
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  assert.equal(requests.length, 2);
+  requests[1].resolve({ state: "online", latencyMs: 23 });
+  await flushMenu(setup);
+  assert.match(setup.captureCharFrame(), /Proxy online · 23 ms/);
+  assert.equal(requests.length, 2);
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  assert.equal(requests.length, 3);
+
+  await setup.mockInput.pressCtrlC();
+  await setup.mockInput.pressCtrlC();
+  assert.equal(await resultPromise, 130);
+  assert.equal(requests[2].signal.aborted, true);
+});
+
+test("TUI는 proxy 검사 예외와 잘못된 응답을 unreachable로 표시하고 측정을 계속한다", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runStartMenu } = await import("../src/tui/menu.mjs");
+  const setup = await createTestRenderer({ width: 72, height: 12 });
+  t.after(() => setup.renderer.destroy());
+  let calls = 0;
+  let pendingSignal;
+  const resultPromise = runStartMenu({
+    rendererFactory: async () => setup,
+    proxyHealthCheck: ({ signal }) => {
+      calls += 1;
+      if (calls === 1) return Promise.reject(new Error("probe failed"));
+      if (calls === 2) return Promise.resolve(undefined);
+      pendingSignal = signal;
+      return new Promise(() => {});
+    },
+    actions: { login: async () => 0 },
+  });
+
+  await flushMenu(setup);
+  assert.match(setup.captureCharFrame(), /Proxy unreachable/);
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  assert.equal(calls, 2);
+  assert.match(setup.captureCharFrame(), /Proxy unreachable/);
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  assert.equal(calls, 3);
+  await setup.mockInput.pressCtrlC();
+  await setup.mockInput.pressCtrlC();
+  assert.equal(await resultPromise, 130);
+  assert.equal(pendingSignal.aborted, true);
+});
+
 test("TUI는 proxy 실패를 표시하고 종료할 때 진행 중인 확인을 취소한다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runStartMenu } = await import("../src/tui/menu.mjs");
@@ -136,7 +202,7 @@ test("Corner Map은 100x24의 네 모서리와 중앙을 사용한다", async (t
   const title = findText(setup.renderer.root, "zgap");
   const status = findText(setup.renderer.root, "● Signed in");
   const proxy = findText(setup.renderer.root, "● Proxy online · 85 ms");
-  const action = findText(setup.renderer.root, "Open Codex  ↵");
+  const action = findText(setup.renderer.root, "CODEX  ↵");
   const hint = findText(setup.renderer.root, "Up/Down move  ·  Enter select  ·  Ctrl+C twice or Esc twice quit");
   assert.doesNotMatch(setup.captureCharFrame(), /CHOOSE AN ACTION/);
   assert.ok(title.x <= 3 && title.y <= 3, `title at ${title.x},${title.y}`);
@@ -200,7 +266,7 @@ test("인자 없는 CLI는 credential 상태를 시작 메뉴에 전달한다", 
   assert.equal(typeof menuOptions.actions.claude, "function");
 });
 
-test("로그인 상태에서는 Login을 숨기고 Open Codex를 실행한다", async (t) => {
+test("로그인 상태에서는 Login을 숨기고 CODEX를 실행한다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runStartMenu } = await import("../src/tui/menu.mjs");
   const setup = await createTestRenderer({ width: 72, height: 12 });
@@ -218,7 +284,7 @@ test("로그인 상태에서는 Login을 숨기고 Open Codex를 실행한다", 
   await flushMenu(setup);
   const initial = setup.captureCharFrame();
   assert.match(initial, /Signed in/);
-  assert.match(initial, /Open Codex/);
+  assert.match(initial, /CODEX/);
   assert.doesNotMatch(initial, /Login/);
   assert.match(initial, /(?:Enter|↵) select/);
   await setup.mockInput.pressEnter();
@@ -226,7 +292,7 @@ test("로그인 상태에서는 Login을 숨기고 Open Codex를 실행한다", 
   assert.deepEqual(calls, ["codex"]);
 });
 
-test("로그인 상태에서는 Open Codex와 Open Claude를 선택할 수 있다", async (t) => {
+test("로그인 상태에서는 CODEX와 Claude를 선택할 수 있다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runStartMenu } = await import("../src/tui/menu.mjs");
   const setup = await createTestRenderer({ width: 100, height: 24 });
@@ -243,11 +309,11 @@ test("로그인 상태에서는 Open Codex와 Open Claude를 선택할 수 있�
 
   await flushMenu(setup);
   const frame = setup.captureCharFrame();
-  assert.match(frame, /Open Codex/);
-  assert.match(frame, /Open Claude/);
+  assert.match(frame, /CODEX/);
+  assert.match(frame, /Claude/);
   assert.doesNotMatch(frame, /Login/);
-  const codexLabel = findText(setup.renderer.root, "Open Codex  ↵");
-  const claudeLabel = findText(setup.renderer.root, "Open Claude  ↵");
+  const codexLabel = findText(setup.renderer.root, "CODEX  ↵");
+  const claudeLabel = findText(setup.renderer.root, "Claude  ↵");
   assert.equal(codexLabel.x, claudeLabel.x);
   assert.ok(claudeLabel.y > codexLabel.y, `Claude action must be below Codex: ${claudeLabel.y} <= ${codexLabel.y}`);
   assert.notEqual(codexLabel.fg.toString(), claudeLabel.fg.toString());
@@ -280,8 +346,8 @@ test("Stacked Command Cards는 상하 박스와 선택 테두리를 유지한다
 
   await flushMenu(wide);
   await flushMenu(compact);
-  const codexCard = findText(wide.renderer.root, "Open Codex  ↵").parent;
-  const claudeCard = findText(wide.renderer.root, "Open Claude  ↵").parent;
+  const codexCard = findText(wide.renderer.root, "CODEX  ↵").parent;
+  const claudeCard = findText(wide.renderer.root, "Claude  ↵").parent;
   assert.equal(codexCard.border, true);
   assert.equal(claudeCard.border, true);
   const selectedBorder = codexCard.borderColor.toString();
@@ -289,8 +355,8 @@ test("Stacked Command Cards는 상하 박스와 선택 테두리를 유지한다
   assert.notEqual(selectedBorder, unselectedBorder);
   assert.match(wide.captureCharFrame(), /╭─+╮/);
   assert.match(compact.captureCharFrame(), /╭─+╮/);
-  assert.match(compact.captureCharFrame(), /Open Codex/);
-  assert.match(compact.captureCharFrame(), /Open Claude/);
+  assert.match(compact.captureCharFrame(), /CODEX/);
+  assert.match(compact.captureCharFrame(), /Claude/);
   assert.match(compact.captureCharFrame(), /Esc/);
 
   await wide.mockInput.pressArrow("down");
@@ -320,7 +386,7 @@ test("로그인 상태의 기본 선택은 Codex이고 Up/Down으로 하나씩 �
   });
 
   await flushMenu(setup);
-  assert.match(setup.captureCharFrame(), /Open Codex/);
+  assert.match(setup.captureCharFrame(), /CODEX/);
   await setup.mockInput.pressArrow("up");
   await setup.mockInput.pressEnter();
   assert.equal(await resultPromise, 8);
@@ -345,7 +411,7 @@ test("만료된 로그인 상태에서는 Login again만 실행한다", async (t
   const frame = setup.captureCharFrame();
   assert.match(frame, /Session expired/);
   assert.match(frame, /Login again/);
-  assert.doesNotMatch(frame, /Open Codex/);
+  assert.doesNotMatch(frame, /CODEX/);
   await setup.mockInput.pressEnter();
   assert.equal(await resultPromise, 7);
   assert.deepEqual(calls, ["login"]);
@@ -369,7 +435,7 @@ test("미로그인 상태에서는 Login만 실행한다", async (t) => {
   const frame = setup.captureCharFrame();
   assert.match(frame, /Not signed in/);
   assert.match(frame, /Login/);
-  assert.doesNotMatch(frame, /Open Codex/);
+  assert.doesNotMatch(frame, /CODEX/);
   await setup.mockInput.pressEnter();
   assert.equal(await resultPromise, 7);
   assert.deepEqual(calls, ["login"]);
@@ -402,10 +468,10 @@ test("Corner Map의 action text는 mouse drag로 선택할 수 있다", async (t
     actions: { login: async () => 0, codex: async () => 0 },
   });
   await flushMenu(setup);
-  const actionLabel = findText(setup.renderer.root, "Open Codex  ↵");
+  const actionLabel = findText(setup.renderer.root, "CODEX  ↵");
   await setup.mockMouse.drag(actionLabel.x, actionLabel.y, actionLabel.x + 10, actionLabel.y);
 
-  assert.match(setup.renderer.getSelection()?.getSelectedText() ?? "", /Open Codex/);
+  assert.match(setup.renderer.getSelection()?.getSelectedText() ?? "", /CODEX/);
   await setup.mockInput.pressCtrlC();
   await setup.mockInput.pressCtrlC();
   assert.equal(await resultPromise, 130);
@@ -427,8 +493,8 @@ test("Corner Map은 40x10으로 줄어도 상태, action, 종료 hint를 유지�
   await flushMenu(setup);
   const wideFrame = setup.captureCharFrame();
   assert.match(wideFrame, /Signed in/);
-  assert.match(wideFrame, /Open Codex/);
-  assert.match(wideFrame, /Open Claude/);
+  assert.match(wideFrame, /CODEX/);
+  assert.match(wideFrame, /Claude/);
   assert.match(wideFrame, /Esc/);
   setup.resize(60, 10);
   await flushMenu(setup);
@@ -441,8 +507,8 @@ test("Corner Map은 40x10으로 줄어도 상태, action, 종료 hint를 유지�
   assert.match(frame, /zgap/);
   assert.match(frame, /Signed in/);
   assert.match(frame, /Proxy online · 85 ms/);
-  assert.match(frame, /Open Codex/);
-  assert.match(frame, /Open Claude/);
+  assert.match(frame, /CODEX/);
+  assert.match(frame, /Claude/);
   assert.match(frame, /Esc/);
   assert.deepEqual(Array.from(setup.captureSpans().lines[0].spans[0].bg.buffer), [0, 0, 0, 255]);
   await setup.mockInput.pressCtrlC();
@@ -464,7 +530,7 @@ test("지원하지 않는 locale은 English로 fallback한다", async (t) => {
   await flushMenu(setup);
   const frame = setup.captureCharFrame();
   assert.match(frame, /Signed in/);
-  assert.match(frame, /Open Codex/);
+  assert.match(frame, /CODEX/);
   await setup.mockInput.pressCtrlC();
   await setup.mockInput.pressCtrlC();
   assert.equal(await resultPromise, 130);

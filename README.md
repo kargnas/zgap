@@ -29,13 +29,13 @@ For an npm-installed `zgap`, `zgap update` prints the migration instructions and
 
 Run `zgap` without arguments to open the OpenTUI start screen. The screen reads the local zgap credential state and shows the available actions:
 
-- A valid refresh session shows **Signed in**, **Open Codex**, and **Open Claude**.
+- A valid refresh session shows **Signed in**, **CODEX**, and **Claude**.
 - An expired refresh session shows **Session expired** and **Login again**.
 - Missing or invalid credentials show **Not signed in** and **Login**.
 
 Press Up or Down to move and Enter to continue. Press Ctrl+C twice or Esc twice within one second to quit. Text remains selectable for terminal copy.
 
-The screen also checks `https://ai-proxy.zz.gg/health` once without delaying input. It shows **Proxy online** with the full-response time in milliseconds, or **Proxy unreachable** after a failed response or the three-second timeout.
+While the screen is open, it continuously checks `https://ai-proxy.zz.gg/health` without delaying input. The screen replaces the displayed full-response time in milliseconds immediately, then starts the next check 250 milliseconds later. A failed response or the three-second timeout shows **Proxy unreachable** until the next successful check.
 
 ```sh
 zgap

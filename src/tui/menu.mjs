@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { createInstance } from "i18next";
 import { BoxRenderable, TextAttributes, TextRenderable, createCliRenderer } from "@opentui/core";
@@ -8,6 +9,8 @@ import { ORIGIN } from "../constants.mjs";
 const LOCALES = ["en", "ko"];
 const LOCALE_DIR = fileURLToPath(new URL("./locales/", import.meta.url));
 const COMPACT_WIDTH = 60;
+// This floor keeps the display responsive without letting an instant local checker flood the health endpoint.
+const PROXY_REFRESH_MS = 250;
 
 export async function checkProxyHealth({
   fetchImpl = fetch,
@@ -299,16 +302,30 @@ export async function runStartMenu({
     };
     updateSelection();
     renderer.on("resize", resizeHandler);
-    void proxyHealthCheck({ signal: proxyAbortController.signal }).then((health) => {
-      if (cleaned) return;
-      if (health.state === "online") {
-        proxyStatus.content = `● ${t("proxyOnline", { latency: health.latencyMs })}`;
-        proxyStatus.fg = "#67E8F9";
-      } else {
-        proxyStatus.content = `● ${t("proxyUnreachable")}`;
-        proxyStatus.fg = "#F87171";
+    const updateProxyStatus = async () => {
+      while (!cleaned) {
+        let health;
+        try {
+          health = await proxyHealthCheck({ signal: proxyAbortController.signal });
+        } catch {
+          health = { state: "unreachable" };
+        }
+        if (cleaned) return;
+        if (health?.state === "online" && Number.isFinite(health.latencyMs)) {
+          proxyStatus.content = `● ${t("proxyOnline", { latency: health.latencyMs })}`;
+          proxyStatus.fg = "#67E8F9";
+        } else {
+          proxyStatus.content = `● ${t("proxyUnreachable")}`;
+          proxyStatus.fg = "#F87171";
+        }
+        try {
+          await delay(PROXY_REFRESH_MS, undefined, { signal: proxyAbortController.signal });
+        } catch {
+          return;
+        }
       }
-    });
+    };
+    void updateProxyStatus();
 
     let lastCtrlC = null;
     let lastEscape = null;
