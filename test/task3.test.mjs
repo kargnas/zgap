@@ -220,7 +220,7 @@ test("로그인 상태에서는 Login을 숨기고 Open Codex를 실행한다", 
   assert.match(initial, /Signed in/);
   assert.match(initial, /Open Codex/);
   assert.doesNotMatch(initial, /Login/);
-  assert.match(initial, /Enter/);
+  assert.match(initial, /(?:Enter|↵) select/);
   await setup.mockInput.pressEnter();
   assert.equal(await resultPromise, 8);
   assert.deepEqual(calls, ["codex"]);
@@ -389,7 +389,7 @@ test("Corner Map은 40x10으로 줄어도 상태, action, 종료 hint를 유지�
   await flushMenu(setup);
   const boundaryFrame = setup.captureCharFrame();
   assert.doesNotMatch(boundaryFrame, /zgap \/ ready/);
-  assert.match(boundaryFrame, /Up\/Down move  ·  Enter select  ·  Esc Esc quit/);
+  assert.match(boundaryFrame, /↑↓ move · ↵ select · Esc Esc quit/);
   setup.resize(40, 10);
   await flushMenu(setup);
   const frame = setup.captureCharFrame();

@@ -17,5 +17,5 @@
   "claude": "Claude 열기",
   "claudeDescription": "ai-proxy.zz.gg를 통해 실행합니다",
   "hint": "Up/Down 이동  ·  Enter 선택  ·  Ctrl+C 두 번 또는 Esc 두 번 종료",
-  "compactHint": "Up/Down 이동  ·  Enter 선택  ·  Esc 두 번 종료"
+  "compactHint": "↑↓ 이동 · ↵ 선택 · Esc 두 번 종료"
 }
