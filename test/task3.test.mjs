@@ -259,6 +259,51 @@ test("로그인 상태에서는 Open Codex와 Open Claude를 선택할 수 있�
   assert.deepEqual(calls, ["claude"]);
 });
 
+test("Stacked Command Cards는 상하 박스와 선택 테두리를 유지한다", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runStartMenu } = await import("../src/tui/menu.mjs");
+  const wide = await createTestRenderer({ width: 100, height: 24 });
+  const compact = await createTestRenderer({ width: 40, height: 10 });
+  t.after(() => wide.renderer.destroy());
+  t.after(() => compact.renderer.destroy());
+  const actions = { codex: async () => 0, claude: async () => 0 };
+  const wideResult = runStartMenu({
+    rendererFactory: async () => wide,
+    credentialState: "signed-in",
+    actions,
+  });
+  const compactResult = runStartMenu({
+    rendererFactory: async () => compact,
+    credentialState: "signed-in",
+    actions,
+  });
+
+  await flushMenu(wide);
+  await flushMenu(compact);
+  const codexCard = findText(wide.renderer.root, "Open Codex  ↵").parent;
+  const claudeCard = findText(wide.renderer.root, "Open Claude  ↵").parent;
+  assert.equal(codexCard.border, true);
+  assert.equal(claudeCard.border, true);
+  const selectedBorder = codexCard.borderColor.toString();
+  const unselectedBorder = claudeCard.borderColor.toString();
+  assert.notEqual(selectedBorder, unselectedBorder);
+  assert.match(wide.captureCharFrame(), /╭─+╮/);
+  assert.match(compact.captureCharFrame(), /╭─+╮/);
+  assert.match(compact.captureCharFrame(), /Open Codex/);
+  assert.match(compact.captureCharFrame(), /Open Claude/);
+  assert.match(compact.captureCharFrame(), /Esc/);
+
+  await wide.mockInput.pressArrow("down");
+  assert.equal(codexCard.borderColor.toString(), unselectedBorder);
+  assert.equal(claudeCard.borderColor.toString(), selectedBorder);
+  await wide.mockInput.pressCtrlC();
+  await wide.mockInput.pressCtrlC();
+  await compact.mockInput.pressCtrlC();
+  await compact.mockInput.pressCtrlC();
+  assert.equal(await wideResult, 130);
+  assert.equal(await compactResult, 130);
+});
+
 test("로그인 상태의 기본 선택은 Codex이고 Up/Down으로 하나씩 이동한다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runStartMenu } = await import("../src/tui/menu.mjs");

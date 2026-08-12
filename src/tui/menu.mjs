@@ -202,7 +202,7 @@ export async function runStartMenu({
     });
     const actionRow = new BoxRenderable(renderer, {
       width: "70%",
-      height: content.actions.length > 1 ? 5 : 2,
+      height: content.actions.length > 1 ? 9 : 4,
       flexDirection: "column",
       justifyContent: "center",
       alignItems: "stretch",
@@ -211,9 +211,12 @@ export async function runStartMenu({
     const actionCards = content.actions.map((item) => {
       const card = new BoxRenderable(renderer, {
         width: "100%",
-        height: 2,
+        height: 4,
         flexDirection: "column",
         justifyContent: "center",
+        border: true,
+        borderStyle: "rounded",
+        borderColor: "#475569",
         paddingX: 1,
       });
       const label = new TextRenderable(renderer, {
@@ -258,6 +261,8 @@ export async function runStartMenu({
 
     const applyResponsiveLayout = (width, height = renderer.height) => {
       const compact = width <= COMPACT_WIDTH || height <= 12;
+      root.paddingTop = compact ? 0 : 1;
+      root.paddingBottom = compact ? 0 : 1;
       topBar.flexDirection = compact ? "column" : "row";
       topBar.height = compact ? 3 : "auto";
       topBar.justifyContent = compact ? "flex-start" : "space-between";
@@ -269,12 +274,12 @@ export async function runStartMenu({
       statusArea.paddingRight = compact ? 0 : 1;
       centerArea.alignItems = compact ? "stretch" : "center";
       actionRow.width = compact ? "100%" : "70%";
-      actionRow.height = compact ? content.actions.length : (content.actions.length > 1 ? 5 : 2);
+      actionRow.height = compact ? content.actions.length * 3 : (content.actions.length > 1 ? 9 : 4);
       actionRow.gap = compact ? 0 : (content.actions.length > 1 ? 1 : 0);
       actionCards.forEach(({ card, description }) => {
         card.width = "100%";
-        card.height = compact ? 1 : 2;
-        card.paddingX = 1;
+        card.height = compact ? 3 : 4;
+        card.paddingX = compact ? 0 : 1;
         description.visible = !compact;
       });
       bottomBar.justifyContent = compact ? "flex-start" : "space-between";
@@ -288,6 +293,7 @@ export async function runStartMenu({
       actionCards.forEach(({ card, label }, index) => {
         const selected = index === selectedIndex;
         card.backgroundColor = selected ? "#0B171D" : "#000000";
+        card.borderColor = selected ? "#67E8F9" : "#475569";
         label.fg = selected ? "#F8FAFC" : "#94A3B8";
       });
     };
