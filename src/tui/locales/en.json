@@ -12,9 +12,9 @@
   "loginAgain": "Login again",
   "loginDescription": "Sign in through your browser",
   "loginAgainDescription": "Sign in again to continue",
-  "codex": "Open Codex",
+  "codex": "CODEX",
   "codexDescription": "Launch through ai-proxy.zz.gg",
-  "claude": "Open Claude",
+  "claude": "Claude",
   "claudeDescription": "Launch through ai-proxy.zz.gg",
   "hint": "Up/Down move  ·  Enter select  ·  Ctrl+C twice or Esc twice quit",
   "compactHint": "↑↓ move · ↵ select · Esc Esc quit"

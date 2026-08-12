@@ -12,9 +12,9 @@
   "loginAgain": "다시 로그인",
   "loginDescription": "브라우저에서 로그인합니다",
   "loginAgainDescription": "계속하려면 다시 로그인하세요",
-  "codex": "Codex 열기",
+  "codex": "CODEX",
   "codexDescription": "ai-proxy.zz.gg를 통해 실행합니다",
-  "claude": "Claude 열기",
+  "claude": "Claude",
   "claudeDescription": "ai-proxy.zz.gg를 통해 실행합니다",
   "hint": "Up/Down 이동  ·  Enter 선택  ·  Ctrl+C 두 번 또는 Esc 두 번 종료",
   "compactHint": "↑↓ 이동 · ↵ 선택 · Esc 두 번 종료"
