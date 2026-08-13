@@ -28,7 +28,7 @@ bun add -g github:kargnas/zgap#main --force --no-cache
 
 Run `zgap` without arguments to enter the OpenTUI start screen immediately while its dependencies load. The screen reads the local zgap credential state and shows the available actions:
 
-- A valid refresh session shows **Signed in**, **CODEX**, and **Claude**.
+- A valid refresh session shows the account email, **CODEX**, and **Claude**.
 - An expired refresh session shows **Session expired** and **Login again**.
 - Missing or invalid credentials show **Not signed in** and **Login**.
 
