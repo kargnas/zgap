@@ -745,7 +745,7 @@ printf '%s\\n' "$@" > ${marker}
 `);
   await chmod(path.join(fakeBin, "bun"), 0o755);
   const child = spawn("/bin/bash", [path.join(repoDir, "install.sh")], {
-    env: { PATH: `${fakeBin}${path.delimiter}${process.env.PATH}` },
+    env: { PATH: fakeBin },
   });
   const [code] = await once(child, "exit");
   assert.equal(code, 0);
@@ -774,4 +774,85 @@ chmod +x ${bunInstall}/bin/bun
   assert.equal(code, 0);
   assert.equal(await readFile(curlArgs, "utf8"), "-fsSL\nhttps://bun.com/install\n");
   assert.equal(await readFile(bunArgs, "utf8"), "add\n-g\ngithub:kargnas/zgap#main\n--force\n--no-cache\n");
+});
+
+test("Ubuntu installer installs unzip with apt-get before Bun", async (t) => {
+  const root = await tempDir(t);
+  const fakeBin = path.join(root, "bin");
+  const aptArgs = path.join(root, "apt-args");
+  const bunInstall = path.join(root, "bun-install");
+  await mkdir(fakeBin, { recursive: true });
+  await writeFile(path.join(fakeBin, "id"), `#!/bin/sh
+printf '0\\n'
+`);
+  await writeFile(path.join(fakeBin, "apt-get"), `#!/bin/sh
+printf '%s\\n' "$@" >> ${aptArgs}
+if [ "$1" = install ]; then
+  printf '#!/bin/sh\\nexit 0\\n' > ${fakeBin}/unzip
+  /bin/chmod +x ${fakeBin}/unzip
+fi
+`);
+  await writeFile(path.join(fakeBin, "curl"), `#!/bin/sh
+if ! command -v unzip >/dev/null 2>&1; then
+  exit 91
+fi
+/bin/mkdir -p ${bunInstall}/bin
+printf '#!/bin/sh\\nexit 0\\n' > ${bunInstall}/bin/bun
+/bin/chmod +x ${bunInstall}/bin/bun
+`);
+  await writeFile(path.join(fakeBin, "bash"), "#!/bin/sh\nexec /bin/bash \"$@\"\n");
+  for (const command of ["id", "apt-get", "curl", "bash"]) {
+    await chmod(path.join(fakeBin, command), 0o755);
+  }
+
+  const child = spawn("/bin/bash", [path.join(repoDir, "install.sh")], {
+    env: { PATH: fakeBin, BUN_INSTALL: bunInstall },
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  const [code] = await once(child, "exit");
+  assert.equal(code, 0, stderr);
+  assert.equal(await readFile(aptArgs, "utf8"), "update\ninstall\n-y\nunzip\n");
+});
+
+test("Ubuntu installer uses sudo for unzip when not running as root", async (t) => {
+  const root = await tempDir(t);
+  const fakeBin = path.join(root, "bin");
+  const sudoArgs = path.join(root, "sudo-args");
+  const bunInstall = path.join(root, "bun-install");
+  await mkdir(fakeBin, { recursive: true });
+  await writeFile(path.join(fakeBin, "id"), `#!/bin/sh
+printf '1000\\n'
+`);
+  await writeFile(path.join(fakeBin, "sudo"), `#!/bin/sh
+printf '%s\\n' "$@" >> ${sudoArgs}
+exec "$@"
+`);
+  await writeFile(path.join(fakeBin, "apt-get"), `#!/bin/sh
+if [ "$1" = install ]; then
+  printf '#!/bin/sh\\nexit 0\\n' > ${fakeBin}/unzip
+  /bin/chmod +x ${fakeBin}/unzip
+fi
+`);
+  await writeFile(path.join(fakeBin, "curl"), `#!/bin/sh
+if ! command -v unzip >/dev/null 2>&1; then
+  exit 91
+fi
+/bin/mkdir -p ${bunInstall}/bin
+printf '#!/bin/sh\\nexit 0\\n' > ${bunInstall}/bin/bun
+/bin/chmod +x ${bunInstall}/bin/bun
+`);
+  await writeFile(path.join(fakeBin, "bash"), "#!/bin/sh\nexec /bin/bash \"$@\"\n");
+  for (const command of ["id", "sudo", "apt-get", "curl", "bash"]) {
+    await chmod(path.join(fakeBin, command), 0o755);
+  }
+
+  const child = spawn("/bin/bash", [path.join(repoDir, "install.sh")], {
+    env: { PATH: fakeBin, BUN_INSTALL: bunInstall },
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  const [code] = await once(child, "exit");
+  assert.equal(code, 0, stderr);
+  assert.equal(await readFile(sudoArgs, "utf8"), "apt-get\nupdate\napt-get\ninstall\n-y\nunzip\n");
 });
