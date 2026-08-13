@@ -33,6 +33,15 @@ test("readSystemInfo는 필드별 길이와 안전하지 않은 문자를 정규
     os_name: "unknown-platform",
     os_version: "r".repeat(128),
   });
+
+  const boundedNames = normalizeSystemInfo({
+    platform: "p".repeat(100),
+    hostname: "host",
+    release: "release",
+    arch: "a".repeat(100),
+  });
+  assert.equal(boundedNames.os_name, "p".repeat(32));
+  assert.equal(boundedNames.os_arch, "a".repeat(32));
 });
 
 test("readSystemInfo는 현재 플랫폼의 메타데이터 모양을 유지한다", async () => {

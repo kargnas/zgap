@@ -142,3 +142,37 @@ Ran 82 tests across 8 files.
 - The added helper contains no I/O and keeps platform collection in `readSystemInfo()`.
 - Tests exercise returned values through the exported normalization behavior rather than inspecting source text.
 - No dependency, environment variable, unrelated file, deployment, or external state was changed.
+
+## Fix Round 2
+
+### Covering tests
+
+- `test/system-info.test.mjs` now passes oversized unknown platform and architecture values to `normalizeSystemInfo()` and asserts that `os_name` and `os_arch` are each truncated to exactly 32 characters.
+
+### Validation
+
+```text
+bun test test/system-info.test.mjs test/zgap.test.mjs
+```
+
+```text
+37 pass
+0 fail
+Ran 37 tests across 2 files.
+```
+
+```text
+bun test
+```
+
+```text
+82 pass
+0 fail
+Ran 82 tests across 8 files.
+```
+
+### Changes and self-review
+
+- Added only the two direct length assertions requested by the review.
+- No production code was changed because the existing implementation already enforced both 32-character bounds.
+- No unrelated files or external state were modified.
