@@ -19,7 +19,6 @@ function defaultOpenBrowser(url) {
 
 export async function login({
   configDir = defaultConfigDir(),
-  origin = ORIGIN,
   now = Date.now,
   requestTimeoutMs = REQUEST_TIMEOUT_MS,
   timeoutMs = LOGIN_TIMEOUT_MS,
@@ -28,7 +27,6 @@ export async function login({
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   log = console.log,
 } = {}) {
-  const normalizedOrigin = new URL(origin).origin;
   const deviceId = await deviceIdFor(configDir);
   const verifier = randomBytes(32).toString("base64url");
   const challenge = createHash("sha256").update(verifier).digest("base64url");
@@ -55,7 +53,7 @@ export async function login({
     const remaining = deadline - Date.now();
     if (remaining <= 0) throw new Error("Login timed out.");
     try {
-      return await fetchImpl(new URL(path, normalizedOrigin), {
+      return await fetchImpl(new URL(path, ORIGIN), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
@@ -92,11 +90,11 @@ export async function login({
       || authorization.expires_in <= 0
       || (authorization.interval !== undefined
         && (!Number.isFinite(authorization.interval) || authorization.interval <= 0))
-      || verificationUrl?.origin !== normalizedOrigin
+      || verificationUrl?.origin !== ORIGIN
       || verificationUrl.pathname !== "/console/cli-auth"
       || verificationUrl.search
       || verificationUrl.hash
-      || completeUrl?.origin !== normalizedOrigin
+      || completeUrl?.origin !== ORIGIN
       || completeUrl.pathname !== "/console/cli-auth"
       || completeUrl.searchParams.get("device_code") !== authorization.device_code
       || completeUrl.searchParams.get("user_code") !== authorization.user_code
@@ -150,7 +148,7 @@ export async function login({
       access_expires_at: new Date(current + token.expires_in * 1000).toISOString(),
       access_token: token.access_token,
       device_id: deviceId,
-      origin: normalizedOrigin,
+      origin: ORIGIN,
       refresh_expires_at: new Date(current + token.refresh_expires_in * 1000).toISOString(),
       refresh_token: token.refresh_token,
     });

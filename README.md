@@ -35,7 +35,7 @@ Run `zgap` without arguments to open the OpenTUI start screen. The screen reads 
 
 For a signed-in session, the screen also fetches the authenticated key's preserved usage from `GET /api/codex/usage`. It shows the proxy plan, request count, total tokens, and the documented input, output, cached-input, and cache-creation token breakdown. The request runs without delaying menu input; a failed request shows **Usage unavailable**. Compact terminals keep both launch actions and the quit hint visible by omitting the usage row.
 
-The access token is a JWT whose unverified payload supplies the account email, email-verification state, and proxy product IDs shown above the usage row. zgap accepts only tokens with the `EdDSA`/`JWT` header, the fixed ai-proxy issuer and audience, numeric subject/session IDs, valid timestamps, and HTTPS proxy products. Signature verification is performed by the server; the client uses this payload for display only. Opaque `zgap-at-*` access tokens require signing in again.
+The access token is a JWT whose unverified payload supplies the account email, email-verification state, and proxy product IDs shown above the usage row. zgap accepts only tokens with the `EdDSA`/`JWT` header, the fixed ai-proxy issuer and audience, numeric subject/session IDs, valid timestamps, and HTTPS proxy products. Signature verification is performed by the server; the client uses this payload for display only.
 
 Press Up or Down to move and Enter to continue. Press Ctrl+C twice or Esc twice within one second to quit. Text remains selectable for terminal copy.
 

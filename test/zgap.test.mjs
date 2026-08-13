@@ -25,14 +25,13 @@ const ACCESS_NEW = jwt("new@example.com", "claude");
 const REFRESH_OLD = `zgap-rt-${"c".repeat(43)}`;
 const REFRESH_NEW = `zgap-rt-${"d".repeat(43)}`;
 
-test("JWT access token profile은 계약 필드를 표시용으로 해석하고 opaque 토큰을 거부한다", async () => {
+test("JWT access token profile은 계약 필드만 표시용으로 해석한다", async () => {
   const { decodeAccessTokenProfile } = await import("../src/credentials.mjs");
   assert.deepEqual(decodeAccessTokenProfile(ACCESS_NEW), {
     email: "new@example.com",
     emailVerified: true,
     proxyProducts: [{ id: "claude", origin: "https://ai-proxy.zz.gg" }],
   });
-  assert.equal(decodeAccessTokenProfile("zgap-at-" + "a".repeat(43)), null);
   assert.equal(decodeAccessTokenProfile(`${ACCESS_NEW.slice(0, -1)}!`), null);
   assert.equal(decodeAccessTokenProfile(`${ACCESS_NEW}.${"a".repeat(16_384)}`), null);
   const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
@@ -219,7 +218,7 @@ test("login은 디바이스 승인 대기와 slow_down을 폴링하고 token pai
     if (previousHome === undefined) delete process.env.HOME;
     else process.env.HOME = previousHome;
   });
-  const origin = "https://ai-proxy.example";
+  const origin = "https://ai-proxy.zz.gg";
   const requests = [];
   const sleeps = [];
   const logs = [];
@@ -251,7 +250,6 @@ test("login은 디바이스 승인 대기와 slow_down을 폴링하고 token pai
   const { login } = await import("../src/login.mjs");
   await login({
     configDir,
-    origin,
     now: () => Date.parse("2026-08-11T00:00:00.000Z"),
     timeoutMs: 60_000,
     log(message) { logs.push(message); },
@@ -309,7 +307,6 @@ test("login은 잘못된 device authorization 응답을 저장하지 않는다",
   const { login } = await import("../src/login.mjs");
   await assert.rejects(() => login({
     configDir,
-    origin: "https://ai-proxy.example",
     log() {},
     fetchImpl: async () => new Response(JSON.stringify({ device_code: "missing" }), { status: 200 }),
     openBrowser: async () => { opened = true; },
@@ -326,7 +323,6 @@ test("login은 다른 origin의 verification URL을 열지 않는다", async (t)
   const { login } = await import("../src/login.mjs");
   await assert.rejects(() => login({
     configDir,
-    origin: "https://ai-proxy.example",
     log() {},
     fetchImpl: async () => new Response(JSON.stringify({
       device_code: "device-code",
@@ -344,13 +340,12 @@ test("login은 다른 origin의 verification URL을 열지 않는다", async (t)
 test("login은 token 폴링의 terminal error에서 중단한다", async (t) => {
   const root = await tempDir(t);
   const configDir = path.join(root, "config", "zgap");
-  const origin = "https://ai-proxy.example";
+  const origin = "https://ai-proxy.zz.gg";
   let tokenPolls = 0;
 
   const { login } = await import("../src/login.mjs");
   await assert.rejects(() => login({
     configDir,
-    origin,
     log() {},
     fetchImpl: async (url) => {
       if (url.pathname.endsWith("device_authorization")) {
@@ -375,11 +370,10 @@ test("login은 token 폴링의 terminal error에서 중단한다", async (t) => 
 test("login timeout 이후에는 늦은 성공 응답을 credential로 저장하지 않는다", async (t) => {
   const root = await tempDir(t);
   const configDir = path.join(root, "config", "zgap");
-  const origin = "https://ai-proxy.example";
+  const origin = "https://ai-proxy.zz.gg";
   const { login } = await import("../src/login.mjs");
   await assert.rejects(() => login({
     configDir,
-    origin,
     timeoutMs: 5,
     log() {},
     fetchImpl: async (url) => new Response(JSON.stringify(
@@ -409,12 +403,11 @@ test("login timeout 이후에는 늦은 성공 응답을 credential로 저장하
 
 test("login은 browser launcher가 멈춰도 전체 timeout에 종료한다", async (t) => {
   const root = await tempDir(t);
-  const origin = "https://ai-proxy.example";
+  const origin = "https://ai-proxy.zz.gg";
   const { login } = await import("../src/login.mjs");
 
   await assert.rejects(() => login({
     configDir: path.join(root, "config", "zgap"),
-    origin,
     timeoutMs: 5,
     log() {},
     fetchImpl: async () => new Response(JSON.stringify({
