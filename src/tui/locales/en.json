@@ -32,8 +32,12 @@
   "sessionsLoadFailed": "Could not load sessions",
   "sessionsEmptyRepo": "No sessions in current repo",
   "sessionsEmptyAll": "No sessions",
-  "sessionsHint": "[s] scope · [a] agent · [p] provider · ↑↓/jk move · [r] refresh · Backspace back · Ctrl+C/Esc twice quit",
-  "sessionsCompactHint": "s/a/p filter · ↑↓ move · r refresh · ⌫ back · Esc Esc quit",
+  "sessionsHint": "↑↓ move · Pg/Space page · Home/End · s/a/p filter · r refresh · ? keys · Backspace back",
+  "sessionsCompactHint": "↑↓ move · Space page · ? keys · ⌫ back",
+  "sessionsHelpTitle": "KEYS · ? close",
+  "sessionsHelp": "↑↓ / j k         Move\nPgUp/PgDn/Space Page\nHome/End         First / last\ns / a / p        Filters\nr                Refresh\nBackspace        Back\nEsc Esc / ^C ^C  Quit",
+  "sessionsEscapeExitPrompt": "Press Esc again to quit",
+  "sessionsCtrlCExitPrompt": "Press Ctrl+C again to quit",
   "hint": "Up/Down move  ·  Enter select  ·  Ctrl+C twice or Esc twice quit",
   "compactHint": "↑↓ move · ↵ select · Esc Esc quit"
 }

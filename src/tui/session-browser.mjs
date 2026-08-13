@@ -1,11 +1,29 @@
 import path from "node:path";
-import { BoxRenderable, TextAttributes, TextRenderable, createCliRenderer } from "@opentui/core";
+import {
+  BoxRenderable,
+  StyledText,
+  TextAttributes,
+  TextRenderable,
+  bg,
+  bold,
+  fg,
+  createCliRenderer,
+} from "@opentui/core";
 import { discoverRepositoryScope, filterSessions, listSessions, stripTerminalControls } from "../sessions.mjs";
 import { loadMenuTranslator } from "./menu.mjs";
 
 const AGENTS = ["all", "codex", "claude"];
 const COMPACT_WIDTH = 60;
 const SPINNER_FRAMES = ["|", "/", "-", "\\"];
+const COLORS = {
+  amber: "#FBBF24",
+  amberBackground: "#271708",
+  rose: "#FB7185",
+  text: "#E2E8F0",
+  meta: "#64748B",
+  chip: "#94A3B8",
+};
+const PROVIDER_COLORS = ["#6EE7B7", "#60A5FA", "#C084FC", "#2DD4BF", "#F472B6", "#A3E635"];
 
 function nextValue(values, current) {
   return values[(Math.max(0, values.indexOf(current)) + 1) % values.length];
@@ -40,16 +58,65 @@ function truncateText(value, maxWidth) {
   return `${output}…`;
 }
 
-function rowText(session, selected, language, width) {
+function providerColor(provider) {
+  let hash = 0;
+  for (const character of provider) hash = (hash * 31 + character.codePointAt(0)) >>> 0;
+  return PROVIDER_COLORS[hash % PROVIDER_COLORS.length];
+}
+
+function agentColor(agent) {
+  if (agent === "CODEX") return COLORS.amber;
+  if (agent === "CLAUDE") return COLORS.rose;
+  return COLORS.text;
+}
+
+function chunk(text, color, background, isBold = false) {
+  let value = String(text);
+  if (color) value = fg(color)(value);
+  if (background) value = bg(background)(value);
+  if (isBold) value = bold(value);
+  return value;
+}
+
+function rowText(session, selected, language, width, compact) {
   const agent = displayText(session.agent).toUpperCase();
-  const provider = displayText(session.provider);
-  const source = provider ? `${agent} · ${provider}` : agent;
-  const location = displayText(path.basename(session.cwd) || session.cwd);
+  const provider = truncateText(displayText(session.provider), compact ? 12 : 24);
+  const sourceWidth = Bun.stringWidth(agent) + (provider ? Bun.stringWidth(` · ${provider}`) : 0);
+  const rowWidth = Math.max(1, width - 3);
+  const metaPrefix = "  └ ";
+  const location = truncateText(displayText(path.basename(session.cwd) || session.cwd), rowWidth - Bun.stringWidth(metaPrefix));
   const time = timestampLabel(session.updatedAt, language);
-  const meta = [location, time].filter(Boolean).join(" · ");
-  const titleLimit = Math.max(16, width - Bun.stringWidth(source) - 8);
+  const meta = compact ? location : [location, time].filter(Boolean).join(" · ");
+  const titleLimit = Math.max(4, rowWidth - sourceWidth - 4);
   const title = truncateText(displayText(session.title), titleLimit);
-  return `${selected ? "›" : " "} ${source}  ${title}\n+  ${meta}`;
+  const background = selected ? COLORS.amberBackground : undefined;
+  const providerChunk = provider
+    ? [
+        chunk(" · ", COLORS.text, background),
+        chunk(provider, providerColor(provider), background),
+      ]
+    : [];
+  const firstLineWidth = 2 + sourceWidth + 2 + Bun.stringWidth(title);
+  const metaLineWidth = Bun.stringWidth(metaPrefix) + Bun.stringWidth(meta);
+  return new StyledText([
+    chunk(selected ? "›" : " ", COLORS.amber, background),
+    chunk(" ", COLORS.text, background),
+    chunk(agent, agentColor(agent), background, true),
+    ...providerChunk,
+    chunk("  ", COLORS.text, background),
+    chunk(title, COLORS.text, background),
+    chunk(" ".repeat(Math.max(0, rowWidth - firstLineWidth)), COLORS.text, background),
+    chunk(`\n${metaPrefix}`, COLORS.meta, background),
+    chunk(meta, COLORS.meta, background),
+    chunk(" ".repeat(Math.max(0, rowWidth - metaLineWidth)), COLORS.meta, background),
+  ]);
+}
+
+function joinStyledText(values, separator = "\n") {
+  return new StyledText(values.flatMap((value, index) => [
+    ...(index > 0 ? [chunk(separator, COLORS.text)] : []),
+    ...value.chunks,
+  ]));
 }
 
 export async function runSessionBrowser({
@@ -74,6 +141,7 @@ export async function runSessionBrowser({
   let generation = 0;
   let spinnerIndex = 0;
   let spinnerTimer = null;
+  let noticeTimer = null;
   const abortController = new AbortController();
   const cleanup = () => {
     if (cleaned) return;
@@ -81,6 +149,8 @@ export async function runSessionBrowser({
     abortController.abort();
     if (spinnerTimer !== null) clock.clearInterval(spinnerTimer);
     spinnerTimer = null;
+    if (noticeTimer !== null) (clock.clearTimeout ?? globalThis.clearTimeout)(noticeTimer);
+    noticeTimer = null;
     if (renderer && keyHandler) renderer.keyInput.off("keypress", keyHandler);
     if (renderer && resizeHandler) renderer.off("resize", resizeHandler);
     renderer?.destroy();
@@ -120,6 +190,8 @@ export async function runSessionBrowser({
     let selectedIndex = 0;
     let selectedKey = null;
     let viewportStart = 0;
+    let showHelp = false;
+    let notice = "";
 
     const root = new BoxRenderable(renderer, {
       backgroundColor: "#000000",
@@ -156,7 +228,7 @@ export async function runSessionBrowser({
     root.add(hint);
     renderer.root.add(root);
 
-    const visibleRows = () => Math.max(1, Math.floor((renderer.height - (renderer.width <= COMPACT_WIDTH ? 8 : 6)) / 2));
+    const visibleRows = () => Math.max(1, Math.floor((renderer.height - 6) / 2));
     const availableProviders = () => [
       "all",
       ...new Set(sessions.map((session) => session.provider).filter(Boolean).sort()),
@@ -175,6 +247,7 @@ export async function runSessionBrowser({
       viewportStart = Math.max(0, Math.min(viewportStart, Math.max(0, values.length - count)));
     };
     const render = () => {
+      const compact = renderer.width <= COMPACT_WIDTH;
       const loading = state === "initializing" || state === "loading";
       if (loading && spinnerTimer === null) {
         // ASCII frames stay aligned in terminals that calculate emoji width differently.
@@ -186,12 +259,25 @@ export async function runSessionBrowser({
         clock.clearInterval(spinnerTimer);
         spinnerTimer = null;
       }
-      filters.content = [
-        t("sessionsScope", { value: scope === "repo" ? t("sessionsCurrentRepo") : t("sessionsAllDirectories") }),
-        t("sessionsAgent", { value: agent === "all" ? t("sessionsAll") : agent === "codex" ? "Codex" : t("claude") }),
-        t("sessionsProvider", { value: provider === "all" ? t("sessionsAll") : displayText(provider) }),
-      ].join("  ·  ");
-      hint.content = renderer.width <= COMPACT_WIDTH ? t("sessionsCompactHint") : t("sessionsHint");
+      filters.content = new StyledText([
+        chunk(`[s ${scope}]`, COLORS.amber, undefined, true),
+        chunk(" ", COLORS.chip),
+        chunk(`[a ${agent}]`, COLORS.chip),
+        chunk(" ", COLORS.chip),
+        chunk(`[p ${truncateText(displayText(provider), compact ? 12 : 24)}]`, COLORS.chip),
+      ]);
+      hint.content = notice || (compact ? t("sessionsCompactHint") : t("sessionsHint"));
+      if (showHelp) {
+        title.content = t("sessionsHelpTitle");
+        filters.content = "";
+        filters.visible = true;
+        hint.content = "";
+        list.content = t("sessionsHelp");
+        list.fg = COLORS.text;
+        return;
+      }
+      title.content = t("sessionsTitle");
+      filters.visible = true;
       if (state === "initializing") {
         list.content = `${SPINNER_FRAMES[spinnerIndex]} ${t("sessionsInitializing")}`;
         list.fg = "#94A3B8";
@@ -215,10 +301,31 @@ export async function runSessionBrowser({
         return;
       }
       const count = visibleRows();
-      list.content = values.slice(viewportStart, viewportStart + count)
-        .map((session, index) => rowText(session, viewportStart + index === selectedIndex, language, renderer.width))
-        .join("\n");
+      list.content = joinStyledText(values.slice(viewportStart, viewportStart + count)
+        .map((session, index) => rowText(session, viewportStart + index === selectedIndex, language, renderer.width, compact)));
       list.fg = "#E2E8F0";
+    };
+
+    const clearNotice = () => {
+      notice = "";
+      if (noticeTimer !== null) (clock.clearTimeout ?? globalThis.clearTimeout)(noticeTimer);
+      noticeTimer = null;
+    };
+    const showNotice = (message) => {
+      clearNotice();
+      notice = message;
+      render();
+      noticeTimer = (clock.setTimeout ?? globalThis.setTimeout)(() => {
+        noticeTimer = null;
+        notice = "";
+        if (!cleaned) render();
+      }, 1_000);
+    };
+    const select = (index) => {
+      const values = filteredSessions();
+      selectedIndex = Math.max(0, Math.min(Math.max(0, values.length - 1), index));
+      selectedKey = values[selectedIndex] ? sessionKey(values[selectedIndex]) : null;
+      render();
     };
 
     const load = async (requestedScope = scope, { refresh = false } = {}) => {
@@ -273,18 +380,39 @@ export async function runSessionBrowser({
       const timestamp = now();
       if (event.ctrl && event.name === "c") {
         if (lastCtrlC !== null && timestamp - lastCtrlC <= 1_000) finish(130);
-        else lastCtrlC = timestamp;
+        else {
+          lastCtrlC = timestamp;
+          showNotice(t("sessionsCtrlCExitPrompt"));
+        }
         return;
       }
       if (event.name === "escape") {
-        if (lastEscape !== null && timestamp - lastEscape <= 1_000) finish(130);
-        else lastEscape = timestamp;
+        if (showHelp) {
+          showHelp = false;
+          render();
+        } else if (lastEscape !== null && timestamp - lastEscape <= 1_000) finish(130);
+        else {
+          lastEscape = timestamp;
+          showNotice(t("sessionsEscapeExitPrompt"));
+        }
+        return;
+      }
+      clearNotice();
+      if (event.name === "?") {
+        showHelp = !showHelp;
+        render();
         return;
       }
       if (event.name === "backspace") {
+        if (showHelp) {
+          showHelp = false;
+          render();
+          return;
+        }
         finish(0);
         return;
       }
+      if (showHelp) return;
       if (event.name === "r") {
         sessionCache.delete(scope);
         void load(scope, { refresh: true });
@@ -315,12 +443,14 @@ export async function runSessionBrowser({
         render();
         return;
       }
-      if (["up", "down", "j", "k"].includes(event.name)) {
-        const values = filteredSessions();
+      if (["up", "down", "j", "k", "pageup", "pagedown", "space", "home", "end"].includes(event.name)) {
         const delta = event.name === "down" || event.name === "j" ? 1 : -1;
-        selectedIndex = Math.max(0, Math.min(values.length - 1, selectedIndex + delta));
-        selectedKey = values[selectedIndex] ? sessionKey(values[selectedIndex]) : null;
-        render();
+        if (event.name === "home") select(0);
+        else if (event.name === "end") select(filteredSessions().length - 1);
+        else if (["pageup", "pagedown", "space"].includes(event.name)) {
+          const direction = event.name === "pageup" ? -1 : 1;
+          select(selectedIndex + direction * visibleRows());
+        } else select(selectedIndex + delta);
       }
     };
     renderer.keyInput.on("keypress", keyHandler);

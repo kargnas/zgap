@@ -96,7 +96,7 @@ The session browser reads the existing local Codex and Claude Code history witho
 
 Each row shows the agent, the saved Codex provider when available, the session title, its directory, and its last update time. If a saved title is unavailable, zgap shows the first user command, then the session ID. Claude history does not store a separate provider value, so zgap does not infer one.
 
-Press `s` to switch between the repository and all directories, `a` to filter by agent, `p` to filter by Codex provider, and `r` to refresh. Press Up or Down, or `j` or `k`, to move through the list. Backspace returns to the start screen when the browser was opened there.
+Press `s` to switch between the repository and all directories, `a` to filter by agent, `p` to filter by Codex provider, and `r` to refresh. Move with Up/Down or `j`/`k`, page with Page Up/Page Down or Space, and jump with Home/End. Press `?` for the complete key guide. Backspace returns to the start screen when the browser was opened there.
 
 ## Direct commands
 
