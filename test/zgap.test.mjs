@@ -137,7 +137,7 @@ else writeFileSync(${JSON.stringify(marker)}, "ran");
   await assert.rejects(access(marker), { code: "ENOENT" });
 }
 
-test("npm bin 심볼릭 링크로 실행해도 CLI main이 시작된다", async (t) => {
+test("심볼릭 링크로 실행해도 CLI main이 시작된다", async (t) => {
   const root = await tempDir(t);
   const shim = path.join(root, "zgap");
   await symlink(cliPath, shim);

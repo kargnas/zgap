@@ -1,5 +1,5 @@
 {
-  "name": "@kargnas/zgap",
+  "name": "zgap",
   "version": "0.1.0",
   "description": "OAuth-authenticated Codex and Claude Code wrapper for ai-proxy.zz.gg",
   "type": "module",
