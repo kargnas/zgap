@@ -1,5 +1,12 @@
 # AGENTS.md
 
+## Guardrail
+
+- This is a public repository. Do not expose any identical information except the domain `ai-proxy.zz.gg`. Even in this domain, you can only expose these:
+  - Login protocol
+  - Identity, Usage Information
+  - LLM protocols (like openai-compat, anthropic-compat and etc)
+
 ## Project Map
 
 - `bin/zgap.mjs`: Bun executable entrypoint.
