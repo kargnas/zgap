@@ -16,7 +16,7 @@ function jwt(email, id) {
   return [
     encode({ alg: "EdDSA", typ: "JWT" }),
     encode({ iss: "https://ai-proxy.zz.gg", aud: ["https://ai-proxy.zz.gg"], sub: "1", sid: "2", email, email_verified: true, iat: 1_700_000_000, exp: 1_800_000_000, proxy_products: [{ id, origin: "https://ai-proxy.zz.gg" }] }),
-    "signature",
+    "sig",
   ].join(".");
 }
 const ACCESS_OLD = jwt("old@example.com", "codex");
@@ -34,6 +34,24 @@ test("JWT access token profile은 계약 필드를 표시용으로 해석하고 
   assert.equal(decodeAccessTokenProfile("zgap-at-" + "a".repeat(43)), null);
   assert.equal(decodeAccessTokenProfile(`${ACCESS_NEW.slice(0, -1)}!`), null);
   assert.equal(decodeAccessTokenProfile(`${ACCESS_NEW}.${"a".repeat(16_384)}`), null);
+  const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  const payload = { iss: "https://ai-proxy.zz.gg", aud: ["https://ai-proxy.zz.gg"], sub: "1", sid: "2", email: "safe@example.com", email_verified: true, iat: 1, exp: 2, proxy_products: [{ id: "codex", origin: "https://ai-proxy.zz.gg" }] };
+  assert.equal(decodeAccessTokenProfile(`${encode({ alg: "HS256", typ: "JWT" })}.${encode(payload)}.a`), null);
+  assert.equal(decodeAccessTokenProfile(`${encode({ alg: "EdDSA", typ: "JWT" })}.${encode({ ...payload, iss: "https://evil.example" })}.a`), null);
+  assert.equal(decodeAccessTokenProfile(`${encode({ alg: "EdDSA", typ: "JWT" })}.${encode({ ...payload, email: "bad\n@example.com" })}.a`), null);
+  assert.equal(decodeAccessTokenProfile(`${encode({ alg: "EdDSA", typ: "JWT" })}.${encode({ ...payload, proxy_products: [{ id: "bad\u0000id", origin: "https://ai-proxy.zz.gg" }] })}.a`), null);
+  const canonicalHeader = encode({ alg: "EdDSA", typ: "JWT" });
+  const aliasHeader = `${canonicalHeader.slice(0, -1)}${canonicalHeader.endsWith("A") ? "B" : "A"}`;
+  assert.equal(decodeAccessTokenProfile(`${aliasHeader}.${encode(payload)}.a`), null);
+  assert.equal(decodeAccessTokenProfile(`${encode({ alg: "EdDSA", typ: "JWT" })}.${encode(payload)}.a`), null);
+});
+
+test("credential origin은 고정 ai-proxy origin만 허용한다", async (t) => {
+  const root = await tempDir(t);
+  const credentialPath = path.join(root, "credentials.json");
+  await writeFile(credentialPath, JSON.stringify({ access_expires_at: "2099-01-02T00:00:00.000Z", access_token: ACCESS_NEW, device_id: "d".repeat(43), origin: refresh_expires_at: "2099-01-05T00:00:00.000Z", refresh_token: REFRESH_OLD }));
+  const { readCredentialFile } = await import("../src/credentials.mjs");
+  await assert.rejects(() => readCredentialFile(credentialPath), /Invalid zgap credentials/);
 });
 
 async function tempDir(t) {
@@ -72,7 +90,7 @@ async function runCatalogFailureScenario(t, { serverBody, bundledOutput, expecte
     access_expires_at: "2099-01-02T00:00:00.000Z",
     access_token: ACCESS_OLD,
     device_id: "d".repeat(43),
-    origin: `http://127.0.0.1:${gateway.address().port}`,
+    origin: "https://ai-proxy.zz.gg",
     refresh_expires_at: "2099-01-05T00:00:00.000Z",
     refresh_token: REFRESH_OLD,
   }), { mode: 0o600 });
@@ -506,7 +524,7 @@ test("SIGTERM은 Codex 자식에 전달한 뒤 catalog를 정리하고 wrapper�
     access_expires_at: "2099-01-02T00:00:00.000Z",
     access_token: ACCESS_OLD,
     device_id: "d".repeat(43),
-    origin: `http://127.0.0.1:${gateway.address().port}`,
+    origin: "https://ai-proxy.zz.gg",
     refresh_expires_at: "2099-01-05T00:00:00.000Z",
     refresh_token: REFRESH_OLD,
   }), { mode: 0o600 });

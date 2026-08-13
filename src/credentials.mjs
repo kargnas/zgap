@@ -12,6 +12,7 @@ import {
   REQUEST_TIMEOUT_MS,
   CLIENT_ID,
   MAX_ACCESS_TOKEN_SIZE,
+  ORIGIN,
 } from "./constants.mjs";
 
 const BASE64URL_RE = /^[A-Za-z0-9_-]+$/;
@@ -19,8 +20,23 @@ const REQUIRED_AUDIENCES = ["https://ai-proxy.zz.gg"];
 
 function decodeJsonSegment(segment) {
   if (!BASE64URL_RE.test(segment) || segment.length % 4 === 1) return null;
-  try { return JSON.parse(Buffer.from(segment, "base64url").toString("utf8")); } catch { return null; }
+  try {
+    const bytes = Buffer.from(segment, "base64url");
+    if (bytes.toString("base64url") !== segment) return null;
+    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  } catch { return null; }
 }
+
+function validEncodedSegment(segment) {
+  if (!segment || !BASE64URL_RE.test(segment) || segment.length % 4 === 1) return false;
+  try {
+    const bytes = Buffer.from(segment, "base64url");
+    return bytes.toString("base64url") === segment;
+  } catch { return false; }
+}
+
+const SAFE_CLAIM_RE = /^(?!.*[\u0000-\u001F\u007F-\u009F])[\s\S]+$/;
+function safeClaim(value, maxLength) { return typeof value === "string" && value.length > 0 && value.length <= maxLength && SAFE_CLAIM_RE.test(value); }
 
 function validHttpsOrigin(value) {
   try {
@@ -32,7 +48,7 @@ function validHttpsOrigin(value) {
 export function decodeAccessTokenProfile(token) {
   if (typeof token !== "string" || token.length > MAX_ACCESS_TOKEN_SIZE) return null;
   const segments = token.split(".");
-  if (segments.length !== 3 || segments.some((segment) => !segment || !BASE64URL_RE.test(segment))) return null;
+  if (segments.length !== 3 || segments.some((segment) => !validEncodedSegment(segment))) return null;
   const [header, payload] = segments.map(decodeJsonSegment);
   if (
     !header || typeof header !== "object" || Array.isArray(header) || header.alg !== "EdDSA" || header.typ !== "JWT"
@@ -41,12 +57,12 @@ export function decodeAccessTokenProfile(token) {
     || !Array.isArray(payload.aud) || !REQUIRED_AUDIENCES.every((audience) => payload.aud.includes(audience))
     || typeof payload.sub !== "string" || !/^\d+$/.test(payload.sub)
     || typeof payload.sid !== "string" || !/^\d+$/.test(payload.sid)
-    || typeof payload.email !== "string" || !payload.email
+    || !safeClaim(payload.email, 320) || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payload.email)
     || typeof payload.email_verified !== "boolean"
     || !Number.isInteger(payload.iat) || !Number.isInteger(payload.exp) || payload.exp <= payload.iat
     || !Array.isArray(payload.proxy_products) || payload.proxy_products.length === 0
     || payload.proxy_products.some((product) => !product || typeof product !== "object" || Array.isArray(product)
-      || typeof product.id !== "string" || !product.id || !validHttpsOrigin(product.origin))
+      || !safeClaim(product.id, 64) || !validHttpsOrigin(product.origin))
   ) return null;
   return {
     email: payload.email,
@@ -94,7 +110,7 @@ function normalizeCredential(parsed) {
     || !DEVICE_ID_RE.test(parsed.device_id)
     || !Number.isFinite(accessExpiresAt)
     || !Number.isFinite(refreshExpiresAt)
-    || origin !== parsed.origin
+    || origin !== parsed.origin || origin !== ORIGIN
   ) return null;
   return { ...parsed, accessExpiresAt, refreshExpiresAt };
 }

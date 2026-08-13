@@ -8,7 +8,7 @@ const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url
 const ACCESS_TOKEN = [
   encode({ alg: "EdDSA", typ: "JWT" }),
   encode({ iss: "https://ai-proxy.zz.gg", aud: ["https://ai-proxy.zz.gg"], sub: "1", sid: "2", email: "usage@example.com", email_verified: true, iat: 1_700_000_000, exp: 1_800_000_000, proxy_products: [{ id: "codex", origin: "https://ai-proxy.zz.gg" }] }),
-  "signature",
+  "sig",
 ].join(".");
 
 test("current user usage는 저장된 access token으로 문서화된 self endpoint를 호출한다", async (t) => {
@@ -19,7 +19,7 @@ test("current user usage는 저장된 access token으로 문서화된 self endpo
     access_expires_at: "2099-01-02T00:00:00.000Z",
     access_token: ACCESS_TOKEN,
     device_id: "d".repeat(43),
-    origin: "https://example.test",
+    origin: "https://ai-proxy.zz.gg",
     refresh_expires_at: "2099-01-05T00:00:00.000Z",
     refresh_token: `zgap-rt-${"b".repeat(43)}`,
   }));
@@ -36,7 +36,7 @@ test("current user usage는 저장된 access token으로 문서화된 self endpo
   });
 
   assert.deepEqual(result, usage);
-  assert.equal(request.url, "https://example.test/api/codex/usage");
+  assert.equal(request.url, "https://ai-proxy.zz.gg/api/codex/usage");
   assert.equal(request.options.method, "GET");
   assert.equal(request.options.headers.authorization, `Bearer ${ACCESS_TOKEN}`);
   assert.ok(request.options.signal instanceof AbortSignal);
@@ -50,7 +50,7 @@ test("current user usage는 실패 응답과 문서 계약 밖 payload를 거부
     access_expires_at: "2099-01-02T00:00:00.000Z",
     access_token: ACCESS_TOKEN,
     device_id: "d".repeat(43),
-    origin: "https://example.test",
+    origin: "https://ai-proxy.zz.gg",
     refresh_expires_at: "2099-01-05T00:00:00.000Z",
     refresh_token: `zgap-rt-${"b".repeat(43)}`,
   }));

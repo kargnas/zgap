@@ -4,8 +4,8 @@ import {
   logout,
   readCredentialFile,
   readCredentialState,
+  decodeAccessTokenProfile,
 } from "./credentials.mjs";
-import { decodeAccessTokenProfile } from "./credentials.mjs";
 import { login } from "./login.mjs";
 import { runCodex } from "./codex.mjs";
 import { runClaude } from "./claude.mjs";
