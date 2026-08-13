@@ -60,8 +60,8 @@ test("listSessions reads Codex sqlite and Claude index records", async (t) => {
     readClaude: async () => [{ sessionId: "a1", projectPath: root, firstPrompt: " first\n command ", modified: "2026-01-01T00:00:00Z" }],
   });
   assert.deepEqual(result, [
-    { agent: "claude", provider: null, id: "a1", cwd: root, title: "first command", preview: { first: null, latest: null }, updatedAt: Date.parse("2026-01-01T00:00:00Z") },
-    { agent: "codex", provider: "agp", id: "c1", cwd: root, title: "Codex title", preview: { first: null, latest: null }, updatedAt: 10 },
+    { agent: "claude", provider: null, id: "a1", cwd: root, title: "first command", preview: { turns: [] }, updatedAt: Date.parse("2026-01-01T00:00:00Z") },
+    { agent: "codex", provider: "agp", id: "c1", cwd: root, title: "Codex title", preview: { turns: [] }, updatedAt: 10 },
   ]);
 });
 
@@ -103,11 +103,15 @@ test("Codex fallback recursively aggregates one nested JSONL session", async (t)
     JSON.stringify({ type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "second command" }] } }),
   ].join("\n"));
   const result = await sessions.listSessions({ codexHome: home, claudeHome: "/missing", all: true });
-  assert.deepEqual(result.filter(({ id }) => id === "nested"), [{
+  const session = result.find(({ id }) => id === "nested");
+  assert.deepEqual(session, {
     agent: "codex", provider: "agp", id: "nested", cwd: "/repo", title: "first command",
-    preview: { first: { user: "first command", assistant: null }, latest: { user: "second command", assistant: null } },
+    preview: { turns: [] }, previewLocator: { type: "jsonl", path: path.join(nested, "one.jsonl") },
     updatedAt: Date.parse("2026-08-14T00:00:00Z"),
-  }]);
+  });
+  assert.deepEqual(await sessions.loadSessionPreview(session), {
+    turns: [{ user: "second command", assistant: null }],
+  });
 });
 
 test("Claude JSONL ai-title wins over first user prompt and excludes subagents", async (t) => {
@@ -121,11 +125,12 @@ test("Claude JSONL ai-title wins over first user prompt and excludes subagents",
   ].join("\n"));
   await writeFile(path.join(project, "subagents", "child.jsonl"), JSON.stringify({ cwd: "/repo", type: "user", message: { role: "user", content: "hidden" } }));
   const result = await sessions.listSessions({ codexHome: "/missing", claudeHome: home, all: true });
-  assert.deepEqual(result.filter(({ id }) => id === "main"), [{
+  const session = result.find(({ id }) => id === "main");
+  assert.deepEqual(session, {
     agent: "claude", provider: null, id: "main", cwd: "/repo", title: "AI title", preview: {
-      first: { user: "first prompt", assistant: null }, latest: { user: "first prompt", assistant: null },
-    }, updatedAt: Date.parse("2026-08-14T00:00:00Z"),
-  }]);
+      turns: [],
+    }, previewLocator: { type: "jsonl", path: path.join(project, "main.jsonl") }, updatedAt: Date.parse("2026-08-14T00:00:00Z"),
+  });
   assert.equal(result.some(({ title }) => title === "hidden"), false);
 });
 
@@ -169,12 +174,12 @@ test("repo scope reads Claude project directory encoded from a related worktree 
     id: "one",
     cwd: root,
     title: "scoped prompt",
-    preview: { first: { user: "scoped prompt", assistant: null }, latest: { user: "scoped prompt", assistant: null } },
+    preview: { turns: [] }, previewLocator: { type: "jsonl", path: path.join(project, "one.jsonl") },
     updatedAt: Date.parse("2026-08-14T00:00:01Z"),
   }]);
 });
 
-test("JSONL preview keeps the first and latest completed user/assistant pairs", async (t) => {
+test("JSONL preview keeps completed user/assistant turns and drops an unanswered tail", async (t) => {
   const home = await mkdtemp(path.join(os.tmpdir(), "zgap-preview-"));
   t.after(() => rm(home, { recursive: true, force: true }));
   const nested = path.join(home, "sessions", "2026");
@@ -192,8 +197,11 @@ test("JSONL preview keeps the first and latest completed user/assistant pairs", 
     { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "unanswered tail" }] } },
   ].map((event) => JSON.stringify(event)).join("\n"));
   const result = await sessions.listSessions({ codexHome: home, claudeHome: "/missing", all: true });
-  assert.deepEqual(result.find(({ id }) => id === "conversation")?.preview, {
-    first: { user: "first user", assistant: "first answer" }, latest: { user: "latest user", assistant: "latest answer" },
+  assert.deepEqual(await sessions.loadSessionPreview(result.find(({ id }) => id === "conversation")), {
+    turns: [
+      { user: "first user", assistant: "first answer" },
+      { user: "latest user", assistant: "latest answer" },
+    ],
   });
 });
 
@@ -209,9 +217,8 @@ test("Claude JSONL preview skips command metadata and tool-only events", async (
     { type: "assistant", sessionId: "conversation", cwd: "/repo", message: { role: "assistant", content: [{ type: "tool_use", name: "Read" }] } },
   ].map((event) => JSON.stringify(event)).join("\n"));
   const result = await sessions.listSessions({ codexHome: "/missing", claudeHome: home, all: true });
-  assert.deepEqual(result.find(({ id }) => id === "conversation")?.preview, {
-    first: { user: "real question", assistant: "real answer" },
-    latest: { user: "real question", assistant: "real answer" },
+  assert.deepEqual(await sessions.loadSessionPreview(result.find(({ id }) => id === "conversation")), {
+    turns: [{ user: "real question", assistant: "real answer" }],
   });
 });
 
@@ -243,12 +250,11 @@ test("Codex SQLite lists metadata without scanning JSONL and loads preview on de
   const sqliteSession = result.find(({ id }) => id === "sqlite-session");
   assert.deepEqual(sqliteSession, {
     agent: "codex", provider: "agp", id: "sqlite-session", cwd: "/repo", title: "SQLite title",
-    preview: { first: null, latest: null }, previewLocator: { type: "jsonl", path: rolloutPath },
+    preview: { turns: [] }, previewLocator: { type: "jsonl", path: rolloutPath },
     updatedAt: 100,
   });
   assert.deepEqual(await sessions.loadSessionPreview(sqliteSession), {
-    first: { user: "JSONL question", assistant: "JSONL answer" },
-    latest: { user: "JSONL question", assistant: "JSONL answer" },
+    turns: [{ user: "JSONL question", assistant: "JSONL answer" }],
   });
   assert.equal(result.some(({ id }) => id === "archived-session"), false);
 });
@@ -269,10 +275,65 @@ test("lazy preview finds the last turn before a large trailing event", async (t)
 
   assert.deepEqual(await sessions.loadSessionPreview({
     agent: "codex",
-    preview: { first: null, latest: null },
+    preview: { turns: [] },
     previewLocator: { type: "jsonl", path: rolloutPath },
   }), {
-    first: { user: "first question", assistant: "first answer" },
-    latest: { user: "last question", assistant: "last answer" },
+    turns: [
+      { user: "first question", assistant: "first answer" },
+      { user: "last question", assistant: "last answer" },
+    ],
+  });
+});
+
+test("lazy preview keeps every completed user/assistant turn in order", async (t) => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "zgap-all-turns-preview-"));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const rolloutPath = path.join(home, "conversation.jsonl");
+  await writeFile(rolloutPath, [
+    { type: "session_meta", payload: { id: "all-turns", cwd: "/repo", model_provider: "agp" } },
+    { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "question one" }] } },
+    { type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "intermediate one" }] } },
+    { type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "answer one" }] } },
+    { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "question two" }] } },
+    { type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "answer two" }] } },
+    { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "question three" }] } },
+    { type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "answer three" }] } },
+  ].map((event) => JSON.stringify(event)).join("\n"));
+
+  assert.deepEqual(await sessions.loadSessionPreview({
+    agent: "codex",
+    preview: { turns: [] },
+    previewLocator: { type: "jsonl", path: rolloutPath },
+  }), {
+    turns: [
+      { user: "question one", assistant: "answer one" },
+      { user: "question two", assistant: "answer two" },
+      { user: "question three", assistant: "answer three" },
+    ],
+  });
+});
+
+test("lazy preview excludes injected Codex context from user turns", async (t) => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "zgap-injected-preview-"));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const rolloutPath = path.join(home, "conversation.jsonl");
+  await writeFile(rolloutPath, [
+    { type: "session_meta", payload: { id: "injected", cwd: "/repo", model_provider: "agp" } },
+    { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "# AGENTS.md instructions for /repo\n\n<INSTRUCTIONS>hidden</INSTRUCTIONS>" }] } },
+    { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "<skill>\n<name>brainstorming</name>\n<path>/hidden/SKILL.md</path>\n</skill>" }] } },
+    { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "actual question" }] } },
+    { type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "actual answer" }] } },
+    { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "<skill>\n<name>brainstorming</name>\n<path>/hidden/SKILL.md</path>\n</skill>" }] } },
+    { type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "skill answer" }] } },
+    { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "<codex_internal_context source=\"goal\">hidden</codex_internal_context>" }] } },
+    { type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "internal answer" }] } },
+  ].map((event) => JSON.stringify(event)).join("\n"));
+
+  assert.deepEqual(await sessions.loadSessionPreview({
+    agent: "codex",
+    preview: { turns: [] },
+    previewLocator: { type: "jsonl", path: rolloutPath },
+  }), {
+    turns: [{ user: "actual question", assistant: "actual answer" }],
   });
 });

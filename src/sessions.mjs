@@ -43,7 +43,7 @@ function contentText(content) {
 }
 
 function emptyPreview() {
-  return { first: null, latest: null };
+  return { turns: [] };
 }
 
 function normalizePreview(value) {
@@ -54,10 +54,7 @@ function normalizePreview(value) {
     const assistant = formatSessionTitle(pair.assistant);
     return { user, assistant: assistant || null };
   };
-  return {
-    first: normalizePair(value?.first),
-    latest: normalizePair(value?.latest),
-  };
+  return { turns: (Array.isArray(value?.turns) ? value.turns : []).map(normalizePair).filter(Boolean) };
 }
 
 function conversationMessage(event) {
@@ -71,33 +68,15 @@ function conversationMessage(event) {
   return null;
 }
 
-function conversationPreview(events) {
-  const pairs = [];
-  let pending = null;
-  for (const event of events) {
-    const message = conversationMessage(event);
-    if (!message || !["user", "assistant"].includes(message.role)) continue;
-    const text = formatSessionTitle(message.text);
-    if (!text) continue;
-    if (message.role === "user" && isClaudeCommandMetadata(text)) continue;
-    if (message.role === "user") {
-      pending = { user: text, assistant: null };
-      pairs.push(pending);
-    } else if (pending && !pending.assistant) {
-      pending.assistant = text;
-      pending = null;
-    }
-  }
-  const completedPairs = pairs.filter((pair) => pair.assistant);
-  const previewPairs = completedPairs.length > 0 ? completedPairs : pairs;
-  return normalizePreview({ first: previewPairs[0], latest: previewPairs.at(-1) });
+function isInjectedUserContext(value) {
+  const text = String(value ?? "").trimStart();
+  return text.startsWith("# AGENTS.md instructions for ")
+    || text.startsWith("<codex_internal_context")
+    || text.startsWith("<skill>");
 }
 
 async function readConversationPreview(pathname) {
-  let firstUser = null;
-  let latestUser = null;
-  let firstCompleted = null;
-  let latestCompleted = null;
+  const turns = [];
   let pending = null;
   const lines = createInterface({ input: createReadStream(pathname, { encoding: "utf8" }), crlfDelay: Infinity });
   for await (const line of lines) {
@@ -107,21 +86,20 @@ async function readConversationPreview(pathname) {
     if (!message || !["user", "assistant"].includes(message.role)) continue;
     const text = formatSessionTitle(message.text);
     if (!text || message.role === "user" && isClaudeCommandMetadata(text)) continue;
+    if (message.role === "user" && isInjectedUserContext(text)) {
+      if (pending?.assistant) turns.push(pending);
+      pending = null;
+      continue;
+    }
     if (message.role === "user") {
+      if (pending?.assistant) turns.push(pending);
       pending = { user: text, assistant: null };
-      firstUser ||= pending;
-      latestUser = pending;
     } else if (pending) {
       pending.assistant = text;
-      firstCompleted ||= pending;
-      latestCompleted = pending;
-      pending = null;
     }
   }
-  return normalizePreview({
-    first: firstCompleted ?? firstUser,
-    latest: latestCompleted ?? latestUser,
-  });
+  if (pending && (pending.assistant || turns.length === 0)) turns.push(pending);
+  return normalizePreview({ turns });
 }
 
 function isClaudeCommandMetadata(value) {
@@ -133,7 +111,8 @@ function normalizeRecord(record, agent) {
   const id = record.id ?? record.sessionId;
   const cwd = record.cwd ?? record.projectPath;
   if (typeof id !== "string" || !id || typeof cwd !== "string" || !cwd) return null;
-  const firstPrompt = record.first_user_message ?? record.firstPrompt;
+  const rawFirstPrompt = record.first_user_message ?? record.firstPrompt;
+  const firstPrompt = isInjectedUserContext(rawFirstPrompt) ? "" : rawFirstPrompt;
   const promptTitle = formatSessionTitle(firstPrompt) === "No prompt" ? "" : formatSessionTitle(firstPrompt);
   const savedTitle = formatSessionTitle(record.aiTitle ?? record.ai_title ?? record.title);
   const title = (savedTitle === "No prompt" ? "" : savedTitle) || promptTitle || formatSessionTitle(id);
@@ -229,7 +208,10 @@ async function readBoundedJsonl(pathname, agent) {
       if (typeof event?.sessionId === "string") result.id = event.sessionId;
       if (event?.type === "ai-title") result.aiTitle = event.aiTitle || result.aiTitle;
       if (event?.type === "custom-title") result.aiTitle = event.customTitle || event.title || result.aiTitle;
-      if (event?.type === "response_item" && payload?.type === "message" && payload.role === "user") result.firstPrompt ||= contentText(payload.content);
+      if (event?.type === "response_item" && payload?.type === "message" && payload.role === "user") {
+        const prompt = contentText(payload.content);
+        if (!isInjectedUserContext(prompt)) result.firstPrompt ||= prompt;
+      }
       if (event?.type === "user" && event.message?.role === "user") {
         const prompt = contentText(event.message.content);
         if (!isClaudeCommandMetadata(prompt)) result.firstPrompt ||= prompt;
@@ -237,7 +219,6 @@ async function readBoundedJsonl(pathname, agent) {
       if (event?.isSidechain || event?.sessionId && event?.isSidechain) result.isSidechain = true;
       result.updatedAt = Math.max(result.updatedAt ?? 0, asNumber(event.timestamp ?? payload.timestamp ?? event.modified));
     }
-    result.preview = conversationPreview(events);
     if (result.isSidechain || pathname.includes(`${path.sep}subagents${path.sep}`)) return null;
     return normalizeRecord(result, agent);
   } catch {
@@ -291,15 +272,13 @@ async function readCodexFallback(codexHome) {
   return output;
 }
 
-export async function loadSessionPreview(session, options = {}) {
-  if (hasConversationPreview(session?.preview)) return normalizePreview(session.preview);
+export async function loadSessionPreview(session) {
   const pathname = session?.previewLocator?.type === "jsonl" ? session.previewLocator.path : "";
-  if (!pathname) return emptyPreview();
-  return readConversationPreview(pathname);
+  return pathname ? readConversationPreview(pathname) : normalizePreview(session?.preview);
 }
 
 function hasConversationPreview(preview) {
-  return Boolean(preview?.first || preview?.latest);
+  return Array.isArray(preview?.turns) && preview.turns.length > 0;
 }
 
 function claudeProjectPrefixes(roots) {
@@ -332,7 +311,8 @@ async function readClaudeDefault(claudeHome, roots = []) {
         ...previous,
         cwd: record.cwd,
         title: record.title !== record.id ? record.title : previous.title,
-        preview: record.preview?.first || record.preview?.latest ? record.preview : previous.preview,
+        preview: hasConversationPreview(record.preview) ? record.preview : previous.preview,
+        ...(record.previewLocator ? { previewLocator: record.previewLocator } : {}),
         updatedAt: Math.max(previous.updatedAt, record.updatedAt),
       } : record);
     }
