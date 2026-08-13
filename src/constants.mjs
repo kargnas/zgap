@@ -7,5 +7,5 @@ export const REQUEST_TIMEOUT_MS = 15 * 1000;
 export const LOCK_TIMEOUT_MS = 10 * 1000;
 export const LOCK_STALE_MS = 30 * 1000;
 export const DEVICE_ID_RE = /^[A-Za-z0-9_-]{43}$/;
-export const ACCESS_TOKEN_RE = /^zgap-at-[A-Za-z0-9_-]{43}$/;
 export const REFRESH_TOKEN_RE = /^zgap-rt-[A-Za-z0-9_-]{43}$/;
+export const MAX_ACCESS_TOKEN_SIZE = 16 * 1024;

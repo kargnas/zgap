@@ -2,13 +2,12 @@ import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import {
   CLIENT_ID,
-  ACCESS_TOKEN_RE,
   REFRESH_TOKEN_RE,
   LOGIN_TIMEOUT_MS,
   ORIGIN,
   REQUEST_TIMEOUT_MS,
 } from "./constants.mjs";
-import { credentialsPath, defaultConfigDir, deviceIdFor, writePrivateJson } from "./credentials.mjs";
+import { credentialsPath, decodeAccessTokenProfile, defaultConfigDir, deviceIdFor, writePrivateJson } from "./credentials.mjs";
 
 function defaultOpenBrowser(url) {
   const command = process.platform === "darwin" ? "open" : process.platform === "win32" ? "cmd" : "xdg-open";
@@ -126,8 +125,7 @@ export async function login({
       if (tokenResponse.ok) {
         if (
           body?.token_type !== "Bearer"
-          || typeof body.access_token !== "string"
-          || !ACCESS_TOKEN_RE.test(body.access_token)
+          || !decodeAccessTokenProfile(body.access_token)
           || typeof body.refresh_token !== "string"
           || !REFRESH_TOKEN_RE.test(body.refresh_token)
           || !Number.isFinite(body.expires_in)

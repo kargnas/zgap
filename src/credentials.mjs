@@ -4,7 +4,6 @@ import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import {
-  ACCESS_TOKEN_RE,
   DEVICE_ID_RE,
   LOCK_STALE_MS,
   LOCK_TIMEOUT_MS,
@@ -12,7 +11,49 @@ import {
   REFRESH_TOKEN_RE,
   REQUEST_TIMEOUT_MS,
   CLIENT_ID,
+  MAX_ACCESS_TOKEN_SIZE,
 } from "./constants.mjs";
+
+const BASE64URL_RE = /^[A-Za-z0-9_-]+$/;
+const REQUIRED_AUDIENCES = ["https://ai-proxy.zz.gg"];
+
+function decodeJsonSegment(segment) {
+  if (!BASE64URL_RE.test(segment) || segment.length % 4 === 1) return null;
+  try { return JSON.parse(Buffer.from(segment, "base64url").toString("utf8")); } catch { return null; }
+}
+
+function validHttpsOrigin(value) {
+  try {
+    const parsed = new URL(value);
+    return typeof value === "string" && parsed.protocol === "https:" && parsed.origin === value && !parsed.username && !parsed.password;
+  } catch { return false; }
+}
+
+export function decodeAccessTokenProfile(token) {
+  if (typeof token !== "string" || token.length > MAX_ACCESS_TOKEN_SIZE) return null;
+  const segments = token.split(".");
+  if (segments.length !== 3 || segments.some((segment) => !segment || !BASE64URL_RE.test(segment))) return null;
+  const [header, payload] = segments.map(decodeJsonSegment);
+  if (
+    !header || typeof header !== "object" || Array.isArray(header) || header.alg !== "EdDSA" || header.typ !== "JWT"
+    || !payload || typeof payload !== "object" || Array.isArray(payload)
+    || payload.iss !== "https://ai-proxy.zz.gg"
+    || !Array.isArray(payload.aud) || !REQUIRED_AUDIENCES.every((audience) => payload.aud.includes(audience))
+    || typeof payload.sub !== "string" || !/^\d+$/.test(payload.sub)
+    || typeof payload.sid !== "string" || !/^\d+$/.test(payload.sid)
+    || typeof payload.email !== "string" || !payload.email
+    || typeof payload.email_verified !== "boolean"
+    || !Number.isInteger(payload.iat) || !Number.isInteger(payload.exp) || payload.exp <= payload.iat
+    || !Array.isArray(payload.proxy_products) || payload.proxy_products.length === 0
+    || payload.proxy_products.some((product) => !product || typeof product !== "object" || Array.isArray(product)
+      || typeof product.id !== "string" || !product.id || !validHttpsOrigin(product.origin))
+  ) return null;
+  return {
+    email: payload.email,
+    emailVerified: payload.email_verified,
+    proxyProducts: payload.proxy_products.map(({ id, origin }) => ({ id, origin })),
+  };
+}
 
 export function defaultConfigDir() {
   if (process.env.XDG_CONFIG_HOME) return path.join(process.env.XDG_CONFIG_HOME, "zgap");
@@ -46,8 +87,7 @@ function normalizeCredential(parsed) {
     origin = null;
   }
   if (
-    typeof parsed.access_token !== "string"
-    || !ACCESS_TOKEN_RE.test(parsed.access_token)
+    !decodeAccessTokenProfile(parsed.access_token)
     || typeof parsed.refresh_token !== "string"
     || !REFRESH_TOKEN_RE.test(parsed.refresh_token)
     || typeof parsed.device_id !== "string"
@@ -208,8 +248,7 @@ export async function resolveAccessToken({
     if (!response.ok) throw new Error(`Token refresh failed (${response.status}). Run \`zgap login\` again.`);
     if (
       body?.token_type !== "Bearer"
-      || typeof body.access_token !== "string"
-      || !ACCESS_TOKEN_RE.test(body.access_token)
+      || !decodeAccessTokenProfile(body.access_token)
       || typeof body.refresh_token !== "string"
       || !REFRESH_TOKEN_RE.test(body.refresh_token)
       || !Number.isFinite(body.expires_in)

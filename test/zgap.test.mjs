@@ -11,10 +11,30 @@ import { fileURLToPath } from "node:url";
 
 const repoDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const cliPath = path.join(repoDir, "bin", "zgap.mjs");
-const ACCESS_OLD = `zgap-at-${"a".repeat(43)}`;
-const ACCESS_NEW = `zgap-at-${"b".repeat(43)}`;
+function jwt(email, id) {
+  const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  return [
+    encode({ alg: "EdDSA", typ: "JWT" }),
+    encode({ iss: "https://ai-proxy.zz.gg", aud: ["https://ai-proxy.zz.gg"], sub: "1", sid: "2", email, email_verified: true, iat: 1_700_000_000, exp: 1_800_000_000, proxy_products: [{ id, origin: "https://ai-proxy.zz.gg" }] }),
+    "signature",
+  ].join(".");
+}
+const ACCESS_OLD = jwt("old@example.com", "codex");
+const ACCESS_NEW = jwt("new@example.com", "claude");
 const REFRESH_OLD = `zgap-rt-${"c".repeat(43)}`;
 const REFRESH_NEW = `zgap-rt-${"d".repeat(43)}`;
+
+test("JWT access token profile은 계약 필드를 표시용으로 해석하고 opaque 토큰을 거부한다", async () => {
+  const { decodeAccessTokenProfile } = await import("../src/credentials.mjs");
+  assert.deepEqual(decodeAccessTokenProfile(ACCESS_NEW), {
+    email: "new@example.com",
+    emailVerified: true,
+    proxyProducts: [{ id: "claude", origin: "https://ai-proxy.zz.gg" }],
+  });
+  assert.equal(decodeAccessTokenProfile("zgap-at-" + "a".repeat(43)), null);
+  assert.equal(decodeAccessTokenProfile(`${ACCESS_NEW.slice(0, -1)}!`), null);
+  assert.equal(decodeAccessTokenProfile(`${ACCESS_NEW}.${"a".repeat(16_384)}`), null);
+});
 
 async function tempDir(t) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "zgap-test-"));

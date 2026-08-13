@@ -4,7 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 
-const ACCESS_TOKEN = `zgap-at-${"a".repeat(43)}`;
+const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
+const ACCESS_TOKEN = [
+  encode({ alg: "EdDSA", typ: "JWT" }),
+  encode({ iss: "https://ai-proxy.zz.gg", aud: ["https://ai-proxy.zz.gg"], sub: "1", sid: "2", email: "usage@example.com", email_verified: true, iat: 1_700_000_000, exp: 1_800_000_000, proxy_products: [{ id: "codex", origin: "https://ai-proxy.zz.gg" }] }),
+  "signature",
+].join(".");
 
 test("current user usage는 저장된 access token으로 문서화된 self endpoint를 호출한다", async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "zgap-usage-"));
