@@ -110,6 +110,7 @@ export async function runStartMenu({
   now = Date.now,
   proxyHealthCheck = checkProxyHealth,
   usagePromise,
+  accountProfile,
 } = {}) {
   let renderer;
   let keyHandler;
@@ -221,12 +222,26 @@ export async function runStartMenu({
       fg: "#94A3B8",
       selectable: true,
     });
+    const accountStatus = new TextRenderable(renderer, {
+      content: accountProfile === null
+        ? t("accountUnavailable")
+        : accountProfile
+          ? t("accountSummary", {
+            email: accountProfile.email,
+            verified: t(accountProfile.emailVerified ? "accountVerified" : "accountUnverified"),
+            products: accountProfile.proxyProducts.map(({ id }) => id).join(", "),
+          })
+          : "",
+      fg: accountProfile === null ? "#F87171" : "#A7F3D0",
+      selectable: true,
+    });
     const usageArea = new BoxRenderable(renderer, {
       width: "100%",
       flexDirection: "column",
       paddingTop: 1,
     });
     usageArea.visible = usagePromise !== undefined;
+    usageArea.add(accountStatus);
     usageArea.add(usageStatus);
 
     const centerArea = new BoxRenderable(renderer, {
@@ -324,7 +339,7 @@ export async function runStartMenu({
       hint.content = compact ? t("compactHint") : t("hint");
       usageArea.paddingTop = compact ? 0 : 1;
       // Short terminals have no spare row after status, both actions, and the quit hint.
-      usageArea.visible = usagePromise !== undefined && !compact;
+      usageArea.visible = (usagePromise !== undefined || accountProfile !== undefined) && !compact;
     };
     // Terminal resize keeps the primary action and quit instruction visible instead of clipping long locale strings.
     resizeHandler = (width, height) => applyResponsiveLayout(width, height);

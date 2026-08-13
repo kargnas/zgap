@@ -2,8 +2,10 @@ import {
   credentialsPath,
   defaultConfigDir,
   logout,
+  readCredentialFile,
   readCredentialState,
 } from "./credentials.mjs";
+import { decodeAccessTokenProfile } from "./credentials.mjs";
 import { login } from "./login.mjs";
 import { runCodex } from "./codex.mjs";
 import { runClaude } from "./claude.mjs";
@@ -27,6 +29,7 @@ export async function main({
   bunGlobalBin,
   configDir = defaultConfigDir(),
   credentialStateReader = readCredentialState,
+  credentialReader = readCredentialFile,
   entryPath = process.argv[1],
   invokedPath = entryPath,
   modulePath = entryPath,
@@ -55,8 +58,18 @@ export async function main({
     const credentialState = await credentialStateReader({
       credentialFile,
     });
+    let accountProfile;
+    if (credentialState === "signed-in") {
+      try {
+        const credential = await credentialReader(credentialFile);
+        accountProfile = decodeAccessTokenProfile(credential.access_token);
+      } catch {
+        accountProfile = null;
+      }
+    }
     return startMenu({
       credentialState,
+      accountProfile,
       usagePromise: credentialState === "signed-in"
         ? Promise.resolve()
           .then(() => usageReader({ credentialFile }))
