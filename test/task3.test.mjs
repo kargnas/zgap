@@ -48,6 +48,60 @@ test("proxy health는 전체 응답 시간을 반올림한다", async () => {
   assert.ok(request.options.signal instanceof AbortSignal);
 });
 
+test("인자 없는 진입점은 CLI 모듈 import가 끝나기 전에 alternate screen을 연다", async (t) => {
+  const root = await tempDir(t);
+  const delayedCli = path.join(root, "delayed-cli.mjs");
+  const entrypoint = path.join(root, "zgap.mjs");
+  await writeFile(delayedCli, 'process.stdout.write("CLI_IMPORT_STARTED\\n"); await new Promise(() => {}); export function main() {}\n');
+  const source = (await readFile(path.join(repoDir, "bin", "zgap.mjs"), "utf8"))
+    .replace('import("../src/cli.mjs")', `import(${JSON.stringify(delayedCli)})`);
+  await writeFile(entrypoint, source, { mode: 0o755 });
+
+  const child = spawn(process.execPath, [entrypoint], { stdio: ["ignore", "pipe", "pipe"] });
+  let stdout = "";
+  child.stdout.on("data", (chunk) => { stdout += chunk; });
+  t.after(() => child.kill("SIGTERM"));
+  await new Promise((resolve, reject) => {
+    const onData = () => {
+      if (stdout.includes("CLI_IMPORT_STARTED")) {
+        child.stdout.off("data", onData);
+        resolve();
+      }
+    };
+    child.stdout.on("data", onData);
+    child.once("error", reject);
+  });
+
+  assert.ok(
+    stdout.includes("\x1b[?1049h"),
+    "alternate-screen escape must be emitted before the delayed CLI import starts",
+  );
+  child.kill("SIGTERM");
+  await once(child, "exit");
+});
+
+test("인자 없는 진입점은 초기화 실패 시 원래 screen으로 돌아온다", async (t) => {
+  const root = await tempDir(t);
+  const failedCli = path.join(root, "failed-cli.mjs");
+  const entrypoint = path.join(root, "zgap.mjs");
+  await writeFile(failedCli, 'throw new Error("initialization failed");\n');
+  const source = (await readFile(path.join(repoDir, "bin", "zgap.mjs"), "utf8"))
+    .replace('import("../src/cli.mjs")', `import(${JSON.stringify(failedCli)})`);
+  await writeFile(entrypoint, source, { mode: 0o755 });
+
+  const child = spawn(process.execPath, [entrypoint], { stdio: ["ignore", "pipe", "pipe"] });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (chunk) => { stdout += chunk; });
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  const [code] = await once(child, "exit");
+
+  assert.equal(code, 1);
+  assert.ok(stdout.includes("\x1b[?1049h"));
+  assert.ok(stdout.includes("\x1b[?1049l"), "failed initialization must restore the original screen");
+  assert.match(stderr, /zgap: initialization failed/);
+});
+
 test("proxy health는 non-2xx와 network failure를 unreachable로 반환한다", async () => {
   const { checkProxyHealth } = await import("../src/tui/menu.mjs");
 
