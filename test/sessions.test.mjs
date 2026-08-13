@@ -321,6 +321,9 @@ test("lazy preview excludes injected Codex context from user turns", async (t) =
     { type: "session_meta", payload: { id: "injected", cwd: "/repo", model_provider: "agp" } },
     { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "# AGENTS.md instructions for /repo\n\n<INSTRUCTIONS>hidden</INSTRUCTIONS>" }] } },
     { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "<skill>\n<name>brainstorming</name>\n<path>/hidden/SKILL.md</path>\n</skill>" }] } },
+    { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "design request" }] } },
+    { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "<skill>\n<name>brainstorming</name>\n<path>/hidden/SKILL.md</path>\n</skill>" }] } },
+    { type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "design answer" }] } },
     { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "actual question" }] } },
     { type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "actual answer" }] } },
     { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "<skill>\n<name>brainstorming</name>\n<path>/hidden/SKILL.md</path>\n</skill>" }] } },
@@ -334,6 +337,38 @@ test("lazy preview excludes injected Codex context from user turns", async (t) =
     preview: { turns: [] },
     previewLocator: { type: "jsonl", path: rolloutPath },
   }), {
-    turns: [{ user: "actual question", assistant: "actual answer" }],
+    turns: [
+      { user: "design request", assistant: "design answer" },
+      { user: "actual question", assistant: "actual answer" },
+    ],
+  });
+});
+
+test("session details reports completed turns and exact JSONL byte size", async (t) => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "zgap-session-details-"));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const rolloutPath = path.join(home, "conversation.jsonl");
+  const contents = [
+    { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "first question" }] } },
+    { type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "first answer" }] } },
+    { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "<codex_internal_context>hidden</codex_internal_context>" }] } },
+    { type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "hidden answer" }] } },
+    { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "last question" }] } },
+    { type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "last answer" }] } },
+  ].map((event) => JSON.stringify(event)).join("\n");
+  await writeFile(rolloutPath, contents);
+
+  assert.deepEqual(await sessions.loadSessionDetails({
+    preview: { turns: [] },
+    previewLocator: { type: "jsonl", path: rolloutPath },
+  }), {
+    turnCount: 2,
+    fileSize: Buffer.byteLength(contents),
+    preview: {
+      turns: [
+        { user: "first question", assistant: "first answer" },
+        { user: "last question", assistant: "last answer" },
+      ],
+    },
   });
 });

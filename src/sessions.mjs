@@ -87,8 +87,10 @@ async function readConversationPreview(pathname) {
     const text = formatSessionTitle(message.text);
     if (!text || message.role === "user" && isClaudeCommandMetadata(text)) continue;
     if (message.role === "user" && isInjectedUserContext(text)) {
-      if (pending?.assistant) turns.push(pending);
-      pending = null;
+      if (pending?.assistant) {
+        turns.push(pending);
+        pending = null;
+      }
       continue;
     }
     if (message.role === "user") {
@@ -275,6 +277,23 @@ async function readCodexFallback(codexHome) {
 export async function loadSessionPreview(session) {
   const pathname = session?.previewLocator?.type === "jsonl" ? session.previewLocator.path : "";
   return pathname ? readConversationPreview(pathname) : normalizePreview(session?.preview);
+}
+
+export async function loadSessionDetails(session) {
+  const pathname = session?.previewLocator?.type === "jsonl" ? session.previewLocator.path : "";
+  if (!pathname) {
+    const preview = normalizePreview(session?.preview);
+    return {
+      turnCount: preview.turns.length,
+      fileSize: 0,
+      preview,
+    };
+  }
+  const [preview, fileStat] = await Promise.all([
+    readConversationPreview(pathname),
+    stat(pathname),
+  ]);
+  return { turnCount: preview.turns.length, fileSize: fileStat.size, preview };
 }
 
 function hasConversationPreview(preview) {
