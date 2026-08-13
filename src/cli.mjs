@@ -15,6 +15,12 @@ import { runSessionBrowser } from "./tui/session-browser.mjs";
 
 const BACK_TO_START_MENU = Symbol("back-to-start-menu");
 
+export function resumeSession(session, configDir, { codexRunner = runCodex, claudeRunner = runClaude } = {}) {
+  if (session?.agent === "codex") return codexRunner(["resume", session.id], { configDir, cwd: session.cwd });
+  if (session?.agent === "claude") return claudeRunner(["--resume", session.id], { configDir, cwd: session.cwd });
+  throw new Error(`Unsupported session agent: ${session?.agent ?? "unknown"}`);
+}
+
 function printHelp() {
   console.log(`Usage:
   zgap login             Sign in with ai-proxy.zz.gg
@@ -49,7 +55,9 @@ export async function main({
   }
   if (command === "codex") return runCodex(args);
   if (command === "claude") return runClaude(args, { configDir });
-  if (command === "sessions") return sessionBrowser({ cwd });
+  if (command === "sessions") {
+    return sessionBrowser({ cwd, onSelect: (session) => resumeSession(session, configDir) });
+  }
   if (command === "update") {
     return updateGlobalInstall();
   }
@@ -77,8 +85,15 @@ export async function main({
           codex: () => runCodex([]),
           claude: () => runClaude([], { configDir }),
           sessions: async () => {
-            const browserResult = await sessionBrowser({ cwd });
-            return browserResult === 0 ? BACK_TO_START_MENU : browserResult;
+            let selected = false;
+            const browserResult = await sessionBrowser({
+              cwd,
+              onSelect: (session) => {
+                selected = true;
+                return resumeSession(session, configDir);
+              },
+            });
+            return selected || browserResult !== 0 ? browserResult : BACK_TO_START_MENU;
           },
         },
       });

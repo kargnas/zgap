@@ -336,6 +336,23 @@ test("sessions direct command는 현재 디렉터리의 browser를 연다", asyn
   assert.equal(options.cwd, "/repo/worktree");
 });
 
+test("session resume은 선택한 agent의 정확한 id와 저장된 디렉터리를 전달한다", async () => {
+  const cli = await import("../src/cli.mjs");
+  assert.equal(typeof cli.resumeSession, "function");
+  const calls = [];
+  const runners = {
+    codexRunner: async (args, options) => { calls.push({ agent: "codex", args, options }); return 11; },
+    claudeRunner: async (args, options) => { calls.push({ agent: "claude", args, options }); return 12; },
+  };
+
+  assert.equal(await cli.resumeSession({ agent: "codex", id: "codex-id", cwd: "/repo/codex" }, "/config", runners), 11);
+  assert.equal(await cli.resumeSession({ agent: "claude", id: "claude-id", cwd: "/repo/claude" }, "/config", runners), 12);
+  assert.deepEqual(calls, [
+    { agent: "codex", args: ["resume", "codex-id"], options: { configDir: "/config", cwd: "/repo/codex" } },
+    { agent: "claude", args: ["--resume", "claude-id"], options: { configDir: "/config", cwd: "/repo/claude" } },
+  ]);
+});
+
 test("start menu의 Sessions에서 뒤로 오면 start menu를 다시 연다", async () => {
   const { main } = await import("../src/cli.mjs");
   let menuCalls = 0;

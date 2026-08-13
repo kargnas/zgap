@@ -66,7 +66,7 @@ function apiKeyHelper(credentialFile) {
   return [process.execPath, CLI_FILE, "auth-token", credentialFile].map(shellQuote).join(" ");
 }
 
-export async function runClaude(args, { configDir = defaultConfigDir() } = {}) {
+export async function runClaude(args, { configDir = defaultConfigDir(), cwd = process.cwd() } = {}) {
   if (args.some((arg) => arg === "--settings" || arg.startsWith("--settings="))) {
     throw new Error("zgap claude supplies --settings automatically; remove the user-provided --settings option.");
   }
@@ -99,14 +99,14 @@ export async function runClaude(args, { configDir = defaultConfigDir() } = {}) {
     if (receivedSignal) throw new Error(`runClaude interrupted by ${receivedSignal}`);
   };
   try {
-    const claudePath = await resolveClaudeExecutable({ env });
+    const claudePath = await resolveClaudeExecutable({ env, cwd });
     abortIfSignaled();
     return await new Promise((resolve, reject) => {
       child = spawn(claudePath, [
         "--settings",
         JSON.stringify({ apiKeyHelper: apiKeyHelper(credentialsPath(configDir)), env: CLAUDE_SETTINGS_ENV }),
         ...args,
-      ], { env, stdio: "inherit" });
+      ], { cwd, env, stdio: "inherit" });
       child.once("error", (error) => reject(error.code === "ENOENT"
         ? new Error("Claude CLI is not installed or not in PATH.")
         : error));
