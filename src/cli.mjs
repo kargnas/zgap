@@ -1,10 +1,8 @@
-import path from "node:path";
 import {
   credentialsPath,
   defaultConfigDir,
   logout,
   readCredentialState,
-  resolveAccessToken,
 } from "./credentials.mjs";
 import { login } from "./login.mjs";
 import { runCodex } from "./codex.mjs";
@@ -35,7 +33,7 @@ export async function main({
 } = {}) {
   const [command, ...args] = argv;
   const installation = detectInstallation({ entryPath, invokedPath, modulePath, bunGlobalBin });
-  if (command !== "auth-token" && installation === "npm") printNpmMigrationWarning();
+  if (installation === "npm") printNpmMigrationWarning();
   if (command === "login") {
     await login();
     return 0;
@@ -43,11 +41,6 @@ export async function main({
   if (command === "logout") {
     await logout({ configDir });
     console.log("Logged out.");
-    return 0;
-  }
-  if (command === "auth-token") {
-    if (args.length !== 1) throw new Error("Invalid auth-token invocation.");
-    process.stdout.write(await resolveAccessToken({ credentialFile: path.resolve(args[0]) }));
     return 0;
   }
   if (command === "codex") return runCodex(args);

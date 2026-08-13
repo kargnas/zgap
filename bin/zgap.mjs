@@ -1,17 +1,34 @@
 #!/usr/bin/env bun
 
 import { realpathSync } from "node:fs";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { main } from "../src/cli.mjs";
-import { resolveBunGlobalBin } from "../src/install.mjs";
 
-if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
+async function run() {
+  const [command, ...args] = process.argv.slice(2);
+  if (command === "auth-token") {
+    if (args.length !== 1) throw new Error("Invalid auth-token invocation.");
+    // Claude Code gives startup helpers only a short window, so this path must not load the TUI and installer.
+    const { resolveAccessToken } = await import("../src/credentials.mjs");
+    process.stdout.write(await resolveAccessToken({ credentialFile: path.resolve(args[0]) }));
+    return 0;
+  }
+
+  const [{ main }, { resolveBunGlobalBin }] = await Promise.all([
+    import("../src/cli.mjs"),
+    import("../src/install.mjs"),
+  ]);
   const modulePath = realpathSync(fileURLToPath(import.meta.url));
-  resolveBunGlobalBin().then((bunGlobalBin) => main({
+  return main({
+    argv: [command, ...args],
     invokedPath: process.argv[1],
     modulePath,
-    bunGlobalBin,
-  })).then(
+    bunGlobalBin: await resolveBunGlobalBin(),
+  });
+}
+
+if (process.argv[1] && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
+  run().then(
     (code) => { process.exitCode = code; },
     (error) => {
       console.error(`zgap: ${error.message}`);

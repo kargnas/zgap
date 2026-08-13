@@ -648,6 +648,37 @@ test("claude가 PATH에 없으면 명확한 오류를 반환한다", async () =>
   assert.match(result.stderr, /Claude CLI is not installed or not in PATH/);
 });
 
+test("auth-token은 전체 CLI 모듈 없이 credential 경로만 실행한다", async (t) => {
+  const root = await tempDir(t);
+  const isolatedCli = path.join(root, "bin", "zgap.mjs");
+  const isolatedSrc = path.join(root, "src");
+  const credentialPath = path.join(root, "credentials.json");
+  await mkdir(path.dirname(isolatedCli), { recursive: true });
+  await mkdir(isolatedSrc, { recursive: true });
+  await writeFile(isolatedCli, await readFile(cliPath));
+  for (const name of ["constants.mjs", "credentials.mjs"]) {
+    await writeFile(path.join(isolatedSrc, name), await readFile(path.join(repoDir, "src", name)));
+  }
+  await writeFile(credentialPath, JSON.stringify({
+    access_expires_at: "2099-01-02T00:00:00.000Z",
+    access_token: ACCESS_OLD,
+    device_id: "d".repeat(43),
+    origin: "https://ai-proxy.zz.gg",
+    refresh_expires_at: "2099-01-05T00:00:00.000Z",
+    refresh_token: REFRESH_OLD,
+  }), { mode: 0o600 });
+
+  const child = spawn(process.execPath, [isolatedCli, "auth-token", credentialPath]);
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (chunk) => { stdout += chunk; });
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  const [code] = await once(child, "exit");
+
+  assert.equal(code, 0, stderr);
+  assert.equal(stdout, ACCESS_OLD);
+});
+
 test("auth-token은 만료 임박 access를 한 번만 refresh하고 rotation 결과를 원자 저장한다", async (t) => {
   const root = await tempDir(t);
   const configDir = path.join(root, "config", "zgap");
