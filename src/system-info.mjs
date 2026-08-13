@@ -15,12 +15,20 @@ function bounded(value, maximum) {
   return String(value).replace(/[\u0000-\u001f\u007f]/gu, "").slice(0, maximum) || "unknown";
 }
 
-export async function readSystemInfo() {
-  const platform = os.platform();
+export function normalizeSystemInfo({ platform, hostname, release, arch }) {
   return {
-    hostname: bounded(os.hostname(), 255),
+    hostname: bounded(hostname, 255),
     os_name: bounded(OS_NAMES[platform] ?? platform, 32),
-    os_version: bounded(os.release(), 128),
-    os_arch: bounded(os.arch(), 32),
+    os_version: bounded(release, 128),
+    os_arch: bounded(arch, 32),
   };
+}
+
+export async function readSystemInfo() {
+  return normalizeSystemInfo({
+    platform: os.platform(),
+    hostname: os.hostname(),
+    release: os.release(),
+    arch: os.arch(),
+  });
 }

@@ -90,3 +90,55 @@ This completed without output or errors.
 ## Concerns
 
 None identified for Task 1. The server-side validation and persistence work belongs to later tasks.
+
+## Fix Round 1
+
+### Covering tests
+
+- `test/system-info.test.mjs` now exercises all mapped platforms: AIX, Android, macOS, FreeBSD, Linux, OpenBSD, SunOS, and Windows.
+- The same test file now exercises control-character removal, empty-value fallback, and independent hostname, OS version, OS name, and architecture bounds through real normalization behavior.
+
+### TDD evidence
+
+RED command:
+
+```text
+bun test test/system-info.test.mjs
+```
+
+The first platform-mocking attempt produced a runtime test failure because Bun 1.3.6 does not expose `node:test` `mock.method`. The test was then changed to call the missing production normalization interface with representative platform and metadata values; it failed with `TypeError: normalizeSystemInfo is not a function`.
+
+GREEN commands and output:
+
+```text
+bun test test/system-info.test.mjs test/zgap.test.mjs
+```
+
+```text
+37 pass
+0 fail
+Ran 37 tests across 2 files.
+```
+
+```text
+bun test
+```
+
+```text
+82 pass
+0 fail
+Ran 82 tests across 8 files.
+```
+
+### Changes
+
+- Added `normalizeSystemInfo()` as the pure normalization boundary used by `readSystemInfo()`.
+- Expanded platform expectations to every platform mapping in `src/system-info.mjs`.
+- Added direct assertions for control-character removal, per-field bounds, and `unknown` fallback.
+
+### Self-review
+
+- `readSystemInfo()` remains the public no-argument asynchronous interface.
+- The added helper contains no I/O and keeps platform collection in `readSystemInfo()`.
+- Tests exercise returned values through the exported normalization behavior rather than inspecting source text.
+- No dependency, environment variable, unrelated file, deployment, or external state was changed.

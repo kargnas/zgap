@@ -2,13 +2,50 @@ import assert from "node:assert/strict";
 import os from "node:os";
 import { test } from "node:test";
 
-test("readSystemInfo는 현재 플랫폼을 제한된 JSON 메타데이터로 정규화한다", async () => {
+test("readSystemInfo는 지원하는 모든 플랫폼 이름을 정규화한다", async () => {
+  const { normalizeSystemInfo } = await import("../src/system-info.mjs");
+  const expectedNames = new Map([
+    ["aix", "AIX"],
+    ["android", "Android"],
+    ["darwin", "macOS"],
+    ["freebsd", "FreeBSD"],
+    ["linux", "Linux"],
+    ["openbsd", "OpenBSD"],
+    ["sunos", "SunOS"],
+    ["win32", "Windows"],
+  ]);
+
+  for (const [platform, expectedName] of expectedNames) {
+    assert.equal(normalizeSystemInfo({ platform, hostname: "host", release: "release", arch: "x64" }).os_name, expectedName);
+  }
+});
+
+test("readSystemInfo는 필드별 길이와 안전하지 않은 문자를 정규화한다", async () => {
+  const { normalizeSystemInfo } = await import("../src/system-info.mjs");
+  assert.deepEqual(normalizeSystemInfo({
+    platform: "unknown-platform",
+    hostname: `host\u0000${"h".repeat(300)}`,
+    release: `\u0001${"r".repeat(200)}`,
+    arch: "",
+  }), {
+    hostname: `host${"h".repeat(251)}`,
+    os_arch: "unknown",
+    os_name: "unknown-platform",
+    os_version: "r".repeat(128),
+  });
+});
+
+test("readSystemInfo는 현재 플랫폼의 메타데이터 모양을 유지한다", async () => {
   const { readSystemInfo } = await import("../src/system-info.mjs");
   const systemInfo = await readSystemInfo();
   const expectedNames = {
+    aix: "AIX",
+    android: "Android",
     darwin: "macOS",
     freebsd: "FreeBSD",
     linux: "Linux",
+    openbsd: "OpenBSD",
+    sunos: "SunOS",
     win32: "Windows",
   };
 
