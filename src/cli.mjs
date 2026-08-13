@@ -9,9 +9,8 @@ import {
 import { login } from "./login.mjs";
 import { runCodex } from "./codex.mjs";
 import { runClaude } from "./claude.mjs";
-import { updateGlobalInstall } from "./install.mjs";
+import { checkForGlobalUpdate, updateGlobalInstall } from "./install.mjs";
 import { runStartMenu } from "./tui/menu.mjs";
-import { fetchCurrentUserUsage } from "./usage.mjs";
 
 function printHelp() {
   console.log(`Usage:
@@ -30,7 +29,7 @@ export async function main({
   credentialStateReader = readCredentialState,
   credentialReader = readCredentialFile,
   startMenu = runStartMenu,
-  usageReader = fetchCurrentUserUsage,
+  updateChecker = checkForGlobalUpdate,
 } = {}) {
   const [command, ...args] = argv;
   if (command === "login") {
@@ -64,11 +63,7 @@ export async function main({
     return startMenu({
       credentialState,
       accountProfile,
-      usagePromise: credentialState === "signed-in"
-        ? Promise.resolve()
-          .then(() => usageReader({ credentialFile }))
-          .catch(() => null)
-        : undefined,
+      updateChecker,
       actions: {
         login,
         codex: () => runCodex([]),
