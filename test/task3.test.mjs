@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, readFile, rm, writeFile, mkdir, readdir, symlink } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile, mkdir, readdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -731,15 +731,6 @@ test("OpenTUI keeps signal cleanup while reserving Ctrl+C for the double-press h
   assert.equal(rendererOptions.backgroundColor, "#000000");
 });
 
-test("npm installation warning is emitted while normal commands remain runnable", async () => {
-  const { NPM_MIGRATION_WARNING, detectInstallation, printNpmMigrationWarning } = await import("../src/install.mjs");
-  const entryPath = "/opt/homebrew/lib/node_modules/@kargnas/zgap/bin/zgap.mjs";
-  assert.equal(detectInstallation({ entryPath, bunInstall: "/Users/test/.bun" }), "npm");
-  let stderr = "";
-  printNpmMigrationWarning({ write: (value) => { stderr += value; } });
-  assert.equal(stderr, `${NPM_MIGRATION_WARNING}\n`);
-});
-
 test("CLI help는 logout direct command를 안내한다", async () => {
   const child = spawn(process.execPath, [path.join(repoDir, "bin", "zgap.mjs"), "--help"]);
   let stdout = "";
@@ -747,31 +738,17 @@ test("CLI help는 logout direct command를 안내한다", async () => {
   const [code] = await once(child, "exit");
   assert.equal(code, 0);
   assert.match(stdout, /zgap logout\s+Sign out on this device/);
+  assert.match(stdout, /zgap update\s+Update zgap from GitHub main/);
 });
 
-test("custom Bun global bin paths remain Bun installations and update with exact argv", async (t) => {
-  const root = await tempDir(t);
-  const globalBin = path.join(root, "custom-bun-bin");
-  const packageBin = path.join(root, "custom-bun-packages", "zgap", "bin");
-  await mkdir(globalBin, { recursive: true });
-  await mkdir(packageBin, { recursive: true });
-  const modulePath = path.join(packageBin, "zgap.mjs");
-  const invokedPath = path.join(globalBin, "zgap");
-  await writeFile(modulePath, "#!/usr/bin/env bun\n");
-  await symlink(modulePath, invokedPath);
-  const { detectInstallation, updateGlobalInstall } = await import("../src/install.mjs");
-  assert.equal(detectInstallation({ invokedPath, modulePath, bunGlobalBin: globalBin }), "bun");
-  assert.equal(detectInstallation({ invokedPath: "/tmp/zgap", modulePath }), "local");
-  const npmModulePath = path.join(root, "npm", "node_modules", "@kargnas", "zgap", "bin", "zgap.mjs");
-  assert.equal(detectInstallation({ invokedPath: "/usr/local/bin/zgap", modulePath: npmModulePath, bunGlobalBin: globalBin }), "npm");
+test("global update reinstalls the GitHub main branch without cached resolution", async () => {
+  const { updateGlobalInstall } = await import("../src/install.mjs");
   const calls = [];
   const result = await updateGlobalInstall({
-    installation: detectInstallation({ invokedPath, modulePath, bunGlobalBin: globalBin }),
     run: async (...args) => { calls.push(args); return 0; },
-    stderr: { write() {} },
   });
   assert.equal(result, 0);
-  assert.deepEqual(calls, [["bun", ["add", "-g", "@kargnas/zgap@latest"]]]);
+  assert.deepEqual(calls, [["bun", ["add", "-g", "github:kargnas/zgap#main", "--force", "--no-cache"]]]);
 });
 
 test("Bun package dry-run contains runtime files only", async () => {
@@ -792,27 +769,6 @@ test("Bun package dry-run contains runtime files only", async () => {
   }
 });
 
-test("npm installation blocks update while preserving the npm package", async () => {
-  const { updateGlobalInstall } = await import("../src/install.mjs");
-  let called = false;
-  const result = await updateGlobalInstall({
-    installation: "npm",
-    run: async () => { called = true; return 0; },
-    stderr: { write() {} },
-  });
-  assert.equal(result, 1);
-  assert.equal(called, false);
-});
-
-test("Bun and unknown installations update with the exact Bun argv", async () => {
-  const { updateGlobalInstall } = await import("../src/install.mjs");
-  const calls = [];
-  const run = async (...args) => { calls.push(args); return 0; };
-  assert.equal(await updateGlobalInstall({ installation: "bun", run, stderr: { write() {} } }), 0);
-  assert.equal(await updateGlobalInstall({ installation: "unknown", run, stderr: { write() {} } }), 0);
-  assert.deepEqual(calls, [["bun", ["add", "-g", "@kargnas/zgap@latest"]], ["bun", ["add", "-g", "@kargnas/zgap@latest"]]]);
-});
-
 test("installer uses existing Bun and never manages zgap files", async (t) => {
   const root = await tempDir(t);
   const fakeBin = path.join(root, "bin");
@@ -827,7 +783,7 @@ printf '%s\\n' "$@" > ${marker}
   });
   const [code] = await once(child, "exit");
   assert.equal(code, 0);
-  assert.equal(await readFile(marker, "utf8"), "add\n-g\n@kargnas/zgap@latest\n");
+  assert.equal(await readFile(marker, "utf8"), "add\n-g\ngithub:kargnas/zgap#main\n--force\n--no-cache\n");
   assert.equal((await readdir(root)).includes("zgap"), false);
 });
 
@@ -851,5 +807,5 @@ chmod +x ${bunInstall}/bin/bun
   const [code] = await once(child, "exit");
   assert.equal(code, 0);
   assert.equal(await readFile(curlArgs, "utf8"), "-fsSL\nhttps://bun.com/install\n");
-  assert.equal(await readFile(bunArgs, "utf8"), "add\n-g\n@kargnas/zgap@latest\n");
+  assert.equal(await readFile(bunArgs, "utf8"), "add\n-g\ngithub:kargnas/zgap#main\n--force\n--no-cache\n");
 });

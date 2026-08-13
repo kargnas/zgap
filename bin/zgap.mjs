@@ -14,16 +14,9 @@ async function run() {
     return 0;
   }
 
-  const [{ main }, { resolveBunGlobalBin }] = await Promise.all([
-    import("../src/cli.mjs"),
-    import("../src/install.mjs"),
-  ]);
-  const modulePath = realpathSync(fileURLToPath(import.meta.url));
+  const { main } = await import("../src/cli.mjs");
   return main({
     argv: [command, ...args],
-    invokedPath: process.argv[1],
-    modulePath,
-    bunGlobalBin: await resolveBunGlobalBin(),
   });
 }
 
