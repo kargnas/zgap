@@ -10,7 +10,7 @@
 
 ## Install
 
-The installer uses the official Bun installer when Bun is not already available, then installs the latest `main` revision from GitHub:
+The installer uses the official Bun installer when Bun is not already available. If `unzip` is missing on an `apt-get` system, it installs that prerequisite first, then installs the latest `main` revision from GitHub:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/kargnas/zgap/main/install.sh | bash
