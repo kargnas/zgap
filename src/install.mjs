@@ -2,7 +2,9 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 
-export const NPM_MIGRATION_WARNING = "zgap was installed with npm.\nRecommended migration:\n\nnpm uninstall -g zgap\nbun add -g zgap@latest";
+const PACKAGE = "@kargnas/zgap";
+
+export const NPM_MIGRATION_WARNING = `zgap was installed with npm.\nRecommended migration:\n\nnpm uninstall -g ${PACKAGE}\nbun add -g ${PACKAGE}@latest`;
 
 function isInside(candidate, parent) {
   const relative = path.relative(parent, candidate);
@@ -10,7 +12,7 @@ function isInside(candidate, parent) {
 }
 
 function bunGlobalPackageRoot(bunInstall) {
-  return path.resolve(bunInstall, "install", "global", "node_modules", "zgap");
+  return path.resolve(bunInstall, "install", "global", "node_modules", PACKAGE);
 }
 
 export function detectInstallation({
@@ -26,7 +28,7 @@ export function detectInstallation({
   if (bunGlobalBin && resolvedInvocation && isInside(resolvedInvocation, path.resolve(bunGlobalBin))) return "bun";
   const bunRoot = bunGlobalPackageRoot(bunInstall);
   if (resolvedModule && isInside(resolvedModule, bunRoot)) return "bun";
-  const npmPackageMarker = `${path.sep}node_modules${path.sep}zgap${path.sep}`;
+  const npmPackageMarker = `${path.sep}node_modules${path.sep}${PACKAGE.split("/").join(path.sep)}${path.sep}`;
   if (resolvedModule?.includes(npmPackageMarker)) return "npm";
   return "local";
 }
@@ -70,5 +72,5 @@ export async function updateGlobalInstall({
     if (emitWarning) printNpmMigrationWarning(stderr);
     return 1;
   }
-  return run("bun", ["add", "-g", "zgap@latest"]);
+  return run("bun", ["add", "-g", `${PACKAGE}@latest`]);
 }

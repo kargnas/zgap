@@ -19,11 +19,11 @@ curl -fsSL https://raw.githubusercontent.com/kargnas/zgap/main/install.sh | bash
 An existing npm installation prints the migration instructions. Run them exactly once before using `zgap update`:
 
 ```sh
-npm uninstall -g zgap
-bun add -g zgap@latest
+npm uninstall -g @kargnas/zgap
+bun add -g @kargnas/zgap@latest
 ```
 
-For an npm-installed `zgap`, `zgap update` prints the migration instructions and stops without uninstalling or changing the npm installation. After migration, `zgap update` updates a Bun global installation with `bun add -g zgap@latest`.
+For an npm-installed `zgap`, `zgap update` prints the migration instructions and stops without uninstalling or changing the npm installation. After migration, `zgap update` updates a Bun global installation with `bun add -g @kargnas/zgap@latest`.
 
 ## Start
 

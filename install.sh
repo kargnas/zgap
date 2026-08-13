@@ -14,4 +14,4 @@ if ! command -v bun >/dev/null 2>&1; then
 fi
 
 command -v bun >/dev/null 2>&1
-bun add -g zgap@latest
+bun add -g @kargnas/zgap@latest
