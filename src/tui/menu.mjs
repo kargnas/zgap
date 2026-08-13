@@ -85,23 +85,6 @@ function menuContent(credentialState, t) {
   throw new Error(`Unknown credential state: ${credentialState}`);
 }
 
-const USAGE_FIELDS = [
-  ["plan_type", "usagePlan"],
-  ["request_count", "usageRequests"],
-  ["total_tokens", "usageTotalTokens"],
-  ["input_tokens", "usageInputTokens"],
-  ["output_tokens", "usageOutputTokens"],
-  ["cached_input_tokens", "usageCachedInputTokens"],
-  ["cache_creation_input_tokens", "usageCacheCreationInputTokens"],
-];
-
-function usageText(usage, t) {
-  return USAGE_FIELDS
-    .filter(([field]) => usage?.[field] !== undefined && usage?.[field] !== null)
-    .map(([field, key]) => t(key, { value: usage[field] }))
-    .join(" · ");
-}
-
 export async function runStartMenu({
   rendererFactory = createCliRenderer,
   actions = {},
@@ -109,22 +92,22 @@ export async function runStartMenu({
   language = process.env.LANG,
   now = Date.now,
   proxyHealthCheck = checkProxyHealth,
-  usagePromise,
+  updateChecker,
   accountProfile,
 } = {}) {
   let renderer;
   let keyHandler;
   let resizeHandler;
-  let usageSpinner;
   const proxyAbortController = new AbortController();
+  const updateAbortController = new AbortController();
   let cleaned = false;
   const cleanup = () => {
     if (cleaned) return;
     cleaned = true;
     proxyAbortController.abort();
+    updateAbortController.abort();
     if (renderer && keyHandler) renderer.keyInput.off("keypress", keyHandler);
     if (renderer && resizeHandler) renderer.off("resize", resizeHandler);
-    if (usageSpinner) clearInterval(usageSpinner);
     renderer?.destroy();
   };
 
@@ -217,32 +200,27 @@ export async function runStartMenu({
     topBar.add(brand);
     topBar.add(statusArea);
 
-    const usageStatus = new TextRenderable(renderer, {
-      content: usagePromise === undefined ? "" : `| ${t("usageInitializing")}`,
-      fg: "#94A3B8",
-      selectable: true,
-    });
     const accountStatus = new TextRenderable(renderer, {
       content: accountProfile === null
         ? t("accountUnavailable")
         : accountProfile
-          ? t("accountSummary", {
-            email: accountProfile.email,
-            verified: t(accountProfile.emailVerified ? "accountVerified" : "accountUnverified"),
-            products: accountProfile.proxyProducts.map(({ id }) => id).join(", "),
-          })
+          ? accountProfile.email
           : "",
       fg: accountProfile === null ? "#F87171" : "#A7F3D0",
       selectable: true,
     });
-    const usageArea = new BoxRenderable(renderer, {
+    const updateStatus = new TextRenderable(renderer, {
+      content: "",
+      fg: "#67E8F9",
+      selectable: true,
+    });
+    const infoArea = new BoxRenderable(renderer, {
       width: "100%",
       flexDirection: "column",
       paddingTop: 1,
     });
-    usageArea.visible = usagePromise !== undefined;
-    usageArea.add(accountStatus);
-    usageArea.add(usageStatus);
+    infoArea.add(accountStatus);
+    infoArea.add(updateStatus);
 
     const centerArea = new BoxRenderable(renderer, {
       width: "100%",
@@ -306,7 +284,7 @@ export async function runStartMenu({
     bottomBar.add(ready);
     bottomBar.add(hint);
     root.add(topBar);
-    root.add(usageArea);
+    root.add(infoArea);
     root.add(centerArea);
     root.add(bottomBar);
     renderer.root.add(root);
@@ -337,9 +315,9 @@ export async function runStartMenu({
       bottomBar.justifyContent = compact ? "flex-start" : "space-between";
       ready.visible = !compact;
       hint.content = compact ? t("compactHint") : t("hint");
-      usageArea.paddingTop = compact ? 0 : 1;
+      infoArea.paddingTop = compact ? 0 : 1;
       // Short terminals have no spare row after status, both actions, and the quit hint.
-      usageArea.visible = (usagePromise !== undefined || accountProfile !== undefined) && !compact;
+      infoArea.visible = (accountProfile !== undefined || updateStatus.content !== "") && !compact;
     };
     // Terminal resize keeps the primary action and quit instruction visible instead of clipping long locale strings.
     resizeHandler = (width, height) => applyResponsiveLayout(width, height);
@@ -378,32 +356,34 @@ export async function runStartMenu({
       }
     };
     void updateProxyStatus();
-    if (usagePromise !== undefined) {
-      const spinnerFrames = ["|", "/", "-", "\\"];
-      let spinnerIndex = 0;
-      usageSpinner = setInterval(() => {
-        if (cleaned) return;
-        spinnerIndex = (spinnerIndex + 1) % spinnerFrames.length;
-        usageStatus.content = `${spinnerFrames[spinnerIndex]} ${t("usageInitializing")}`;
-      }, 80);
-      Promise.resolve(usagePromise).then((usage) => {
-        if (cleaned) return;
-        clearInterval(usageSpinner);
-        usageSpinner = undefined;
-        if (usage === null) {
-          usageStatus.content = t("usageUnavailable");
-          usageStatus.fg = "#F87171";
-          return;
-        }
-        usageStatus.content = usageText(usage, t) || t("usageUnavailable");
-        usageStatus.fg = "#A7F3D0";
-      }).catch(() => {
-        if (cleaned) return;
-        clearInterval(usageSpinner);
-        usageSpinner = undefined;
-        usageStatus.content = t("usageUnavailable");
-        usageStatus.fg = "#F87171";
-      });
+    if (updateChecker !== undefined) {
+      Promise.resolve()
+        .then(() => updateChecker({ signal: updateAbortController.signal }))
+        .then((update) => {
+          if (cleaned || update?.state === "skipped" || update?.state === "current") return;
+          if (update?.state === "updated" && update.commitDate) {
+            const date = new Date(update.commitDate);
+            if (!Number.isNaN(date.valueOf())) {
+              updateStatus.content = t("updatedVersion", {
+                date: new Intl.DateTimeFormat(localeFor(language), {
+                  month: "short",
+                  day: "numeric",
+                  timeZone: "UTC",
+                }).format(date),
+              });
+              infoArea.visible = renderer.width > COMPACT_WIDTH && renderer.height > 12;
+              return;
+            }
+          }
+          updateStatus.content = t("updateFailed");
+          updateStatus.fg = "#F87171";
+          infoArea.visible = renderer.width > COMPACT_WIDTH && renderer.height > 12;
+        }).catch(() => {
+          if (cleaned) return;
+          updateStatus.content = t("updateFailed");
+          updateStatus.fg = "#F87171";
+          infoArea.visible = renderer.width > COMPACT_WIDTH && renderer.height > 12;
+        });
     }
 
     let lastCtrlC = null;
