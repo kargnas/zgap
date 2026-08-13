@@ -32,6 +32,8 @@ test("TUI는 이메일만 표시하고 백그라운드 업데이트 완료 날�
   await flushMenu(setup);
   const initial = setup.captureCharFrame();
   assert.match(initial, /user@example\.com/);
+  assert.equal(initial.match(/user@example\.com/g)?.length, 1);
+  assert.doesNotMatch(initial, /Signed in/);
   assert.doesNotMatch(initial, /Products|verified|Plan|Requests|Tokens|Input|Output|Cached|creation|codex, claude/);
   assert.doesNotMatch(initial, /Updated to/);
 

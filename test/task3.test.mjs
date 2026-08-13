@@ -248,13 +248,14 @@ test("Corner Map은 100x24의 네 모서리와 중앙을 사용한다", async (t
   const resultPromise = runStartMenu({
     rendererFactory: async () => setup,
     credentialState: "signed-in",
+    accountProfile: { email: "user@example.com" },
     proxyHealthCheck: async () => ({ state: "online", latencyMs: 85 }),
     actions: { login: async () => 0, codex: async () => 0 },
   });
   await flushMenu(setup);
 
   const title = findText(setup.renderer.root, "zgap");
-  const status = findText(setup.renderer.root, "● Signed in");
+  const status = findText(setup.renderer.root, "● user@example.com");
   const proxy = findText(setup.renderer.root, "● Proxy online · 85 ms");
   const action = findText(setup.renderer.root, "CODEX  ↵");
   const hint = findText(setup.renderer.root, "Up/Down move  ·  Enter select  ·  Ctrl+C twice or Esc twice quit");
@@ -330,6 +331,7 @@ test("로그인 상태에서는 Login을 숨기고 CODEX를 실행한다", async
   const resultPromise = runStartMenu({
     rendererFactory: async () => setup,
     credentialState: "signed-in",
+    accountProfile: { email: "user@example.com" },
     actions: {
       login: async () => { calls.push("login"); return 7; },
       codex: async () => { calls.push("codex"); return 8; },
@@ -337,7 +339,8 @@ test("로그인 상태에서는 Login을 숨기고 CODEX를 실행한다", async
   });
   await flushMenu(setup);
   const initial = setup.captureCharFrame();
-  assert.match(initial, /Signed in/);
+  assert.match(initial, /user@example\.com/);
+  assert.doesNotMatch(initial, /Signed in/);
   assert.match(initial, /CODEX/);
   assert.doesNotMatch(initial, /Login/);
   assert.match(initial, /(?:Enter|↵) select/);
@@ -539,6 +542,7 @@ test("Corner Map은 40x10으로 줄어도 상태, action, 종료 hint를 유지�
   const resultPromise = runStartMenu({
     rendererFactory: async () => setup,
     credentialState: "signed-in",
+    accountProfile: { email: "user@example.com" },
     proxyHealthCheck: async () => ({ state: "online", latencyMs: 85 }),
     actions: { login: async () => 0, codex: async () => 0 },
   });
@@ -546,7 +550,7 @@ test("Corner Map은 40x10으로 줄어도 상태, action, 종료 hint를 유지�
   setup.resize(100, 24);
   await flushMenu(setup);
   const wideFrame = setup.captureCharFrame();
-  assert.match(wideFrame, /Signed in/);
+  assert.match(wideFrame, /user@example\.com/);
   assert.match(wideFrame, /CODEX/);
   assert.match(wideFrame, /Claude/);
   assert.match(wideFrame, /Esc/);
@@ -559,7 +563,7 @@ test("Corner Map은 40x10으로 줄어도 상태, action, 종료 hint를 유지�
   await flushMenu(setup);
   const frame = setup.captureCharFrame();
   assert.match(frame, /zgap/);
-  assert.match(frame, /Signed in/);
+  assert.match(frame, /user@example\.com/);
   assert.match(frame, /Proxy online · 85 ms/);
   assert.match(frame, /CODEX/);
   assert.match(frame, /Claude/);
@@ -578,12 +582,14 @@ test("지원하지 않는 locale은 English로 fallback한다", async (t) => {
   const resultPromise = runStartMenu({
     rendererFactory: async () => setup,
     credentialState: "signed-in",
+    accountProfile: { email: "user@example.com" },
     language: "de-DE",
     actions: { login: async () => 0, codex: async () => 0 },
   });
   await flushMenu(setup);
   const frame = setup.captureCharFrame();
-  assert.match(frame, /Signed in/);
+  assert.match(frame, /user@example\.com/);
+  assert.doesNotMatch(frame, /Signed in/);
   assert.match(frame, /CODEX/);
   await setup.mockInput.pressCtrlC();
   await setup.mockInput.pressCtrlC();

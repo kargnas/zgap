@@ -57,11 +57,11 @@ export async function loadMenuTranslator(language = process.env.LANG) {
   return instance.t.bind(instance);
 }
 
-function menuContent(credentialState, t) {
+function menuContent(credentialState, accountProfile, t) {
   if (credentialState === "signed-in") {
     return {
-      status: t("signedIn"),
-      statusColor: "#86EFAC",
+      status: accountProfile?.email ?? t("accountUnavailable"),
+      statusColor: accountProfile ? "#86EFAC" : "#F87171",
       actions: [
         { name: "codex", label: t("codex"), description: t("codexDescription") },
         { name: "claude", label: t("claude"), description: t("claudeDescription") },
@@ -121,7 +121,7 @@ export async function runStartMenu({
     });
     renderer = setup?.renderer ?? setup;
     const t = await loadMenuTranslator(language);
-    const content = menuContent(credentialState, t);
+    const content = menuContent(credentialState, accountProfile, t);
     let settled = false;
     let resolveResult;
     let rejectResult;
@@ -200,15 +200,6 @@ export async function runStartMenu({
     topBar.add(brand);
     topBar.add(statusArea);
 
-    const accountStatus = new TextRenderable(renderer, {
-      content: accountProfile === null
-        ? t("accountUnavailable")
-        : accountProfile
-          ? accountProfile.email
-          : "",
-      fg: accountProfile === null ? "#F87171" : "#A7F3D0",
-      selectable: true,
-    });
     const updateStatus = new TextRenderable(renderer, {
       content: "",
       fg: "#67E8F9",
@@ -219,7 +210,6 @@ export async function runStartMenu({
       flexDirection: "column",
       paddingTop: 1,
     });
-    infoArea.add(accountStatus);
     infoArea.add(updateStatus);
 
     const centerArea = new BoxRenderable(renderer, {
@@ -317,7 +307,7 @@ export async function runStartMenu({
       hint.content = compact ? t("compactHint") : t("hint");
       infoArea.paddingTop = compact ? 0 : 1;
       // Short terminals have no spare row after status, both actions, and the quit hint.
-      infoArea.visible = (accountProfile !== undefined || updateStatus.content !== "") && !compact;
+      infoArea.visible = updateStatus.content !== "" && !compact;
     };
     // Terminal resize keeps the primary action and quit instruction visible instead of clipping long locale strings.
     resizeHandler = (width, height) => applyResponsiveLayout(width, height);
