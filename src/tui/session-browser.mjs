@@ -9,7 +9,7 @@ import {
   fg,
   createCliRenderer,
 } from "@opentui/core";
-import { discoverRepositoryScope, filterSessions, listSessions, loadSessionPreview, stripTerminalControls } from "../sessions.mjs";
+import { discoverRepositoryScope, filterSessions, listSessions, loadSessionDetails, loadSessionPreview, stripTerminalControls } from "../sessions.mjs";
 import { loadMenuTranslator } from "./menu.mjs";
 
 const AGENTS = ["all", "codex", "claude"];
@@ -19,6 +19,8 @@ const COLORS = {
   amber: "#FBBF24",
   amberBackground: "#271708",
   rose: "#FB7185",
+  blue: "#60A5FA",
+  green: "#6EE7B7",
   text: "#E2E8F0",
   meta: "#64748B",
   chip: "#94A3B8",
@@ -29,12 +31,34 @@ function nextValue(values, current) {
   return values[(Math.max(0, values.indexOf(current)) + 1) % values.length];
 }
 
-function timestampLabel(value, language) {
+function timestampLabel(value, language, currentTime) {
   if (!Number.isFinite(value) || value <= 0) return "";
-  return new Intl.DateTimeFormat(language?.toLowerCase().startsWith("ko") ? "ko" : "en", {
-    dateStyle: "short",
-    timeStyle: "short",
-  }).format(new Date(value));
+  const locale = language?.toLowerCase().startsWith("ko") ? "ko" : "en";
+  const delta = value - currentTime;
+  const absolute = Math.abs(delta);
+  let unit = "second";
+  let divisor = 1_000;
+  if (absolute >= 365 * 86_400_000) [unit, divisor] = ["year", 365 * 86_400_000];
+  else if (absolute >= 30 * 86_400_000) [unit, divisor] = ["month", 30 * 86_400_000];
+  else if (absolute >= 86_400_000) [unit, divisor] = ["day", 86_400_000];
+  else if (absolute >= 3_600_000) [unit, divisor] = ["hour", 3_600_000];
+  else if (absolute >= 60_000) [unit, divisor] = ["minute", 60_000];
+  const amount = Math.round(delta / divisor);
+  return new Intl.RelativeTimeFormat(locale, { numeric: "auto", style: "narrow" }).format(amount, unit);
+}
+
+function fileSizeLabel(value, language) {
+  if (!Number.isFinite(value) || value < 0) return "";
+  const locale = language?.toLowerCase().startsWith("ko") ? "ko" : "en";
+  const units = ["B", "KB", "MB", "GB"];
+  let size = value;
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024;
+    unit += 1;
+  }
+  const digits = unit > 0 && size < 10 ? 1 : 0;
+  return `${new Intl.NumberFormat(locale, { maximumFractionDigits: digits }).format(size)} ${units[unit]}`;
 }
 
 function sessionKey(session) {
@@ -78,15 +102,35 @@ function chunk(text, color, background, isBold = false) {
   return value;
 }
 
-function rowText(session, selected, language, width, compact) {
+function rowText(session, detailsState, selected, language, width, compact, currentTime, t) {
   const agent = displayText(session.agent).toUpperCase();
   const provider = truncateText(displayText(session.provider), compact ? 12 : 24);
   const sourceWidth = Bun.stringWidth(agent) + (provider ? Bun.stringWidth(` · ${provider}`) : 0);
   const rowWidth = Math.max(1, width - 3);
   const metaPrefix = "  └ ";
-  const location = truncateText(displayText(path.basename(session.cwd) || session.cwd), rowWidth - Bun.stringWidth(metaPrefix));
-  const time = timestampLabel(session.updatedAt, language);
-  const meta = compact ? location : [location, time].filter(Boolean).join(" · ");
+  const time = timestampLabel(session.updatedAt, language, currentTime);
+  const turnCount = Number.isSafeInteger(detailsState?.turnCount)
+    ? compact ? `${detailsState.turnCount}t` : t("sessionsTurnCount", { count: detailsState.turnCount })
+    : detailsState?.error ? t("sessionsDetailsUnavailable") : "…";
+  const fileSize = Number.isFinite(detailsState?.fileSize) ? fileSizeLabel(detailsState.fileSize, language) : "…";
+  const detailParts = [
+    time && { text: time, color: COLORS.blue },
+    turnCount && { text: turnCount, color: COLORS.amber },
+    fileSize && { text: fileSize, color: COLORS.green },
+  ].filter(Boolean);
+  const details = [];
+  let detailsWidth = 0;
+  for (const part of detailParts) {
+    const nextWidth = detailsWidth + (details.length ? 3 : 0) + Bun.stringWidth(part.text);
+    if (nextWidth > rowWidth - Bun.stringWidth(metaPrefix) - 4) break;
+    details.push(part);
+    detailsWidth = nextWidth;
+  }
+  const locationLimit = Math.max(0, rowWidth - Bun.stringWidth(metaPrefix) - detailsWidth - (details.length ? 3 : 0));
+  const location = locationLimit >= 4
+    ? truncateText(displayText(path.basename(session.cwd) || session.cwd), locationLimit)
+    : "";
+  const metaParts = [location && { text: location, color: COLORS.meta }, ...details].filter(Boolean);
   const titleLimit = Math.max(4, rowWidth - sourceWidth - 4);
   const title = truncateText(displayText(session.title), titleLimit);
   const background = selected ? COLORS.amberBackground : undefined;
@@ -97,7 +141,9 @@ function rowText(session, selected, language, width, compact) {
       ]
     : [];
   const firstLineWidth = 2 + sourceWidth + 2 + Bun.stringWidth(title);
-  const metaLineWidth = Bun.stringWidth(metaPrefix) + Bun.stringWidth(meta);
+  const metaLineWidth = Bun.stringWidth(metaPrefix)
+    + metaParts.reduce((total, part) => total + Bun.stringWidth(part.text), 0)
+    + Math.max(0, metaParts.length - 1) * 3;
   return new StyledText([
     chunk(selected ? "›" : " ", COLORS.amber, background),
     chunk(" ", COLORS.text, background),
@@ -107,7 +153,10 @@ function rowText(session, selected, language, width, compact) {
     chunk(title, COLORS.text, background),
     chunk(" ".repeat(Math.max(0, rowWidth - firstLineWidth)), COLORS.text, background),
     chunk(`\n${metaPrefix}`, COLORS.meta, background),
-    chunk(meta, COLORS.meta, background),
+    ...metaParts.flatMap((part, index) => [
+      ...(index > 0 ? [chunk(" · ", COLORS.meta, background)] : []),
+      chunk(part.text, part.color, background),
+    ]),
     chunk(" ".repeat(Math.max(0, rowWidth - metaLineWidth)), COLORS.meta, background),
   ]);
 }
@@ -233,6 +282,7 @@ export async function runSessionBrowser({
     repositoryRoots: scope === "repo" ? roots : undefined,
   }),
   previewLoader = loadSessionPreview,
+  detailsLoader = loadSessionDetails,
   sessionFilter = filterSessions,
 } = {}) {
   let renderer;
@@ -285,6 +335,8 @@ export async function runSessionBrowser({
     let roots = [];
     let sessions = [];
     const sessionCache = new Map();
+    const detailCache = new WeakMap();
+    const detailRequests = new WeakMap();
     let error = null;
     let scope = "repo";
     let agent = "all";
@@ -399,6 +451,10 @@ export async function runSessionBrowser({
       }
       if (showPreview) {
         const values = filteredSessions();
+        const session = values[selectedIndex];
+        const previewSession = session && detailCache.get(session)?.preview
+          ? { ...session, preview: detailCache.get(session).preview }
+          : session;
         title.content = t("sessionsPreviewTitle");
         title.visible = true;
         filters.content = "";
@@ -408,7 +464,7 @@ export async function runSessionBrowser({
           ? `${SPINNER_FRAMES[spinnerIndex]} ${t("sessionsPreviewLoading")}`
           : previewError
             ? `${t("sessionsPreviewLoadFailed")}: ${previewError.message}`
-            : values[selectedIndex] ? previewText(values[selectedIndex], renderer.width, renderer.height, t) : "";
+            : previewSession ? previewText(previewSession, renderer.width, renderer.height, t) : "";
         list.fg = previewError ? "#F87171" : previewLoading ? COLORS.chip : COLORS.text;
         renderer.requestRender();
         return;
@@ -454,10 +510,26 @@ export async function runSessionBrowser({
         return;
       }
       const count = visibleRows();
-      list.content = joinStyledText(values.slice(viewportStart, viewportStart + count)
-        .map((session, index) => rowText(session, viewportStart + index === selectedIndex, language, renderer.width, compact)));
+      const visibleSessions = values.slice(viewportStart, viewportStart + count);
+      list.content = joinStyledText(visibleSessions
+        .map((session, index) => rowText(session, detailCache.get(session), viewportStart + index === selectedIndex, language, renderer.width, compact, now(), t)));
       list.fg = "#E2E8F0";
       renderer.requestRender();
+      for (const session of visibleSessions) {
+        if (detailCache.has(session) || detailRequests.has(session)) continue;
+        const request = Promise.resolve(detailsLoader(session)).then((details) => {
+          detailCache.set(session, {
+            turnCount: Number.isSafeInteger(details?.turnCount) ? details.turnCount : 0,
+            fileSize: Number.isFinite(details?.fileSize) ? details.fileSize : 0,
+            preview: details?.preview,
+          });
+          if (!cleaned) render();
+        }, () => {
+          detailCache.set(session, { error: true });
+          if (!cleaned) render();
+        });
+        detailRequests.set(session, request);
+      }
     };
 
     const clearNotice = () => {
@@ -658,7 +730,9 @@ export async function runSessionBrowser({
         if (!session) return;
         showPreview = true;
         previewError = null;
-        if (Array.isArray(session.preview?.turns) && session.preview.turns.length > 0 || !session.previewLocator) {
+        if (Array.isArray(detailCache.get(session)?.preview?.turns)
+          || Array.isArray(session.preview?.turns) && session.preview.turns.length > 0
+          || !session.previewLocator) {
           previewLoading = false;
           render();
           return;

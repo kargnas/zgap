@@ -46,6 +46,9 @@
   "sessionsPreviewLoadFailed": "미리보기를 불러오지 못했습니다",
   "sessionsPreviewEmpty": "표시할 대화 미리보기가 없습니다",
   "sessionsPreviewOmitted": "⋯ 턴 {{count}}개 생략 ⋯",
+  "sessionsTurnCount_one": "턴 {{count}}개",
+  "sessionsTurnCount_other": "턴 {{count}}개",
+  "sessionsDetailsUnavailable": "정보 없음",
   "hint": "Up/Down 이동  ·  Enter 선택  ·  Ctrl+C 두 번 또는 Esc 두 번 종료",
   "compactHint": "↑↓ 이동 · ↵ 선택 · Esc 두 번 종료"
 }

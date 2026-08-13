@@ -46,6 +46,9 @@
   "sessionsPreviewLoadFailed": "Could not load preview",
   "sessionsPreviewEmpty": "No conversation preview available",
   "sessionsPreviewOmitted": "⋯ {{count}} turns omitted ⋯",
+  "sessionsTurnCount_one": "{{count}} turn",
+  "sessionsTurnCount_other": "{{count}} turns",
+  "sessionsDetailsUnavailable": "n/a",
   "hint": "Up/Down move  ·  Enter select  ·  Ctrl+C twice or Esc twice quit",
   "compactHint": "↑↓ move · ↵ select · Esc Esc quit"
 }
