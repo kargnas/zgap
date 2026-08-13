@@ -80,7 +80,7 @@ test("인자 없는 로그인 CLI는 JWT 계정 프로필을 메뉴에 전달한
   const { main } = await import("../src/cli.mjs");
   let menuOptions;
   const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
-  const token = [encode({ alg: "EdDSA", typ: "JWT" }), encode({ iss: "https://ai-proxy.zz.gg", aud: ["https://ai-proxy.zz.gg"], sub: "1", sid: "2", email: "user@example.com", email_verified: false, iat: 1, exp: 2, proxy_products: [{ id: "codex", origin: "https://ai-proxy.zz.gg" }] }), "signature"].join(".");
+  const token = [encode({ alg: "EdDSA", typ: "JWT" }), encode({ iss: "https://ai-proxy.zz.gg", aud: ["https://ai-proxy.zz.gg"], sub: "1", sid: "2", email: "user@example.com", email_verified: false, iat: 1, exp: 2, proxy_products: [{ id: "codex", origin: "https://ai-proxy.zz.gg" }] }), "sig"].join(".");
   await main({
     argv: [],
     configDir: "/tmp/zgap-config",

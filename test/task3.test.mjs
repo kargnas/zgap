@@ -252,6 +252,34 @@ test("TUI는 사용량 요약을 초기화·성공·실패 상태로 표시한�
   assert.equal(await compactResult, 130);
 });
 
+test("TUI는 EN/KO 계정 요약과 독립 실패를 표시하고 compact에서는 요약을 숨긴다", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runStartMenu } = await import("../src/tui/menu.mjs");
+  const profile = { email: "user@example.com", emailVerified: true, proxyProducts: [{ id: "codex", origin: "https://ai-proxy.zz.gg" }, { id: "claude", origin: "https://ai-proxy.zz.gg" }] };
+  for (const [language, expected] of [["en", /user@example\.com.*verified.*codex, claude/], ["ko", /user@example\.com.*이메일 인증됨.*codex, claude/]]) {
+    const setup = await createTestRenderer({ width: 100, height: 24 });
+    t.after(() => setup.renderer.destroy());
+    const result = runStartMenu({ rendererFactory: async () => setup, language, accountProfile: profile, usagePromise: Promise.resolve({ plan_type: "ai-proxy1", request_count: 1, total_tokens: 1, input_tokens: 1, output_tokens: 0, cached_input_tokens: 0, cache_creation_input_tokens: 0 }), proxyHealthCheck: async () => ({ state: "online", latencyMs: 1 }), actions: { codex: async () => 0, claude: async () => 0 } });
+    await flushMenu(setup);
+    assert.match(setup.captureCharFrame().replaceAll(/\s+/g, " "), expected);
+    await setup.mockInput.pressCtrlC(); await setup.mockInput.pressCtrlC(); assert.equal(await result, 130);
+  }
+  const failedAccount = await createTestRenderer({ width: 100, height: 24 });
+  t.after(() => failedAccount.renderer.destroy());
+  const accountResult = runStartMenu({ rendererFactory: async () => failedAccount, accountProfile: null, usagePromise: Promise.resolve({ plan_type: "ai-proxy1", request_count: 1, total_tokens: 1, input_tokens: 1, output_tokens: 0, cached_input_tokens: 0, cache_creation_input_tokens: 0 }), proxyHealthCheck: async () => ({ state: "online", latencyMs: 1 }), actions: { codex: async () => 0 } });
+  await flushMenu(failedAccount); assert.match(failedAccount.captureCharFrame(), /Account unavailable/); assert.match(failedAccount.captureCharFrame(), /Requests: 1/);
+  await failedAccount.mockInput.pressCtrlC(); await failedAccount.mockInput.pressCtrlC(); assert.equal(await accountResult, 130);
+  const failedUsage = await createTestRenderer({ width: 100, height: 24 });
+  t.after(() => failedUsage.renderer.destroy());
+  const usageResult = runStartMenu({ rendererFactory: async () => failedUsage, accountProfile: profile, usagePromise: Promise.resolve(null), proxyHealthCheck: async () => ({ state: "online", latencyMs: 1 }), actions: { codex: async () => 0 } });
+  await flushMenu(failedUsage); assert.match(failedUsage.captureCharFrame(), /user@example.com/); assert.match(failedUsage.captureCharFrame(), /Usage unavailable/);
+  await failedUsage.mockInput.pressCtrlC(); await failedUsage.mockInput.pressCtrlC(); assert.equal(await usageResult, 130);
+  const compact = await createTestRenderer({ width: 40, height: 10 });
+  t.after(() => compact.renderer.destroy());
+  const compactResult = runStartMenu({ rendererFactory: async () => compact, accountProfile: profile, usagePromise: Promise.resolve({ plan_type: "ai-proxy1", request_count: 1, total_tokens: 1, input_tokens: 1, output_tokens: 0, cached_input_tokens: 0, cache_creation_input_tokens: 0 }), proxyHealthCheck: async () => ({ state: "online", latencyMs: 1 }), actions: { codex: async () => 0 } });
+  await flushMenu(compact); assert.doesNotMatch(compact.captureCharFrame(), /user@example.com|Requests:/); await compact.mockInput.pressCtrlC(); await compact.mockInput.pressCtrlC(); assert.equal(await compactResult, 130);
+});
+
 test("Corner Map은 100x24의 네 모서리와 중앙을 사용한다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runStartMenu } = await import("../src/tui/menu.mjs");
