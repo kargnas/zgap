@@ -17,7 +17,6 @@ import {
 } from "./constants.mjs";
 
 const BASE64URL_RE = /^[A-Za-z0-9_-]+$/;
-const REQUIRED_AUDIENCES = ["https://ai-proxy.zz.gg"];
 
 function decodeJsonSegment(segment) {
   if (!BASE64URL_RE.test(segment) || segment.length % 4 === 1) return null;
@@ -55,7 +54,7 @@ export function decodeAccessTokenProfile(token) {
     !header || typeof header !== "object" || Array.isArray(header) || header.alg !== "EdDSA" || header.typ !== "JWT"
     || !payload || typeof payload !== "object" || Array.isArray(payload)
     || payload.iss !== "https://ai-proxy.zz.gg"
-    || !Array.isArray(payload.aud) || !REQUIRED_AUDIENCES.every((audience) => payload.aud.includes(audience))
+    || !Array.isArray(payload.aud) || !payload.aud.includes(ORIGIN)
     || typeof payload.sub !== "string" || !/^\d+$/.test(payload.sub)
     || typeof payload.sid !== "string" || !/^\d+$/.test(payload.sid)
     || !safeClaim(payload.email, 320) || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payload.email)

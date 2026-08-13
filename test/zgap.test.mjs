@@ -49,7 +49,7 @@ test("JWT access token profile은 계약 필드만 표시용으로 해석한다"
 test("credential origin은 고정 ai-proxy origin만 허용한다", async (t) => {
   const root = await tempDir(t);
   const credentialPath = path.join(root, "credentials.json");
-  await writeFile(credentialPath, JSON.stringify({ access_expires_at: "2099-01-02T00:00:00.000Z", access_token: ACCESS_NEW, device_id: "d".repeat(43), origin: refresh_expires_at: "2099-01-05T00:00:00.000Z", refresh_token: REFRESH_OLD }));
+  await writeFile(credentialPath, JSON.stringify({ access_expires_at: "2099-01-02T00:00:00.000Z", access_token: ACCESS_NEW, device_id: "d".repeat(43), origin: "https://attacker.example", refresh_expires_at: "2099-01-05T00:00:00.000Z", refresh_token: REFRESH_OLD }));
   const { readCredentialFile } = await import("../src/credentials.mjs");
   await assert.rejects(() => readCredentialFile(credentialPath), /Invalid zgap credentials/);
 });
