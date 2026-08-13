@@ -10,20 +10,19 @@
 
 ## Install
 
-The installer uses the official Bun installer when Bun is not already available, then installs the latest global `zgap` package:
+The installer uses the official Bun installer when Bun is not already available, then installs the latest `main` revision from GitHub:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/kargnas/zgap/main/install.sh | bash
 ```
 
-An existing npm installation prints the migration instructions. Run them exactly once before using `zgap update`:
+To install directly with Bun:
 
 ```sh
-npm uninstall -g @kargnas/zgap
-bun add -g @kargnas/zgap@latest
+bun add -g github:kargnas/zgap#main --force --no-cache
 ```
 
-For an npm-installed `zgap`, `zgap update` prints the migration instructions and stops without uninstalling or changing the npm installation. After migration, `zgap update` updates a Bun global installation with `bun add -g @kargnas/zgap@latest`.
+`zgap update` runs the same command so Bun resolves and reinstalls the current GitHub `main` revision instead of reusing a previously locked commit.
 
 ## Start
 
@@ -94,7 +93,7 @@ zgap login             Sign in with ai-proxy.zz.gg
 zgap logout            Sign out on this device
 zgap codex [args...]   Run Codex through ai-proxy.zz.gg
 zgap claude [args...]  Run Claude through ai-proxy.zz.gg
-zgap update            Update the global zgap installation with Bun
+zgap update            Update zgap from GitHub main
 zgap --help            Show command help
 ```
 
