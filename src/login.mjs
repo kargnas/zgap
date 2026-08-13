@@ -1,6 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
-import { createServer } from "node:http";
 import {
   CLIENT_ID,
   ACCESS_TOKEN_RE,
@@ -10,14 +9,6 @@ import {
   REQUEST_TIMEOUT_MS,
 } from "./constants.mjs";
 import { credentialsPath, defaultConfigDir, deviceIdFor, writePrivateJson } from "./credentials.mjs";
-
-function closeServer(server) {
-  return new Promise((resolve) => {
-    server.close(resolve);
-    // Browsers may keep loopback sockets open after the callback response, so close them before returning to the shell.
-    server.closeAllConnections();
-  });
-}
 
 function defaultOpenBrowser(url) {
   const command = process.platform === "darwin" ? "open" : process.platform === "win32" ? "cmd" : "xdg-open";
@@ -34,103 +25,138 @@ export async function login({
   requestTimeoutMs = REQUEST_TIMEOUT_MS,
   timeoutMs = LOGIN_TIMEOUT_MS,
   openBrowser = defaultOpenBrowser,
+  fetchImpl = fetch,
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   log = console.log,
 } = {}) {
   const normalizedOrigin = new URL(origin).origin;
   const deviceId = await deviceIdFor(configDir);
   const verifier = randomBytes(32).toString("base64url");
   const challenge = createHash("sha256").update(verifier).digest("base64url");
-  const state = randomBytes(32).toString("base64url");
-  let resolveCode;
-  let rejectCode;
-  const codePromise = new Promise((resolve, reject) => {
-    resolveCode = resolve;
-    rejectCode = reject;
-  });
-
-  const callbackServer = createServer((request, response) => {
-    const url = new URL(request.url ?? "/", "http://127.0.0.1");
-    if (request.method !== "GET" || url.pathname !== "/callback") {
-      response.writeHead(404).end();
-      return;
+  const deadline = Date.now() + timeoutMs;
+  const ensureWithinDeadline = () => {
+    if (Date.now() >= deadline) throw new Error("Login timed out.");
+  };
+  const beforeDeadline = async (operation) => {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error("Login timed out.");
+    let timer;
+    try {
+      return await Promise.race([
+        operation,
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error("Login timed out.")), remaining);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
     }
-    const code = url.searchParams.get("code");
-    if (url.searchParams.get("state") !== state || !code) {
-      response.writeHead(400, { "content-type": "text/plain; charset=utf-8" });
-      response.end("Invalid OAuth callback.");
-      return;
+  };
+  const request = async (path, body) => {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error("Login timed out.");
+    try {
+      return await fetchImpl(new URL(path, normalizedOrigin), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(Math.min(requestTimeoutMs, remaining)),
+      });
+    } catch (error) {
+      if (Date.now() >= deadline) throw new Error("Login timed out.");
+      throw error;
     }
-    response.writeHead(302, {
-      "cache-control": "no-store",
-      location: new URL("/console/cli-auth?result=success", normalizedOrigin).toString(),
-      "referrer-policy": "no-referrer",
+  };
+  const flow = async () => {
+    const authorizationResponse = await request("/cli/oauth/device_authorization", {
+      client_id: CLIENT_ID,
+      code_challenge: challenge,
+      code_challenge_method: "S256",
+      device_id: deviceId,
     });
-    response.end();
-    resolveCode(code);
-  });
-  callbackServer.on("error", rejectCode);
-  callbackServer.listen(0, "127.0.0.1");
-  await new Promise((resolve, reject) => {
-    callbackServer.once("listening", resolve);
-    callbackServer.once("error", reject);
-  });
-
-  const address = callbackServer.address();
-  const redirectUri = `http://127.0.0.1:${address.port}/callback`;
-  const authorizeUrl = new URL("/console/cli-auth", normalizedOrigin);
-  authorizeUrl.search = new URLSearchParams({
-    client_id: CLIENT_ID,
-    redirect_uri: redirectUri,
-    code_challenge: challenge,
-    code_challenge_method: "S256",
-    device_id: deviceId,
-    state,
-  }).toString();
-  log(`Open this URL to sign in:\n${authorizeUrl}`);
-
-  const timer = setTimeout(() => rejectCode(new Error("Login timed out.")), timeoutMs);
-  try {
-    await openBrowser(authorizeUrl.toString());
-    const code = await codePromise;
-    const tokenResponse = await fetch(new URL("/cli/oauth/token", normalizedOrigin), {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        client_id: CLIENT_ID,
-        grant_type: "authorization_code",
-        redirect_uri: redirectUri,
-        code,
-        code_verifier: verifier,
-      }),
-      signal: AbortSignal.timeout(requestTimeoutMs),
-    });
-    const body = await tokenResponse.json().catch(() => null);
-    if (!tokenResponse.ok) throw new Error(`Token exchange failed (${tokenResponse.status}).`);
+    const authorization = await authorizationResponse.json().catch(() => null);
+    let verificationUrl;
+    let completeUrl;
+    try {
+      verificationUrl = new URL(authorization?.verification_uri);
+      completeUrl = new URL(authorization?.verification_uri_complete);
+    } catch {
+      // The response is rejected below with the same public error as other malformed fields.
+    }
     if (
-      body?.token_type !== "Bearer"
-      || typeof body.access_token !== "string"
-      || !ACCESS_TOKEN_RE.test(body.access_token)
-      || typeof body.refresh_token !== "string"
-      || !REFRESH_TOKEN_RE.test(body.refresh_token)
-      || !Number.isFinite(body.expires_in)
-      || body.expires_in <= 0
-      || !Number.isFinite(body.refresh_expires_in)
-      || body.refresh_expires_in <= 0
-    ) {
-      throw new Error("Token exchange returned an invalid response.");
+      !authorizationResponse.ok
+      || typeof authorization?.device_code !== "string"
+      || typeof authorization.user_code !== "string"
+      || typeof authorization.verification_uri !== "string"
+      || typeof authorization.verification_uri_complete !== "string"
+      || !Number.isFinite(authorization.expires_in)
+      || authorization.expires_in <= 0
+      || (authorization.interval !== undefined
+        && (!Number.isFinite(authorization.interval) || authorization.interval <= 0))
+      || verificationUrl?.origin !== normalizedOrigin
+      || verificationUrl.pathname !== "/console/cli-auth"
+      || verificationUrl.search
+      || verificationUrl.hash
+      || completeUrl?.origin !== normalizedOrigin
+      || completeUrl.pathname !== "/console/cli-auth"
+      || completeUrl.searchParams.get("device_code") !== authorization.device_code
+      || completeUrl.searchParams.get("user_code") !== authorization.user_code
+      || completeUrl.hash
+    ) throw new Error("Device authorization returned an invalid response.");
+
+    log(`Open this URL to sign in:\n${authorization.verification_uri_complete}\nCode: ${authorization.user_code}`);
+    await beforeDeadline(Promise.resolve().then(() => openBrowser(authorization.verification_uri_complete)));
+    let interval = authorization.interval ?? 5;
+    const expiresAt = now() + authorization.expires_in * 1000;
+    let token;
+    while (!token) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw new Error("Login timed out.");
+      await sleep(Math.min(interval * 1000, remaining));
+      ensureWithinDeadline();
+      if (now() >= expiresAt) throw new Error("Token authorization failed: expired_token");
+      const tokenResponse = await request("/cli/oauth/token", {
+        client_id: CLIENT_ID,
+        grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+        device_code: authorization.device_code,
+        code_verifier: verifier,
+      });
+      const body = await tokenResponse.json().catch(() => null);
+      ensureWithinDeadline();
+      if (tokenResponse.ok) {
+        if (
+          body?.token_type !== "Bearer"
+          || typeof body.access_token !== "string"
+          || !ACCESS_TOKEN_RE.test(body.access_token)
+          || typeof body.refresh_token !== "string"
+          || !REFRESH_TOKEN_RE.test(body.refresh_token)
+          || !Number.isFinite(body.expires_in)
+          || body.expires_in <= 0
+          || !Number.isFinite(body.refresh_expires_in)
+          || body.refresh_expires_in <= 0
+        ) throw new Error("Token exchange returned an invalid response.");
+        token = body;
+        break;
+      }
+      if (body?.error === "authorization_pending") continue;
+      if (body?.error === "slow_down") {
+        interval += 5;
+        continue;
+      }
+      throw new Error(`Token authorization failed: ${typeof body?.error === "string" ? body.error : "invalid response"}`);
     }
+
+    ensureWithinDeadline();
     const current = now();
     await writePrivateJson(credentialsPath(configDir), {
-      access_expires_at: new Date(current + body.expires_in * 1000).toISOString(),
-      access_token: body.access_token,
+      access_expires_at: new Date(current + token.expires_in * 1000).toISOString(),
+      access_token: token.access_token,
       device_id: deviceId,
       origin: normalizedOrigin,
-      refresh_expires_at: new Date(current + body.refresh_expires_in * 1000).toISOString(),
-      refresh_token: body.refresh_token,
+      refresh_expires_at: new Date(current + token.refresh_expires_in * 1000).toISOString(),
+      refresh_token: token.refresh_token,
     });
-  } finally {
-    clearTimeout(timer);
-    await closeServer(callbackServer);
-  }
+  };
+  await flow();
   log("Logged in. Run `zgap codex`.");
 }

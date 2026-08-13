@@ -49,7 +49,7 @@ zgap
 zgap login
 ```
 
-The command opens `ai-proxy.zz.gg`, completes browser OAuth with PKCE, and stores the device-bound access and refresh token pair in `~/.config/zgap/credentials.json` (or the `XDG_CONFIG_HOME` equivalent). On macOS and Linux, the credential file and its directory use private permissions. Token rotation replaces the pair atomically before expiry.
+The command requests a device authorization, prints the verification URL and user code, opens the complete verification URL in your browser, and polls until authorization completes. It stores the device-bound access and refresh token pair in `~/.config/zgap/credentials.json` (or the `XDG_CONFIG_HOME` equivalent). On macOS and Linux, the credential file and its directory use private permissions. Token rotation replaces the pair atomically before expiry.
 
 ## Sign out
 

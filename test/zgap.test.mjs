@@ -1,9 +1,7 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { access, chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
-import { connect } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -144,7 +142,7 @@ test("최종 catalog의 중복 slug는 Codex 실행 전에 중단한다", async 
   });
 });
 
-test("login은 loopback PKCE를 검증하고 디바이스 token pair를 0600 파일에 저장한다", async (t) => {
+test("login은 디바이스 승인 대기와 slow_down을 폴링하고 token pair를 저장한다", async (t) => {
   const root = await tempDir(t);
   const configDir = path.join(root, "config", "zgap");
   const home = path.join(root, "home");
@@ -158,73 +156,79 @@ test("login은 loopback PKCE를 검증하고 디바이스 token pair를 0600 파
     if (previousHome === undefined) delete process.env.HOME;
     else process.env.HOME = previousHome;
   });
-  let tokenRequest;
-  let authorizeUrl;
-
-  const oauth = createServer(async (request, response) => {
-    assert.equal(request.url, "/cli/oauth/token");
-    assert.equal(request.method, "POST");
-    let body = "";
-    for await (const chunk of request) body += chunk;
-    tokenRequest = JSON.parse(body);
-    response.writeHead(200, { "content-type": "application/json" });
-    response.end(JSON.stringify({
+  const origin = "https://ai-proxy.example";
+  const requests = [];
+  const sleeps = [];
+  const logs = [];
+  let openUrl;
+  const responses = [
+    new Response(JSON.stringify({
+      device_code: "device-code",
+      user_code: "ABCD-EFGH",
+      verification_uri: `${origin}/console/cli-auth`,
+      verification_uri_complete: `${origin}/console/cli-auth?device_code=device-code&user_code=ABCD-EFGH`,
+      expires_in: 600,
+      interval: 2,
+    }), { status: 200 }),
+    new Response(JSON.stringify({ error: "authorization_pending" }), { status: 400 }),
+    new Response(JSON.stringify({ error: "slow_down" }), { status: 400 }),
+    new Response(JSON.stringify({
       access_token: ACCESS_NEW,
       expires_in: 86_400,
       refresh_expires_in: 345_600,
       refresh_token: REFRESH_NEW,
       token_type: "Bearer",
-    }));
-  });
-  oauth.listen(0, "127.0.0.1");
-  await once(oauth, "listening");
-  t.after(() => oauth.close());
-  const origin = `http://127.0.0.1:${oauth.address().port}`;
+    }), { status: 200 }),
+  ];
+  const fetchImpl = async (url, options) => {
+    requests.push({ url: url.toString(), options, body: JSON.parse(options.body) });
+    return responses.shift();
+  };
 
   const { login } = await import("../src/login.mjs");
   await login({
     configDir,
     origin,
     now: () => Date.parse("2026-08-11T00:00:00.000Z"),
-    timeoutMs: 2_000,
-    log() {},
+    timeoutMs: 60_000,
+    log(message) { logs.push(message); },
+    fetchImpl,
+    sleep: async (ms) => sleeps.push(ms),
     async openBrowser(url) {
-      authorizeUrl = new URL(url);
-      const callback = new URL(authorizeUrl.searchParams.get("redirect_uri"));
-      const state = authorizeUrl.searchParams.get("state");
-
-      callback.searchParams.set("code", "c".repeat(43));
-      callback.searchParams.set("state", `${state}wrong`);
-      assert.equal((await fetch(callback)).status, 400);
-
-      callback.searchParams.set("state", state);
-      const response = await fetch(callback, { redirect: "manual" });
-      assert.equal(response.status, 302);
-      assert.equal(response.headers.get("location"), `${origin}/console/cli-auth?result=success`);
+      openUrl = url;
     },
   });
 
-  assert.equal(authorizeUrl.origin, origin);
-  assert.equal(authorizeUrl.pathname, "/console/cli-auth");
-  assert.equal(authorizeUrl.searchParams.get("client_id"), "zgap");
-  assert.equal(authorizeUrl.searchParams.get("code_challenge_method"), "S256");
-  assert.match(authorizeUrl.searchParams.get("device_id"), /^[A-Za-z0-9_-]{43}$/);
-  assert.match(authorizeUrl.searchParams.get("state"), /^[A-Za-z0-9_-]{43}$/);
-  assert.match(tokenRequest.code_verifier, /^[A-Za-z0-9_-]{43}$/);
-  assert.equal(
-    createHash("sha256").update(tokenRequest.code_verifier).digest("base64url"),
-    authorizeUrl.searchParams.get("code_challenge"),
-  );
-  assert.equal(tokenRequest.redirect_uri, authorizeUrl.searchParams.get("redirect_uri"));
-  assert.equal(tokenRequest.code, "c".repeat(43));
-  assert.equal(tokenRequest.client_id, "zgap");
-  assert.equal(tokenRequest.grant_type, "authorization_code");
+  assert.equal(requests[0].url, `${origin}/cli/oauth/device_authorization`);
+  assert.deepEqual(requests[0].body, {
+    client_id: "zgap",
+    code_challenge: requests[0].body.code_challenge,
+    code_challenge_method: "S256",
+    device_id: requests[0].body.device_id,
+  });
+  assert.match(requests[0].body.code_challenge, /^[A-Za-z0-9_-]{43}$/);
+  assert.match(requests[0].body.device_id, /^[A-Za-z0-9_-]{43}$/);
+  assert.equal(openUrl, `${origin}/console/cli-auth?device_code=device-code&user_code=ABCD-EFGH`);
+  assert.match(logs[0], new RegExp(`${origin}/console/cli-auth\\?device_code=device-code&user_code=ABCD-EFGH`));
+  assert.deepEqual(sleeps, [2_000, 2_000, 7_000]);
+  assert.equal(requests.length, 4);
+  assert.deepEqual(requests[1].body, {
+    client_id: "zgap",
+    grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+    device_code: "device-code",
+    code_verifier: requests[1].body.code_verifier,
+  });
+  assert.match(requests[1].body.code_verifier, /^[A-Za-z0-9_-]{43}$/);
+  assert.equal(requests[1].body.client_id, "zgap");
+  assert.equal(requests[1].body.grant_type, "urn:ietf:params:oauth:grant-type:device_code");
+  assert.equal(requests[1].body.device_code, "device-code");
+  assert.equal(requests[1].body.code_verifier, requests[2].body.code_verifier);
 
   const credentialPath = path.join(configDir, "credentials.json");
   assert.deepEqual(JSON.parse(await readFile(credentialPath, "utf8")), {
     access_expires_at: "2026-08-12T00:00:00.000Z",
     access_token: ACCESS_NEW,
-    device_id: authorizeUrl.searchParams.get("device_id"),
+    device_id: requests[0].body.device_id,
     origin,
     refresh_expires_at: "2026-08-15T00:00:00.000Z",
     refresh_token: REFRESH_NEW,
@@ -234,99 +238,132 @@ test("login은 loopback PKCE를 검증하고 디바이스 token pair를 0600 파
   assert.equal(await readFile(path.join(codexHome, "config.toml"), "utf8"), originalCodexConfig);
 });
 
-test("login은 Codex config가 없어도 .codex/config.toml을 만들지 않는다", async (t) => {
+test("login은 잘못된 device authorization 응답을 저장하지 않는다", async (t) => {
   const root = await tempDir(t);
   const configDir = path.join(root, "config", "zgap");
-  const home = path.join(root, "home");
-  const codexHome = path.join(home, ".codex");
-  const previousHome = process.env.HOME;
-  process.env.HOME = home;
-  t.after(() => {
-    if (previousHome === undefined) delete process.env.HOME;
-    else process.env.HOME = previousHome;
-  });
-  let oauth;
-  oauth = createServer(async (request, response) => {
-    for await (const _chunk of request) { /* consume request body */ }
-    response.writeHead(200, { "content-type": "application/json" });
-    response.end(JSON.stringify({
-      access_token: ACCESS_NEW,
-      expires_in: 86_400,
-      refresh_expires_in: 345_600,
-      refresh_token: REFRESH_NEW,
-      token_type: "Bearer",
-    }));
-  });
-  oauth.listen(0, "127.0.0.1");
-  await once(oauth, "listening");
-  t.after(() => oauth.close());
-  const origin = `http://127.0.0.1:${oauth.address().port}`;
+  let opened = false;
 
   const { login } = await import("../src/login.mjs");
-  await login({
+  await assert.rejects(() => login({
     configDir,
-    origin,
-    timeoutMs: 2_000,
+    origin: "https://ai-proxy.example",
     log() {},
-    async openBrowser(url) {
-      const authorizeUrl = new URL(url);
-      const callback = new URL(authorizeUrl.searchParams.get("redirect_uri"));
-      callback.searchParams.set("code", "c".repeat(43));
-      callback.searchParams.set("state", authorizeUrl.searchParams.get("state"));
-      await fetch(callback, { redirect: "manual" });
-    },
-  });
-
-  await assert.rejects(access(path.join(codexHome, "config.toml")), { code: "ENOENT" });
+    fetchImpl: async () => new Response(JSON.stringify({ device_code: "missing" }), { status: 200 }),
+    openBrowser: async () => { opened = true; },
+  }), /Device authorization returned an invalid response/);
+  assert.equal(opened, false);
+  await assert.rejects(access(path.join(configDir, "credentials.json")), { code: "ENOENT" });
 });
 
-test("login은 callback client가 연결을 유지해도 종료한다", async (t) => {
+test("login은 다른 origin의 verification URL을 열지 않는다", async (t) => {
   const root = await tempDir(t);
   const configDir = path.join(root, "config", "zgap");
-  let idleSocket;
-
-  const oauth = createServer(async (request, response) => {
-    for await (const _chunk of request) { /* consume request body */ }
-    response.writeHead(200, { "content-type": "application/json" });
-    response.end(JSON.stringify({
-      access_token: ACCESS_NEW,
-      expires_in: 86_400,
-      refresh_expires_in: 345_600,
-      refresh_token: REFRESH_NEW,
-      token_type: "Bearer",
-    }));
-  });
-  oauth.listen(0, "127.0.0.1");
-  await once(oauth, "listening");
-  t.after(() => oauth.close());
-  const origin = `http://127.0.0.1:${oauth.address().port}`;
+  let opened = false;
 
   const { login } = await import("../src/login.mjs");
-  const loginPromise = login({
+  await assert.rejects(() => login({
+    configDir,
+    origin: "https://ai-proxy.example",
+    log() {},
+    fetchImpl: async () => new Response(JSON.stringify({
+      device_code: "device-code",
+      user_code: "ABCD-EFGH",
+      verification_uri: "https://attacker.example/console/cli-auth",
+      verification_uri_complete: "https://attacker.example/console/cli-auth?device_code=device-code&user_code=ABCD-EFGH",
+      expires_in: 600,
+      interval: 5,
+    }), { status: 200 }),
+    openBrowser: async () => { opened = true; },
+  }), /Device authorization returned an invalid response/);
+  assert.equal(opened, false);
+});
+
+test("login은 token 폴링의 terminal error에서 중단한다", async (t) => {
+  const root = await tempDir(t);
+  const configDir = path.join(root, "config", "zgap");
+  const origin = "https://ai-proxy.example";
+  let tokenPolls = 0;
+
+  const { login } = await import("../src/login.mjs");
+  await assert.rejects(() => login({
     configDir,
     origin,
-    timeoutMs: 2_000,
     log() {},
-    async openBrowser(url) {
-      const authorizeUrl = new URL(url);
-      const callback = new URL(authorizeUrl.searchParams.get("redirect_uri"));
-      idleSocket = connect(Number(callback.port), callback.hostname);
-      await once(idleSocket, "connect");
-      callback.searchParams.set("code", "c".repeat(43));
-      callback.searchParams.set("state", authorizeUrl.searchParams.get("state"));
-      await fetch(callback, { redirect: "manual" });
+    fetchImpl: async (url) => {
+      if (url.pathname.endsWith("device_authorization")) {
+        return new Response(JSON.stringify({
+          device_code: "device-code",
+          user_code: "ABCD-EFGH",
+          verification_uri: `${origin}/console/cli-auth`,
+          verification_uri_complete: `${origin}/console/cli-auth?device_code=device-code&user_code=ABCD-EFGH`,
+          expires_in: 600,
+          interval: 1,
+        }), { status: 200 });
+      }
+      tokenPolls += 1;
+      return new Response(JSON.stringify({ error: "access_denied" }), { status: 400 });
     },
-  });
+    sleep: async () => {},
+    openBrowser: async () => {},
+  }), /Token authorization failed: access_denied/);
+  assert.equal(tokenPolls, 1);
+});
 
-  try {
-    await Promise.race([
-      loginPromise,
-      delay(250).then(() => { throw new Error("login did not exit after callback"); }),
-    ]);
-  } finally {
-    idleSocket?.destroy();
-    await loginPromise;
-  }
+test("login timeout 이후에는 늦은 성공 응답을 credential로 저장하지 않는다", async (t) => {
+  const root = await tempDir(t);
+  const configDir = path.join(root, "config", "zgap");
+  const origin = "https://ai-proxy.example";
+  const { login } = await import("../src/login.mjs");
+  await assert.rejects(() => login({
+    configDir,
+    origin,
+    timeoutMs: 5,
+    log() {},
+    fetchImpl: async (url) => new Response(JSON.stringify(
+      url.pathname.endsWith("device_authorization")
+        ? {
+            device_code: "device-code",
+            user_code: "ABCD-EFGH",
+            verification_uri: `${origin}/console/cli-auth`,
+            verification_uri_complete: `${origin}/console/cli-auth?device_code=device-code&user_code=ABCD-EFGH`,
+            expires_in: 600,
+            interval: 1,
+          }
+        : {
+            access_token: ACCESS_NEW,
+            expires_in: 86_400,
+            refresh_expires_in: 345_600,
+            refresh_token: REFRESH_NEW,
+            token_type: "Bearer",
+          }
+    ), { status: 200 }),
+    openBrowser: async () => {},
+    sleep: async () => new Promise((resolve) => setTimeout(resolve, 20)),
+  }), /Login timed out/);
+  await delay(30);
+  await assert.rejects(access(path.join(configDir, "credentials.json")), { code: "ENOENT" });
+});
+
+test("login은 browser launcher가 멈춰도 전체 timeout에 종료한다", async (t) => {
+  const root = await tempDir(t);
+  const origin = "https://ai-proxy.example";
+  const { login } = await import("../src/login.mjs");
+
+  await assert.rejects(() => login({
+    configDir: path.join(root, "config", "zgap"),
+    origin,
+    timeoutMs: 5,
+    log() {},
+    fetchImpl: async () => new Response(JSON.stringify({
+      device_code: "device-code",
+      user_code: "ABCD-EFGH",
+      verification_uri: `${origin}/console/cli-auth`,
+      verification_uri_complete: `${origin}/console/cli-auth?device_code=device-code&user_code=ABCD-EFGH`,
+      expires_in: 600,
+      interval: 5,
+    }), { status: 200 }),
+    openBrowser: async () => new Promise(() => {}),
+  }), /Login timed out/);
 });
 
 test("codex는 기본 Codex home을 유지하고 refresh 가능한 auth command만 주입한다", async (t) => {
