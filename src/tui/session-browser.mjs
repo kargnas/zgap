@@ -9,7 +9,7 @@ import {
   fg,
   createCliRenderer,
 } from "@opentui/core";
-import { discoverRepositoryScope, filterSessions, listSessions, stripTerminalControls } from "../sessions.mjs";
+import { discoverRepositoryScope, filterSessions, listSessions, loadSessionPreview, stripTerminalControls } from "../sessions.mjs";
 import { loadMenuTranslator } from "./menu.mjs";
 
 const AGENTS = ["all", "codex", "claude"];
@@ -119,9 +119,46 @@ function joinStyledText(values, separator = "\n") {
   ]));
 }
 
+function providerMenuText(providers, selectedIndex, activeProvider, width) {
+  const maxWidth = Math.max(4, width - 8);
+  return new StyledText(providers.flatMap((provider, index) => {
+    const selected = index === selectedIndex;
+    const active = provider === activeProvider;
+    const label = provider === "all" ? "All" : displayText(provider);
+    const background = selected ? COLORS.amberBackground : undefined;
+    return [
+      ...(index > 0 ? [chunk("\n", COLORS.text)] : []),
+      chunk(selected ? "› " : "  ", COLORS.amber, background),
+      chunk(active ? "● " : "  ", active ? COLORS.amber : COLORS.meta, background),
+      chunk(truncateText(label, maxWidth), provider === "all" ? COLORS.text : providerColor(provider), background, selected),
+    ];
+  }));
+}
+
+function previewText(session, width) {
+  const maxWidth = Math.max(8, width - 4);
+  const rawPreview = session.preview;
+  const previewPairs = rawPreview?.first || rawPreview?.latest
+    ? [rawPreview.first, ...(rawPreview.latest?.user && (rawPreview.latest.user !== rawPreview.first?.user || rawPreview.latest.assistant !== rawPreview.first?.assistant) ? [rawPreview.latest] : [])]
+    : [];
+  const pairs = previewPairs.filter((pair) => pair?.user);
+  const chunks = [chunk(truncateText(displayText(session.title), maxWidth), COLORS.text, undefined, true)];
+  for (const pair of pairs) {
+    chunks.push(
+      chunk("\nU ", COLORS.amber, undefined, true),
+      chunk(truncateText(displayText(pair.user), maxWidth - 2), COLORS.text),
+      chunk("\nA ", COLORS.rose, undefined, true),
+      chunk(truncateText(displayText(pair.assistant) || "—", maxWidth - 2), COLORS.text),
+    );
+  }
+  if (!pairs.length) chunks.push(chunk("\nNo preview available", COLORS.meta));
+  return new StyledText(chunks);
+}
+
 export async function runSessionBrowser({
   rendererFactory = createCliRenderer,
   cwd = process.cwd(),
+  onSelect = async () => 0,
   language = process.env.LANG,
   now = Date.now,
   clock = globalThis,
@@ -131,6 +168,7 @@ export async function runSessionBrowser({
     scope,
     repositoryRoots: scope === "repo" ? roots : undefined,
   }),
+  previewLoader = loadSessionPreview,
   sessionFilter = filterSessions,
 } = {}) {
   let renderer;
@@ -191,6 +229,13 @@ export async function runSessionBrowser({
     let selectedKey = null;
     let viewportStart = 0;
     let showHelp = false;
+    let showProviderMenu = false;
+    let showPreview = false;
+    let previewLoading = false;
+    let previewError = null;
+    let previewGeneration = 0;
+    let providerMenuIndex = 0;
+    let providerViewportStart = 0;
     let notice = "";
 
     const root = new BoxRenderable(renderer, {
@@ -248,7 +293,7 @@ export async function runSessionBrowser({
     };
     const render = () => {
       const compact = renderer.width <= COMPACT_WIDTH;
-      const loading = state === "initializing" || state === "loading";
+      const loading = state === "initializing" || state === "loading" || previewLoading;
       if (loading && spinnerTimer === null) {
         // ASCII frames stay aligned in terminals that calculate emoji width differently.
         spinnerTimer = clock.setInterval(() => {
@@ -267,30 +312,69 @@ export async function runSessionBrowser({
         chunk(`[p ${truncateText(displayText(provider), compact ? 12 : 24)}]`, COLORS.chip),
       ]);
       hint.content = notice || (compact ? t("sessionsCompactHint") : t("sessionsHint"));
-      if (showHelp) {
-        title.content = t("sessionsHelpTitle");
+      if (showProviderMenu) {
+        const providers = availableProviders();
+        providerMenuIndex = Math.max(0, Math.min(providerMenuIndex, providers.length - 1));
+        const providerVisibleRows = Math.max(1, renderer.height - 4);
+        if (providerMenuIndex < providerViewportStart) providerViewportStart = providerMenuIndex;
+        if (providerMenuIndex >= providerViewportStart + providerVisibleRows) providerViewportStart = providerMenuIndex - providerVisibleRows + 1;
+        providerViewportStart = Math.max(0, Math.min(providerViewportStart, Math.max(0, providers.length - providerVisibleRows)));
+        title.content = t("sessionsProviderMenuTitle");
+        title.visible = true;
         filters.content = "";
+        filters.visible = false;
+        hint.content = t("sessionsProviderMenuHint");
+        list.content = providerMenuText(providers.slice(providerViewportStart, providerViewportStart + providerVisibleRows), providerMenuIndex - providerViewportStart, provider, renderer.width);
+        list.fg = COLORS.text;
+        renderer.requestRender();
+        return;
+      }
+      if (showPreview) {
+        const values = filteredSessions();
+        title.content = t("sessionsPreviewTitle");
+        title.visible = true;
+        filters.content = "";
+        filters.visible = false;
+        hint.content = t("sessionsPreviewHint");
+        list.content = previewLoading
+          ? `${SPINNER_FRAMES[spinnerIndex]} ${t("sessionsPreviewLoading")}`
+          : previewError
+            ? `${t("sessionsPreviewLoadFailed")}: ${previewError.message}`
+            : values[selectedIndex] ? previewText(values[selectedIndex], renderer.width) : "";
+        list.fg = previewError ? "#F87171" : previewLoading ? COLORS.chip : COLORS.text;
+        renderer.requestRender();
+        return;
+      }
+      if (showHelp) {
+        title.content = "";
+        title.visible = false;
+        filters.content = t("sessionsHelp");
         filters.visible = true;
         hint.content = "";
-        list.content = t("sessionsHelp");
+        list.content = "";
         list.fg = COLORS.text;
+        renderer.requestRender();
         return;
       }
       title.content = t("sessionsTitle");
+      title.visible = true;
       filters.visible = true;
       if (state === "initializing") {
         list.content = `${SPINNER_FRAMES[spinnerIndex]} ${t("sessionsInitializing")}`;
         list.fg = "#94A3B8";
+        renderer.requestRender();
         return;
       }
       if (state === "loading") {
         list.content = `${SPINNER_FRAMES[spinnerIndex]} ${t("sessionsLoading")}`;
         list.fg = "#94A3B8";
+        renderer.requestRender();
         return;
       }
       if (state === "error") {
         list.content = error?.message ? `${t("sessionsLoadFailed")}: ${error.message}` : t("sessionsLoadFailed");
         list.fg = "#F87171";
+        renderer.requestRender();
         return;
       }
       const values = filteredSessions();
@@ -298,12 +382,14 @@ export async function runSessionBrowser({
       if (values.length === 0) {
         list.content = scope === "repo" ? t("sessionsEmptyRepo") : t("sessionsEmptyAll");
         list.fg = "#94A3B8";
+        renderer.requestRender();
         return;
       }
       const count = visibleRows();
       list.content = joinStyledText(values.slice(viewportStart, viewportStart + count)
         .map((session, index) => rowText(session, viewportStart + index === selectedIndex, language, renderer.width, compact)));
       list.fg = "#E2E8F0";
+      renderer.requestRender();
     };
 
     const clearNotice = () => {
@@ -327,7 +413,6 @@ export async function runSessionBrowser({
       selectedKey = values[selectedIndex] ? sessionKey(values[selectedIndex]) : null;
       render();
     };
-
     const load = async (requestedScope = scope, { refresh = false } = {}) => {
       const currentGeneration = ++generation;
       if (!refresh && sessionCache.has(requestedScope)) {
@@ -347,7 +432,10 @@ export async function runSessionBrowser({
         sessionCache.set(requestedScope, sessions);
         state = "ready";
         const providers = availableProviders();
-        if (!providers.includes(provider)) provider = "all";
+        if (!providers.includes(provider)) {
+          provider = "all";
+          providerMenuIndex = 0;
+        }
         render();
       } catch (loadError) {
         if (cleaned || currentGeneration !== generation) return;
@@ -387,7 +475,14 @@ export async function runSessionBrowser({
         return;
       }
       if (event.name === "escape") {
-        if (showHelp) {
+        if (showPreview) {
+          previewGeneration += 1;
+          showPreview = false;
+          render();
+        } else if (showProviderMenu) {
+          showProviderMenu = false;
+          render();
+        } else if (showHelp) {
           showHelp = false;
           render();
         } else if (lastEscape !== null && timestamp - lastEscape <= 1_000) finish(130);
@@ -404,12 +499,59 @@ export async function runSessionBrowser({
         return;
       }
       if (event.name === "backspace") {
+        if (showPreview) {
+          previewGeneration += 1;
+          showPreview = false;
+          render();
+          return;
+        }
+        if (showProviderMenu) {
+          showProviderMenu = false;
+          render();
+          return;
+        }
         if (showHelp) {
           showHelp = false;
           render();
           return;
         }
         finish(0);
+        return;
+      }
+      if (showPreview) {
+        if (event.name === "space") {
+          previewGeneration += 1;
+          showPreview = false;
+          render();
+        }
+        return;
+      }
+      if (showProviderMenu) {
+        const providers = availableProviders();
+        if (event.name === "p") {
+          showProviderMenu = false;
+          render();
+        } else if (["up", "k"].includes(event.name)) {
+          providerMenuIndex = Math.max(0, providerMenuIndex - 1);
+          render();
+        } else if (["down", "j"].includes(event.name)) {
+          providerMenuIndex = Math.min(providers.length - 1, providerMenuIndex + 1);
+          render();
+        } else if (event.name === "home") {
+          providerMenuIndex = 0;
+          render();
+        } else if (event.name === "end") {
+          providerMenuIndex = providers.length - 1;
+          render();
+        } else if (event.name === "return") {
+          provider = providers[providerMenuIndex] ?? "all";
+          showProviderMenu = false;
+          providerViewportStart = 0;
+          selectedIndex = 0;
+          viewportStart = 0;
+          selectedKey = null;
+          render();
+        }
         return;
       }
       if (showHelp) return;
@@ -436,18 +578,52 @@ export async function runSessionBrowser({
         return;
       }
       if (event.name === "p") {
-        provider = nextValue(availableProviders(), provider);
-        selectedIndex = 0;
-        viewportStart = 0;
-        selectedKey = null;
+        const providers = availableProviders();
+        providerMenuIndex = Math.max(0, providers.indexOf(provider));
+        showProviderMenu = true;
         render();
         return;
       }
-      if (["up", "down", "j", "k", "pageup", "pagedown", "space", "home", "end"].includes(event.name)) {
+      if (event.name === "space") {
+        const values = filteredSessions();
+        const session = values[selectedIndex];
+        if (!session) return;
+        showPreview = true;
+        previewError = null;
+        if (session.preview?.first || session.preview?.latest || !session.previewLocator) {
+          previewLoading = false;
+          render();
+          return;
+        }
+        previewLoading = true;
+        const requestGeneration = ++previewGeneration;
+        render();
+        Promise.resolve(previewLoader(session)).then((preview) => {
+          if (cleaned || requestGeneration !== previewGeneration) return;
+          session.preview = preview;
+          previewLoading = false;
+          render();
+        }, (previewLoadError) => {
+          if (cleaned || requestGeneration !== previewGeneration) return;
+          previewLoading = false;
+          previewError = previewLoadError;
+          render();
+        });
+        return;
+      }
+      if (event.name === "return") {
+        const values = filteredSessions();
+        const session = values[selectedIndex];
+        if (!session) return;
+        cleanup();
+        Promise.resolve().then(() => onSelect(session)).then(resolveResult, rejectResult);
+        return;
+      }
+      if (["up", "down", "j", "k", "pageup", "pagedown", "home", "end"].includes(event.name)) {
         const delta = event.name === "down" || event.name === "j" ? 1 : -1;
         if (event.name === "home") select(0);
         else if (event.name === "end") select(filteredSessions().length - 1);
-        else if (["pageup", "pagedown", "space"].includes(event.name)) {
+        else if (["pageup", "pagedown"].includes(event.name)) {
           const direction = event.name === "pageup" ? -1 : 1;
           select(selectedIndex + direction * visibleRows());
         } else select(selectedIndex + delta);
