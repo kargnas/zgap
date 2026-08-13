@@ -32,8 +32,10 @@ const sessions = [
     cwd: "/repo/worktrees/feature",
     title: "Add session switcher",
     preview: {
-      first: { user: "Build a session switcher", assistant: "I will inspect the session formats." },
-      latest: { user: "Polish the terminal UI", assistant: "The layout now uses compact navigation." },
+      turns: [
+        { user: "Build a session switcher", assistant: "I will inspect the session formats." },
+        { user: "Polish the terminal UI", assistant: "The layout now uses compact navigation." },
+      ],
     },
     updatedAt: Date.parse("2026-08-14T00:00:00Z"),
   },
@@ -375,7 +377,8 @@ test("session browser는 Space로 첫 U/A와 마지막 U/A를 미리 본다", as
   let frame = setup.captureCharFrame();
   assert.match(frame, /PREVIEW · Space\/Esc close/);
   assert.match(frame, /U Build a session switcher/);
-  assert.match(frame, /A I will inspect the session format…/);
+  assert.match(frame, /A I will inspect the session/);
+  assert.match(frame, /formats\./);
   assert.match(frame, /U Polish the terminal UI/);
   assert.match(frame, /A The layout now uses compact navig…/);
   assert.doesNotMatch(frame, /› CODEX/);
@@ -395,6 +398,73 @@ test("session browser는 Space로 첫 U/A와 마지막 U/A를 미리 본다", as
   assert.equal(await result, 0);
 });
 
+test("작은 preview는 첫 turn과 마지막 turn 사이의 생략 수를 표시한다", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
+  const setup = await createTestRenderer({ width: 40, height: 10 });
+  t.after(() => setup.renderer.destroy());
+  const turns = Array.from({ length: 5 }, (_, index) => ({
+    user: `Question ${index + 1}`,
+    assistant: `Answer ${index + 1}`,
+  }));
+
+  const result = runSessionBrowser({
+    rendererFactory: async () => setup,
+    discoverScope: async () => ({ roots: ["/repo"] }),
+    sessionLoader: async () => [{ ...sessions[0], cwd: "/repo", preview: { turns } }],
+  });
+  await flush(setup);
+  setup.mockInput.pressKey(" ");
+  await flush(setup);
+
+  const frame = setup.captureCharFrame();
+  assert.match(frame, /U Question 1/);
+  assert.match(frame, /A Answer 1/);
+  assert.match(frame, /3 turns omitted/);
+  assert.match(frame, /U Question 5/);
+  assert.match(frame, /A Answer 5/);
+  assert.doesNotMatch(frame, /Question 2/);
+
+  setup.mockInput.pressKey(" ");
+  await flush(setup);
+  await setup.mockInput.pressBackspace();
+  assert.equal(await result, 0);
+});
+
+test("높은 preview는 중간 turn과 메시지의 두 번째 줄을 추가한다", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
+  const setup = await createTestRenderer({ width: 40, height: 18 });
+  t.after(() => setup.renderer.destroy());
+  const turns = [
+    { user: "First question wraps onto the second visual row", assistant: "First answer" },
+    { user: "Question 2", assistant: "Answer 2" },
+    { user: "Question 3", assistant: "Answer 3" },
+    { user: "Question 4", assistant: "Answer 4" },
+    { user: "Question 5", assistant: "Answer 5" },
+  ];
+
+  const result = runSessionBrowser({
+    rendererFactory: async () => setup,
+    discoverScope: async () => ({ roots: ["/repo"] }),
+    sessionLoader: async () => [{ ...sessions[0], cwd: "/repo", preview: { turns } }],
+  });
+  await flush(setup);
+  setup.mockInput.pressKey(" ");
+  await flush(setup);
+
+  const frame = setup.captureCharFrame();
+  assert.match(frame, /U Question 3/);
+  assert.match(frame, /A Answer 3/);
+  assert.match(frame, /second visual row/);
+  assert.doesNotMatch(frame, /turns omitted/);
+
+  setup.mockInput.pressKey(" ");
+  await flush(setup);
+  await setup.mockInput.pressBackspace();
+  assert.equal(await result, 0);
+});
+
 test("session browser는 선택한 세션의 미리보기만 지연 로드한다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
@@ -403,7 +473,7 @@ test("session browser는 선택한 세션의 미리보기만 지연 로드한다
   const preview = deferred();
   const calls = [];
   const selected = {
-    ...sessions[0], cwd: "/repo", preview: { first: null, latest: null },
+    ...sessions[0], cwd: "/repo", preview: { turns: [] },
     previewLocator: { type: "jsonl", path: "/session.jsonl" },
   };
 
@@ -421,8 +491,10 @@ test("session browser는 선택한 세션의 미리보기만 지연 로드한다
   assert.match(setup.captureCharFrame(), /Loading preview/);
 
   preview.resolve({
-    first: { user: "First question", assistant: "First answer" },
-    latest: { user: "Last question", assistant: "Last answer" },
+    turns: [
+      { user: "First question", assistant: "First answer" },
+      { user: "Last question", assistant: "Last answer" },
+    ],
   });
   await flush(setup);
   const frame = setup.captureCharFrame();
@@ -531,11 +603,12 @@ test("session browser는 작은 terminal에서 두 session row를 표시하고 v
   await flush(setup);
 
   let frame = setup.captureCharFrame();
+  assert.match(frame, /SESSIONS/);
   assert.match(frame, /First session/);
   assert.match(frame, /Second session/);
   assert.doesNotMatch(frame, /Third session/);
   assert.doesNotMatch(frame, /\d{1,2}\/\d{1,2}\/\d{2}/);
-  assert.match(frame, /\[s\S?repo\] \[a all\] \[p all\]/);
+  assert.match(frame, /\[s repo\] \[a all\] \[p all\]/);
 
   setup.mockInput.pressArrow("down");
   setup.mockInput.pressArrow("down");
@@ -544,7 +617,7 @@ test("session browser는 작은 terminal에서 두 session row를 표시하고 v
   assert.match(frame, /Second session/);
   assert.doesNotMatch(frame, /First session/);
   assert.match(frame, /Third session/);
-  assert.match(frame, /\[s\S?repo\] \[a all\] \[p all\]/);
+  assert.match(frame, /\[s repo\] \[a all\] \[p all\]/);
 
   await setup.mockInput.pressBackspace();
   assert.equal(await result, 0);

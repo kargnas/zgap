@@ -135,23 +135,87 @@ function providerMenuText(providers, selectedIndex, activeProvider, width) {
   }));
 }
 
-function previewText(session, width) {
+function wrapPreviewText(value, maxWidth, maxLines) {
+  let remaining = displayText(value);
+  const lines = [];
+  while (remaining && lines.length < maxLines) {
+    if (Bun.stringWidth(remaining) <= maxWidth) {
+      lines.push(remaining);
+      remaining = "";
+      break;
+    }
+    if (lines.length === maxLines - 1) {
+      lines.push(truncateText(remaining, maxWidth));
+      break;
+    }
+    let width = 0;
+    let end = 0;
+    let lastSpace = -1;
+    for (const character of remaining) {
+      const characterWidth = Bun.stringWidth(character);
+      if (width + characterWidth > maxWidth) break;
+      width += characterWidth;
+      end += character.length;
+      if (/\s/.test(character)) lastSpace = end;
+    }
+    const cut = lastSpace > Math.floor(end / 2) ? lastSpace : end;
+    lines.push(remaining.slice(0, cut).trimEnd());
+    remaining = remaining.slice(cut).trimStart();
+  }
+  return lines.length > 0 ? lines : ["—"];
+}
+
+function previewMinimumRows(indices) {
+  let gaps = 0;
+  for (let index = 1; index < indices.length; index += 1) {
+    if (indices[index] - indices[index - 1] > 1) gaps += 1;
+  }
+  return indices.length * 2 + gaps;
+}
+
+function previewTurnIndices(turnCount, rowBudget) {
+  if (turnCount <= 0) return [];
+  if (turnCount * 2 <= rowBudget) return Array.from({ length: turnCount }, (_, index) => index);
+  const visibleCount = Math.max(2, Math.floor((rowBudget - 1) / 2));
+  const firstCount = Math.ceil(visibleCount / 2);
+  const lastCount = Math.floor(visibleCount / 2);
+  return [
+    ...Array.from({ length: firstCount }, (_, index) => index),
+    ...Array.from({ length: lastCount }, (_, index) => turnCount - lastCount + index),
+  ];
+}
+
+function previewText(session, width, height, t) {
   const maxWidth = Math.max(8, width - 4);
-  const rawPreview = session.preview;
-  const previewPairs = rawPreview?.first || rawPreview?.latest
-    ? [rawPreview.first, ...(rawPreview.latest?.user && (rawPreview.latest.user !== rawPreview.first?.user || rawPreview.latest.assistant !== rawPreview.first?.assistant) ? [rawPreview.latest] : [])]
-    : [];
-  const pairs = previewPairs.filter((pair) => pair?.user);
+  const turns = Array.isArray(session.preview?.turns) ? session.preview.turns.filter((turn) => turn?.user) : [];
   const chunks = [chunk(truncateText(displayText(session.title), maxWidth), COLORS.text, undefined, true)];
-  for (const pair of pairs) {
+  if (turns.length === 0) {
+    chunks.push(chunk(`\n${t("sessionsPreviewEmpty")}`, COLORS.meta));
+    return new StyledText(chunks);
+  }
+  const rowBudget = Math.max(2, height - 5);
+  const indices = previewTurnIndices(turns.length, rowBudget);
+  let remainingRows = rowBudget - previewMinimumRows(indices);
+  let previousIndex = null;
+  for (const index of indices) {
+    if (previousIndex !== null && index - previousIndex > 1) {
+      chunks.push(chunk(`\n${t("sessionsPreviewOmitted", { count: index - previousIndex - 1 })}`, COLORS.meta, undefined, true));
+    }
+    const pair = turns[index];
+    const userLines = wrapPreviewText(pair.user, maxWidth - 2, remainingRows > 0 ? 2 : 1);
+    if (userLines.length > 1) remainingRows -= 1;
+    const assistantLines = wrapPreviewText(pair.assistant || "—", maxWidth - 2, remainingRows > 0 ? 2 : 1);
+    if (assistantLines.length > 1) remainingRows -= 1;
     chunks.push(
       chunk("\nU ", COLORS.amber, undefined, true),
-      chunk(truncateText(displayText(pair.user), maxWidth - 2), COLORS.text),
+      chunk(userLines[0], COLORS.text),
+      ...(userLines.slice(1).flatMap((line) => [chunk("\n  ", COLORS.meta), chunk(line, COLORS.text)])),
       chunk("\nA ", COLORS.rose, undefined, true),
-      chunk(truncateText(displayText(pair.assistant) || "—", maxWidth - 2), COLORS.text),
+      chunk(assistantLines[0], COLORS.text),
+      ...(assistantLines.slice(1).flatMap((line) => [chunk("\n  ", COLORS.meta), chunk(line, COLORS.text)])),
     );
+    previousIndex = index;
   }
-  if (!pairs.length) chunks.push(chunk("\nNo preview available", COLORS.meta));
   return new StyledText(chunks);
 }
 
@@ -249,11 +313,13 @@ export async function runSessionBrowser({
       content: t("sessionsTitle"),
       fg: "#67E8F9",
       attributes: TextAttributes.BOLD,
+      height: 1,
       selectable: true,
     });
     const filters = new TextRenderable(renderer, {
       content: "",
       fg: "#94A3B8",
+      height: 1,
       selectable: true,
     });
     const list = new TextRenderable(renderer, {
@@ -265,6 +331,8 @@ export async function runSessionBrowser({
     const hint = new TextRenderable(renderer, {
       content: "",
       fg: "#64748B",
+      maxHeight: 3,
+      flexShrink: 0,
       selectable: true,
     });
     root.add(title);
@@ -340,18 +408,18 @@ export async function runSessionBrowser({
           ? `${SPINNER_FRAMES[spinnerIndex]} ${t("sessionsPreviewLoading")}`
           : previewError
             ? `${t("sessionsPreviewLoadFailed")}: ${previewError.message}`
-            : values[selectedIndex] ? previewText(values[selectedIndex], renderer.width) : "";
+            : values[selectedIndex] ? previewText(values[selectedIndex], renderer.width, renderer.height, t) : "";
         list.fg = previewError ? "#F87171" : previewLoading ? COLORS.chip : COLORS.text;
         renderer.requestRender();
         return;
       }
       if (showHelp) {
-        title.content = "";
-        title.visible = false;
-        filters.content = t("sessionsHelp");
-        filters.visible = true;
+        title.content = t("sessionsHelpTitle");
+        title.visible = true;
+        filters.content = "";
+        filters.visible = false;
         hint.content = "";
-        list.content = "";
+        list.content = t("sessionsHelp");
         list.fg = COLORS.text;
         renderer.requestRender();
         return;
@@ -590,7 +658,7 @@ export async function runSessionBrowser({
         if (!session) return;
         showPreview = true;
         previewError = null;
-        if (session.preview?.first || session.preview?.latest || !session.previewLocator) {
+        if (Array.isArray(session.preview?.turns) && session.preview.turns.length > 0 || !session.previewLocator) {
           previewLoading = false;
           render();
           return;
@@ -601,6 +669,7 @@ export async function runSessionBrowser({
         Promise.resolve(previewLoader(session)).then((preview) => {
           if (cleaned || requestGeneration !== previewGeneration) return;
           session.preview = preview;
+          delete session.previewLocator;
           previewLoading = false;
           render();
         }, (previewLoadError) => {

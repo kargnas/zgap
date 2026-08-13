@@ -33,9 +33,9 @@
   "sessionsEmptyRepo": "No sessions in current repo",
   "sessionsEmptyAll": "No sessions",
   "sessionsHint": "↑↓ move · PgUp/PgDn page · Space preview · Enter resume · s/a/p filter · r refresh · ? keys · Backspace back",
-  "sessionsCompactHint": "↑↓ move · PgUp/PgDn page · Space preview · Enter resume · ? keys · ⌫ back",
+  "sessionsCompactHint": "↑↓ move · PgUp/Dn · Space preview\nEnter resume · ? keys · ⌫ back",
   "sessionsHelpTitle": "KEYS · ? close",
-  "sessionsHelp": "↑↓/jk Move · PgUp/PgDn Page\nHome/End First / last\nSpace Preview\nEnter Resume\ns/a/p Filters\nr Refresh · Backspace Back\nEsc×2 / ^C×2 Quit",
+  "sessionsHelp": "↑↓/jk Move · PgUp/PgDn Page\nHome/End First / last\nSpace Preview · Enter Resume\ns/a/p Filters · r Refresh\nBackspace Back\nEsc×2 / ^C×2 Quit",
   "sessionsEscapeExitPrompt": "Press Esc again to quit",
   "sessionsCtrlCExitPrompt": "Press Ctrl+C again to quit",
   "sessionsProviderMenuTitle": "PROVIDER · p/Esc close",
@@ -44,6 +44,8 @@
   "sessionsPreviewHint": "Space/Esc/Backspace close",
   "sessionsPreviewLoading": "Loading preview…",
   "sessionsPreviewLoadFailed": "Could not load preview",
+  "sessionsPreviewEmpty": "No conversation preview available",
+  "sessionsPreviewOmitted": "⋯ {{count}} turns omitted ⋯",
   "hint": "Up/Down move  ·  Enter select  ·  Ctrl+C twice or Esc twice quit",
   "compactHint": "↑↓ move · ↵ select · Esc Esc quit"
 }
