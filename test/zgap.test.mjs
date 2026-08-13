@@ -784,7 +784,7 @@ test("auth-token은 만료 임박 access를 한 번만 refresh하고 rotation �
   await mkdir(configDir, { recursive: true });
   const credentialPath = path.join(configDir, "credentials.json");
   await writeFile(credentialPath, JSON.stringify({
-    access_expires_at: "2026-08-11T00:04:00.000Z",
+    access_expires_at: "2026-08-11T03:59:00.000Z",
     access_token: ACCESS_OLD,
     device_id: "d".repeat(43),
     origin: "https://ai-proxy.zz.gg",
@@ -822,6 +822,84 @@ test("auth-token은 만료 임박 access를 한 번만 refresh하고 rotation �
   assert.equal(saved.refresh_token, REFRESH_NEW);
   assert.equal(saved.device_id, "d".repeat(43));
   assert.equal((await stat(credentialPath)).mode & 0o777, 0o600);
+});
+
+test("auth-token은 15분 넘게 남은 access를 network와 5xx refresh 실패 중에도 사용한다", async (t) => {
+  const root = await tempDir(t);
+  const { resolveAccessToken } = await import("../src/credentials.mjs");
+  for (const [name, fetchImpl] of [
+    ["network", async () => { throw new Error("offline"); }],
+    ["5xx", async () => new Response("unavailable", { status: 503 })],
+  ]) {
+    const credentialPath = path.join(root, `${name}.json`);
+    await writeFile(credentialPath, JSON.stringify({
+      access_expires_at: "2026-08-11T02:00:00.000Z",
+      access_token: ACCESS_OLD,
+      device_id: "d".repeat(43),
+      origin: "https://ai-proxy.zz.gg",
+      refresh_expires_at: "2026-08-14T00:00:00.000Z",
+      refresh_token: REFRESH_OLD,
+    }), { mode: 0o600 });
+    let refreshCalls = 0;
+
+    const token = await resolveAccessToken({
+      credentialFile: credentialPath,
+      now: () => Date.parse("2026-08-11T00:00:00.000Z"),
+      fetchImpl: async (...args) => {
+        refreshCalls += 1;
+        return fetchImpl(...args);
+      },
+    });
+
+    assert.equal(token, ACCESS_OLD);
+    assert.equal(refreshCalls, 1);
+  }
+});
+
+test("auth-token은 access가 15분 이내이면 5xx refresh 실패를 반환한다", async (t) => {
+  const root = await tempDir(t);
+  const credentialPath = path.join(root, "credentials.json");
+  await writeFile(credentialPath, JSON.stringify({
+    access_expires_at: "2026-08-11T00:15:00.000Z",
+    access_token: ACCESS_OLD,
+    device_id: "d".repeat(43),
+    origin: "https://ai-proxy.zz.gg",
+    refresh_expires_at: "2026-08-14T00:00:00.000Z",
+    refresh_token: REFRESH_OLD,
+  }), { mode: 0o600 });
+  const { resolveAccessToken } = await import("../src/credentials.mjs");
+
+  await assert.rejects(
+    () => resolveAccessToken({
+      credentialFile: credentialPath,
+      now: () => Date.parse("2026-08-11T00:00:00.000Z"),
+      fetchImpl: async () => new Response("unavailable", { status: 503 }),
+    }),
+    (error) => error?.message === "Token refresh failed (503).",
+  );
+});
+
+test("auth-token은 access가 남아 있어도 4xx refresh 실패를 반환한다", async (t) => {
+  const root = await tempDir(t);
+  const credentialPath = path.join(root, "credentials.json");
+  await writeFile(credentialPath, JSON.stringify({
+    access_expires_at: "2026-08-11T02:00:00.000Z",
+    access_token: ACCESS_OLD,
+    device_id: "d".repeat(43),
+    origin: "https://ai-proxy.zz.gg",
+    refresh_expires_at: "2026-08-14T00:00:00.000Z",
+    refresh_token: REFRESH_OLD,
+  }), { mode: 0o600 });
+  const { resolveAccessToken } = await import("../src/credentials.mjs");
+
+  await assert.rejects(
+    () => resolveAccessToken({
+      credentialFile: credentialPath,
+      now: () => Date.parse("2026-08-11T00:00:00.000Z"),
+      fetchImpl: async () => new Response('{"error":"invalid_grant"}', { status: 401 }),
+    }),
+    (error) => error?.message === "Token refresh failed (401). Run `zgap login` again.",
+  );
 });
 
 test("auth-token은 refresh 요청이 멈추면 lock 만료 전에 중단한다", async (t) => {

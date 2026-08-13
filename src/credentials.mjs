@@ -7,7 +7,8 @@ import {
   DEVICE_ID_RE,
   LOCK_STALE_MS,
   LOCK_TIMEOUT_MS,
-  REFRESH_BEFORE_MS,
+  REFRESH_REQUIRED_MS,
+  REFRESH_START_MS,
   REFRESH_TOKEN_RE,
   REQUEST_TIMEOUT_MS,
   CLIENT_ID,
@@ -241,27 +242,39 @@ export async function resolveAccessToken({
   requestTimeoutMs = REQUEST_TIMEOUT_MS,
 } = {}) {
   const current = await readCredentialFile(credentialFile);
-  if (current.accessExpiresAt - now() > REFRESH_BEFORE_MS) return current.access_token;
+  if (current.accessExpiresAt - now() > REFRESH_START_MS) return current.access_token;
 
   return withCredentialLock(credentialFile, async () => {
     // 다른 Codex process가 lock을 잡고 먼저 rotation했으면 새 파일을 그대로 쓴다.
     const credential = await readCredentialFile(credentialFile);
     const timestamp = now();
-    if (credential.accessExpiresAt - timestamp > REFRESH_BEFORE_MS) return credential.access_token;
+    const accessRemainingMs = credential.accessExpiresAt - timestamp;
+    if (accessRemainingMs > REFRESH_START_MS) return credential.access_token;
     if (credential.refreshExpiresAt <= timestamp) throw new Error("zgap session expired. Run `zgap login` again.");
 
-    const response = await fetchImpl(new URL("/cli/oauth/token", credential.origin), {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        client_id: CLIENT_ID,
-        grant_type: "refresh_token",
-        refresh_token: credential.refresh_token,
-      }),
-      signal: AbortSignal.timeout(requestTimeoutMs),
-    });
+    let response;
+    try {
+      response = await fetchImpl(new URL("/cli/oauth/token", credential.origin), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          client_id: CLIENT_ID,
+          grant_type: "refresh_token",
+          refresh_token: credential.refresh_token,
+        }),
+        signal: AbortSignal.timeout(requestTimeoutMs),
+      });
+    } catch (error) {
+      // The still-valid JWT keeps the CLI usable while a transient network failure clears.
+      if (accessRemainingMs > REFRESH_REQUIRED_MS) return credential.access_token;
+      throw error;
+    }
     const body = await response.json().catch(() => null);
-    if (!response.ok) throw new Error(`Token refresh failed (${response.status}). Run \`zgap login\` again.`);
+    if (!response.ok) {
+      if (response.status >= 500 && accessRemainingMs > REFRESH_REQUIRED_MS) return credential.access_token;
+      const loginHint = response.status >= 400 && response.status < 500 ? " Run `zgap login` again." : "";
+      throw new Error(`Token refresh failed (${response.status}).${loginHint}`);
+    }
     if (
       body?.token_type !== "Bearer"
       || !decodeAccessTokenProfile(body.access_token)
