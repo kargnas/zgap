@@ -54,6 +54,10 @@
 - Keep `login` credential-only: write the zgap credential path and do not mutate the user's Codex configuration.
 - Keep `zgap codex` configuration process-local: inject launch arguments, clear conflicting Codex environment variables, and remove the temporary catalog after the child exits.
 
+## Self reviewing
+
+- Run the TUI and see how it looks visually. Fix anything that looks weird or unpolished.
+
 ## Tests and Changes
 
 - Add behavior coverage beside the relevant existing suite in `test/` and run the focused test before `bun test`.
