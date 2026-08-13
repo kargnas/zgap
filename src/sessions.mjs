@@ -1,0 +1,254 @@
+import { execFile } from "node:child_process";
+import { open, readdir, readFile, stat } from "node:fs/promises";
+import { promisify } from "node:util";
+import os from "node:os";
+import path from "node:path";
+
+const execFileAsync = promisify(execFile);
+const MAX_SCAN_BYTES = 2 * 1024 * 1024;
+const TITLE_LIMIT = 120;
+const ANSI_SEQUENCE = /(?:\u001B\][^\u0007\u001B\u009C]*(?:\u0007|\u001B\\|\u009C))|\u001B\\|[\u001B\u009B][[\]()#;?]*(?:\d{1,4}(?:[;:]\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]/g;
+
+export function stripTerminalControls(value) {
+  return String(value ?? "")
+    .replace(ANSI_SEQUENCE, "")
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ");
+}
+
+export function formatSessionTitle(value) {
+  return stripTerminalControls(value)
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, TITLE_LIMIT);
+}
+
+function asNumber(value) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() && Number.isFinite(Number(value))) return Number(value);
+  const parsed = Date.parse(value ?? "");
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function contentText(content) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.map((part) => typeof part === "string" ? part : part?.type === "input_text" ? part.text ?? "" : part?.text ?? "").join(" ");
+}
+
+function isClaudeCommandMetadata(value) {
+  return /^\s*<(?:command-name|local-command-caveat|local-command-stdout)>/.test(value);
+}
+
+function normalizeRecord(record, agent) {
+  if (!record || typeof record !== "object") return null;
+  const id = record.id ?? record.sessionId;
+  const cwd = record.cwd ?? record.projectPath;
+  if (typeof id !== "string" || !id || typeof cwd !== "string" || !cwd) return null;
+  const firstPrompt = record.first_user_message ?? record.firstPrompt;
+  const promptTitle = formatSessionTitle(firstPrompt) === "No prompt" ? "" : formatSessionTitle(firstPrompt);
+  const savedTitle = formatSessionTitle(record.aiTitle ?? record.ai_title ?? record.title);
+  const title = (savedTitle === "No prompt" ? "" : savedTitle) || promptTitle || formatSessionTitle(id);
+  return {
+    agent,
+    provider: agent === "codex" ? (typeof record.model_provider === "string" ? record.model_provider : null) : null,
+    id,
+    cwd: path.resolve(cwd),
+    title,
+    updatedAt: asNumber(record.updatedAt ?? record.updated_at ?? record.modified ?? record.fileMtime ?? record.timestamp),
+  };
+}
+
+function contains(root, target) {
+  const relative = path.relative(root, target);
+  return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+}
+
+function inRoots(target, roots) {
+  return roots.some((root) => contains(path.resolve(root), target));
+}
+
+async function gitOutput(args, cwd) {
+  try {
+    const { stdout } = await execFileAsync("git", args, { cwd, maxBuffer: 1024 * 1024 });
+    return stdout;
+  } catch {
+    return "";
+  }
+}
+
+export async function discoverRepositoryScope(cwd = process.cwd(), options = {}) {
+  const current = path.resolve(cwd);
+  if (Array.isArray(options.repositoryRoots)) return options.repositoryRoots.map((root) => path.resolve(root));
+  const commonDir = (await gitOutput(["rev-parse", "--path-format=absolute", "--git-common-dir"], current)).trim();
+  if (!commonDir) return [current];
+  const output = await gitOutput(["worktree", "list", "--porcelain"], current);
+  const roots = [];
+  for (const block of output.split(/\n\n+/)) {
+    const match = block.match(/^worktree (.+)$/m);
+    if (match) roots.push(path.resolve(match[1]));
+  }
+  return roots.length ? [...new Set(roots)] : [current];
+}
+
+async function readJson(pathname) {
+  return JSON.parse(await readFile(pathname, "utf8"));
+}
+
+async function readHeadTail(pathname, maxBytes = MAX_SCAN_BYTES) {
+  const handle = await open(pathname, "r");
+  try {
+    const size = (await handle.stat()).size;
+    if (size <= maxBytes) {
+      const buffer = Buffer.alloc(size);
+      await handle.read(buffer, 0, size, 0);
+      return [buffer.toString("utf8")];
+    }
+    const half = Math.floor(maxBytes / 2);
+    const head = Buffer.alloc(half);
+    const tail = Buffer.alloc(maxBytes - half);
+    await handle.read(head, 0, head.length, 0);
+    await handle.read(tail, 0, tail.length, size - tail.length);
+    return [head.toString("utf8"), tail.toString("utf8")];
+  } finally {
+    await handle.close();
+  }
+}
+
+function parseJsonLines(text) {
+  return text.split("\n").flatMap((line) => {
+    try { return [JSON.parse(line)]; } catch { return []; }
+  });
+}
+
+async function readBoundedJsonl(pathname, agent) {
+  try {
+    const [head, tail = ""] = await readHeadTail(pathname);
+    const events = [...parseJsonLines(head), ...(tail ? parseJsonLines(tail) : [])];
+    const fileStat = await stat(pathname).catch(() => ({ mtimeMs: 0 }));
+    const fallbackId = path.basename(pathname, ".jsonl");
+    const result = { id: fallbackId, agent, fileMtime: fileStat.mtimeMs, firstPrompt: "", aiTitle: "" };
+    for (const event of events) {
+      const payload = event?.payload && typeof event.payload === "object" ? event.payload : event;
+      if (event?.type === "session_meta") Object.assign(result, payload);
+      if (typeof event?.cwd === "string") result.cwd ||= event.cwd;
+      if (typeof event?.projectPath === "string") result.cwd ||= event.projectPath;
+      if (typeof event?.sessionId === "string") result.id = event.sessionId;
+      if (event?.type === "ai-title") result.aiTitle = event.aiTitle || result.aiTitle;
+      if (event?.type === "custom-title") result.aiTitle = event.customTitle || event.title || result.aiTitle;
+      if (event?.type === "response_item" && payload?.type === "message" && payload.role === "user") result.firstPrompt ||= contentText(payload.content);
+      if (event?.type === "user" && event.message?.role === "user") {
+        const prompt = contentText(event.message.content);
+        if (!isClaudeCommandMetadata(prompt)) result.firstPrompt ||= prompt;
+      }
+      if (event?.isSidechain || event?.sessionId && event?.isSidechain) result.isSidechain = true;
+      result.updatedAt = Math.max(result.updatedAt ?? 0, asNumber(event.timestamp ?? payload.timestamp ?? event.modified));
+    }
+    if (result.isSidechain || pathname.includes(`${path.sep}subagents${path.sep}`)) return null;
+    return normalizeRecord(result, agent);
+  } catch {
+    return null;
+  }
+}
+
+async function walkJsonl(directory, { skipSubagents = false } = {}) {
+  const output = [];
+  let entries;
+  try { entries = await readdir(directory, { withFileTypes: true }); } catch { return output; }
+  for (const entry of entries) {
+    const fullPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      if (!skipSubagents || entry.name !== "subagents") output.push(...await walkJsonl(fullPath, { skipSubagents }));
+    } else if (entry.isFile() && entry.name.endsWith(".jsonl")) {
+      output.push(fullPath);
+    }
+  }
+  return output;
+}
+
+async function readCodexDefault(codexHome) {
+  const databasePath = path.join(codexHome, "state_5.sqlite");
+  try {
+    const { Database } = await import("bun:sqlite");
+    const db = new Database(databasePath, { readonly: true });
+    try {
+      const rows = db.query("SELECT id, model_provider, cwd, title, first_user_message, preview, updated_at, updated_at_ms FROM threads WHERE (TRIM(COALESCE(title, '')) <> '' AND TRIM(title) <> 'No prompt') OR TRIM(COALESCE(first_user_message, '')) <> '' OR TRIM(COALESCE(preview, '')) <> '' ORDER BY updated_at_ms DESC, updated_at DESC").all();
+      for (const row of rows) row.updated_at = row.updated_at_ms || row.updated_at;
+      return rows;
+    } finally {
+      db.close();
+    }
+  } catch {
+    return [];
+  }
+}
+
+async function readCodexFallback(codexHome) {
+  const paths = [];
+  for (const directory of [path.join(codexHome, "sessions"), path.join(codexHome, "archived_sessions")]) paths.push(...await walkJsonl(directory));
+  const output = [];
+  for (const pathname of paths) {
+    const record = await readBoundedJsonl(pathname, "codex");
+    if (record) output.push(record);
+  }
+  return output;
+}
+
+function claudeProjectPrefixes(roots) {
+  return roots.map((root) => path.resolve(root).replaceAll(path.sep, "-"));
+}
+
+async function readClaudeDefault(claudeHome, roots = []) {
+  const projectsDir = path.join(claudeHome, "projects");
+  let projects;
+  try { projects = await readdir(projectsDir, { withFileTypes: true }); } catch { return []; }
+  const byId = new Map();
+  const prefixes = claudeProjectPrefixes(roots);
+  for (const project of projects.filter((entry) => entry.isDirectory()
+    && (prefixes.length === 0 || prefixes.some((prefix) => entry.name === prefix || entry.name.startsWith(`${prefix}-`))))) {
+    const directory = path.join(projectsDir, project.name);
+    try {
+      const index = await readJson(path.join(directory, "sessions-index.json"));
+      for (const entry of Array.isArray(index?.entries) ? index.entries : []) {
+        if (!entry.isSidechain) {
+          const normalized = normalizeRecord(entry, "claude");
+          if (normalized) byId.set(normalized.id, normalized);
+        }
+      }
+    } catch { /* JSONL remains authoritative when the index is absent or malformed. */ }
+    for (const pathname of await walkJsonl(directory, { skipSubagents: true })) {
+      const record = await readBoundedJsonl(pathname, "claude");
+      if (!record) continue;
+      const previous = byId.get(record.id);
+      byId.set(record.id, previous ? {
+        ...previous,
+        cwd: record.cwd,
+        title: record.title !== record.id ? record.title : previous.title,
+        updatedAt: Math.max(previous.updatedAt, record.updatedAt),
+      } : record);
+    }
+  }
+  return [...byId.values()];
+}
+
+export function filterSessions(sessions, filters = {}) {
+  return sessions.filter((session) =>
+    (filters.scope !== "repo" || inRoots(session.cwd, filters.roots ?? []))
+    && (!filters.agent || filters.agent === "all" || session.agent === filters.agent)
+    && (!filters.provider || filters.provider === "all" || session.provider === filters.provider));
+}
+
+export async function listSessions(options = {}) {
+  const cwd = path.resolve(options.cwd ?? process.cwd());
+  const allScope = options.all || options.scope === "all";
+  const roots = allScope ? [] : await discoverRepositoryScope(cwd, options);
+  const codexHome = options.codexHome ?? process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex");
+  const claudeHome = options.claudeHome ?? path.join(os.homedir(), ".claude");
+  let codexRecords;
+  try { codexRecords = options.readCodex ? await options.readCodex() : await readCodexDefault(codexHome); } catch { codexRecords = []; }
+  if (!options.readCodex && codexRecords.length === 0) codexRecords = await readCodexFallback(codexHome);
+  let claudeRecords;
+  try { claudeRecords = options.readClaude ? await options.readClaude() : await readClaudeDefault(claudeHome, allScope ? [] : roots); } catch { claudeRecords = []; }
+  const normalizeAny = (record, agent) => record?.agent === agent && typeof record.provider !== "undefined" ? record : normalizeRecord(record, agent);
+  const values = [...codexRecords.map((record) => normalizeAny(record, "codex")).filter(Boolean), ...claudeRecords.map((record) => normalizeAny(record, "claude")).filter(Boolean)];
+  return values.filter((session) => allScope || roots.some((root) => contains(root, session.cwd))).sort((a, b) => b.updatedAt - a.updatedAt || a.id.localeCompare(b.id));
+}
