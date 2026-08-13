@@ -1,16 +1,17 @@
 import assert from "node:assert/strict";
+import { execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import { access, chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { spawn } from "node:child_process";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
 const repoDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const cliPath = path.join(repoDir, "bin", "zgap.mjs");
+const nodePath = execFileSync("which", ["node"], { encoding: "utf8" }).trim();
 function jwt(email, id) {
   const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
   return [
@@ -61,13 +62,35 @@ async function tempDir(t) {
 }
 
 async function runCli(args, env) {
-  const child = spawn(process.execPath, [cliPath, ...args], { env });
+  const child = spawn(nodePath, [cliPath, ...args], { env });
   let stdout = "";
   let stderr = "";
   child.stdout.on("data", (chunk) => { stdout += chunk; });
   child.stderr.on("data", (chunk) => { stderr += chunk; });
   const [code, signal] = await once(child, "exit");
   return { code, signal, stdout, stderr };
+}
+
+async function installGatewayFetchRedirect(t, port) {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "zgap-fetch-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const modulePath = path.join(directory, "redirect-fetch.mjs");
+  const gateway = JSON.stringify(`http://127.0.0.1:${port}`);
+  await writeFile(modulePath, `const gateway = ${gateway};
+const originalFetch = globalThis.fetch;
+globalThis.fetch = (input, options) => {
+  const originalUrl = new URL(input?.url ?? input);
+  if (originalUrl.origin !== "https://ai-proxy.zz.gg" || originalUrl.pathname !== "/v1/models") {
+    return originalFetch(input, options);
+  }
+  const redirectedUrl = new URL(gateway);
+  redirectedUrl.pathname = originalUrl.pathname;
+  redirectedUrl.search = originalUrl.search;
+  const redirectedInput = input instanceof Request ? new Request(redirectedUrl, input) : redirectedUrl;
+  return originalFetch(redirectedInput, options);
+};
+`);
+  return modulePath;
 }
 
 async function runCatalogFailureScenario(t, { serverBody, bundledOutput, expectedError }) {
@@ -86,6 +109,7 @@ async function runCatalogFailureScenario(t, { serverBody, bundledOutput, expecte
   gateway.listen(0, "127.0.0.1");
   await once(gateway, "listening");
   t.after(() => gateway.close());
+  const fetchRedirectModule = await installGatewayFetchRedirect(t, gateway.address().port);
   await writeFile(path.join(configDir, "credentials.json"), JSON.stringify({
     access_expires_at: "2099-01-02T00:00:00.000Z",
     access_token: ACCESS_OLD,
@@ -107,6 +131,7 @@ else writeFileSync(${JSON.stringify(marker)}, "ran");
     HOME: home,
     XDG_CONFIG_HOME: configRoot,
     PATH: `${fakeBin}${path.delimiter}${process.env.PATH}`,
+    NODE_OPTIONS: `--import=${fetchRedirectModule}`,
   });
   assert.equal(result.code, 1, result.stderr);
   assert.match(result.stderr, expectedError);
@@ -427,7 +452,8 @@ test("codex는 기본 Codex home을 유지하고 refresh 가능한 auth command�
   gateway.listen(0, "127.0.0.1");
   await once(gateway, "listening");
   t.after(() => gateway.close());
-  const origin = `http://127.0.0.1:${gateway.address().port}`;
+  const origin = "https://ai-proxy.zz.gg";
+  const fetchRedirectModule = await installGatewayFetchRedirect(t, gateway.address().port);
   await writeFile(path.join(configDir, "credentials.json"), JSON.stringify({
     access_expires_at: "2099-01-02T00:00:00.000Z",
     access_token: ACCESS_OLD,
@@ -465,6 +491,7 @@ else {
     PATH: `${fakeBin}${path.delimiter}${process.env.PATH}`,
     CODEX_HOME: path.join(root, "separate-codex-home"),
     OPENAI_BASE_URL: "https://wrong.example",
+    NODE_OPTIONS: `--import=${fetchRedirectModule}`,
   });
   assert.equal(result.code, 0, result.stderr);
   const invocation = JSON.parse(result.stdout);
@@ -520,6 +547,7 @@ test("SIGTERM은 Codex 자식에 전달한 뒤 catalog를 정리하고 wrapper�
   gateway.listen(0, "127.0.0.1");
   await once(gateway, "listening");
   t.after(() => gateway.close());
+  const fetchRedirectModule = await installGatewayFetchRedirect(t, gateway.address().port);
   await writeFile(path.join(configDir, "credentials.json"), JSON.stringify({
     access_expires_at: "2099-01-02T00:00:00.000Z",
     access_token: ACCESS_OLD,
@@ -542,12 +570,13 @@ else {
 `);
   await chmod(fakeCodex, 0o755);
 
-  const wrapper = spawn(process.execPath, [cliPath, "codex"], {
+  const wrapper = spawn(nodePath, [cliPath, "codex"], {
     env: {
       HOME: home,
       XDG_CONFIG_HOME: configRoot,
       PATH: `${fakeBin}${path.delimiter}${process.env.PATH}`,
       FAKE_CODEX_SIGNAL_MARKER: marker,
+      NODE_OPTIONS: `--import=${fetchRedirectModule}`,
     },
   });
   let stderr = "";
@@ -610,7 +639,8 @@ test("codex는 설정 파일의 model_catalog_json보다 실행 인자 catalog�
   gateway.listen(0, "127.0.0.1");
   await once(gateway, "listening");
   t.after(() => gateway.close());
-  const origin = `http://127.0.0.1:${gateway.address().port}`;
+  const origin = "https://ai-proxy.zz.gg";
+  const fetchRedirectModule = await installGatewayFetchRedirect(t, gateway.address().port);
   await writeFile(path.join(configDir, "credentials.json"), JSON.stringify({
     access_expires_at: "2099-01-02T00:00:00.000Z",
     access_token: ACCESS_OLD,
@@ -635,6 +665,7 @@ else writeFileSync(process.env.FAKE_CODEX_MARKER, "ran");
     XDG_CONFIG_HOME: configRoot,
     PATH: `${fakeBin}${path.delimiter}${process.env.PATH}`,
     FAKE_CODEX_MARKER: codexMarker,
+    NODE_OPTIONS: `--import=${fetchRedirectModule}`,
   });
 
   assert.equal(result.code, 0, result.stderr);
