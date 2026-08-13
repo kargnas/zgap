@@ -1,5 +1,7 @@
 import { execFile } from "node:child_process";
+import { createReadStream } from "node:fs";
 import { open, readdir, readFile, stat } from "node:fs/promises";
+import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 import os from "node:os";
 import path from "node:path";
@@ -32,7 +34,94 @@ function asNumber(value) {
 function contentText(content) {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
-  return content.map((part) => typeof part === "string" ? part : part?.type === "input_text" ? part.text ?? "" : part?.text ?? "").join(" ");
+  return content.map((part) => {
+    if (typeof part === "string") return part;
+    if (!part || typeof part !== "object") return "";
+    if (["input_text", "output_text", "text"].includes(part.type)) return part.text ?? "";
+    return !part.type ? part.text ?? "" : "";
+  }).join(" ");
+}
+
+function emptyPreview() {
+  return { first: null, latest: null };
+}
+
+function normalizePreview(value) {
+  const normalizePair = (pair) => {
+    if (!pair || typeof pair !== "object") return null;
+    const user = formatSessionTitle(pair.user);
+    if (!user) return null;
+    const assistant = formatSessionTitle(pair.assistant);
+    return { user, assistant: assistant || null };
+  };
+  return {
+    first: normalizePair(value?.first),
+    latest: normalizePair(value?.latest),
+  };
+}
+
+function conversationMessage(event) {
+  const payload = event?.payload && typeof event.payload === "object" ? event.payload : event;
+  if (event?.type === "response_item" && payload?.type === "message") {
+    return { role: payload.role, text: contentText(payload.content) };
+  }
+  if ((event?.type === "user" || event?.type === "assistant") && event.message?.role) {
+    return { role: event.message.role, text: contentText(event.message.content) };
+  }
+  return null;
+}
+
+function conversationPreview(events) {
+  const pairs = [];
+  let pending = null;
+  for (const event of events) {
+    const message = conversationMessage(event);
+    if (!message || !["user", "assistant"].includes(message.role)) continue;
+    const text = formatSessionTitle(message.text);
+    if (!text) continue;
+    if (message.role === "user" && isClaudeCommandMetadata(text)) continue;
+    if (message.role === "user") {
+      pending = { user: text, assistant: null };
+      pairs.push(pending);
+    } else if (pending && !pending.assistant) {
+      pending.assistant = text;
+      pending = null;
+    }
+  }
+  const completedPairs = pairs.filter((pair) => pair.assistant);
+  const previewPairs = completedPairs.length > 0 ? completedPairs : pairs;
+  return normalizePreview({ first: previewPairs[0], latest: previewPairs.at(-1) });
+}
+
+async function readConversationPreview(pathname) {
+  let firstUser = null;
+  let latestUser = null;
+  let firstCompleted = null;
+  let latestCompleted = null;
+  let pending = null;
+  const lines = createInterface({ input: createReadStream(pathname, { encoding: "utf8" }), crlfDelay: Infinity });
+  for await (const line of lines) {
+    let event;
+    try { event = JSON.parse(line); } catch { continue; }
+    const message = conversationMessage(event);
+    if (!message || !["user", "assistant"].includes(message.role)) continue;
+    const text = formatSessionTitle(message.text);
+    if (!text || message.role === "user" && isClaudeCommandMetadata(text)) continue;
+    if (message.role === "user") {
+      pending = { user: text, assistant: null };
+      firstUser ||= pending;
+      latestUser = pending;
+    } else if (pending) {
+      pending.assistant = text;
+      firstCompleted ||= pending;
+      latestCompleted = pending;
+      pending = null;
+    }
+  }
+  return normalizePreview({
+    first: firstCompleted ?? firstUser,
+    latest: latestCompleted ?? latestUser,
+  });
 }
 
 function isClaudeCommandMetadata(value) {
@@ -48,14 +137,19 @@ function normalizeRecord(record, agent) {
   const promptTitle = formatSessionTitle(firstPrompt) === "No prompt" ? "" : formatSessionTitle(firstPrompt);
   const savedTitle = formatSessionTitle(record.aiTitle ?? record.ai_title ?? record.title);
   const title = (savedTitle === "No prompt" ? "" : savedTitle) || promptTitle || formatSessionTitle(id);
-  return {
+  const normalized = {
     agent,
     provider: agent === "codex" ? (typeof record.model_provider === "string" ? record.model_provider : null) : null,
     id,
     cwd: path.resolve(cwd),
     title,
+    preview: normalizePreview(record.preview),
     updatedAt: asNumber(record.updatedAt ?? record.updated_at ?? record.modified ?? record.fileMtime ?? record.timestamp),
   };
+  if (!hasConversationPreview(normalized.preview) && typeof record.previewPath === "string" && record.previewPath) {
+    normalized.previewLocator = { type: "jsonl", path: path.resolve(record.previewPath) };
+  }
+  return normalized;
 }
 
 function contains(root, target) {
@@ -126,7 +220,7 @@ async function readBoundedJsonl(pathname, agent) {
     const events = [...parseJsonLines(head), ...(tail ? parseJsonLines(tail) : [])];
     const fileStat = await stat(pathname).catch(() => ({ mtimeMs: 0 }));
     const fallbackId = path.basename(pathname, ".jsonl");
-    const result = { id: fallbackId, agent, fileMtime: fileStat.mtimeMs, firstPrompt: "", aiTitle: "" };
+    const result = { id: fallbackId, agent, fileMtime: fileStat.mtimeMs, firstPrompt: "", aiTitle: "", preview: emptyPreview(), previewPath: pathname };
     for (const event of events) {
       const payload = event?.payload && typeof event.payload === "object" ? event.payload : event;
       if (event?.type === "session_meta") Object.assign(result, payload);
@@ -143,6 +237,7 @@ async function readBoundedJsonl(pathname, agent) {
       if (event?.isSidechain || event?.sessionId && event?.isSidechain) result.isSidechain = true;
       result.updatedAt = Math.max(result.updatedAt ?? 0, asNumber(event.timestamp ?? payload.timestamp ?? event.modified));
     }
+    result.preview = conversationPreview(events);
     if (result.isSidechain || pathname.includes(`${path.sep}subagents${path.sep}`)) return null;
     return normalizeRecord(result, agent);
   } catch {
@@ -171,8 +266,11 @@ async function readCodexDefault(codexHome) {
     const { Database } = await import("bun:sqlite");
     const db = new Database(databasePath, { readonly: true });
     try {
-      const rows = db.query("SELECT id, model_provider, cwd, title, first_user_message, preview, updated_at, updated_at_ms FROM threads WHERE (TRIM(COALESCE(title, '')) <> '' AND TRIM(title) <> 'No prompt') OR TRIM(COALESCE(first_user_message, '')) <> '' OR TRIM(COALESCE(preview, '')) <> '' ORDER BY updated_at_ms DESC, updated_at DESC").all();
-      for (const row of rows) row.updated_at = row.updated_at_ms || row.updated_at;
+      const rows = db.query("SELECT id, model_provider, cwd, title, first_user_message, preview, rollout_path, updated_at, updated_at_ms FROM threads WHERE (TRIM(COALESCE(title, '')) <> '' AND TRIM(title) <> 'No prompt') OR TRIM(COALESCE(first_user_message, '')) <> '' OR TRIM(COALESCE(preview, '')) <> '' ORDER BY updated_at_ms DESC, updated_at DESC").all();
+      for (const row of rows) {
+        row.updated_at = row.updated_at_ms || row.updated_at;
+        row.previewPath = row.rollout_path;
+      }
       return rows;
     } finally {
       db.close();
@@ -191,6 +289,17 @@ async function readCodexFallback(codexHome) {
     if (record) output.push(record);
   }
   return output;
+}
+
+export async function loadSessionPreview(session, options = {}) {
+  if (hasConversationPreview(session?.preview)) return normalizePreview(session.preview);
+  const pathname = session?.previewLocator?.type === "jsonl" ? session.previewLocator.path : "";
+  if (!pathname) return emptyPreview();
+  return readConversationPreview(pathname);
+}
+
+function hasConversationPreview(preview) {
+  return Boolean(preview?.first || preview?.latest);
 }
 
 function claudeProjectPrefixes(roots) {
@@ -223,6 +332,7 @@ async function readClaudeDefault(claudeHome, roots = []) {
         ...previous,
         cwd: record.cwd,
         title: record.title !== record.id ? record.title : previous.title,
+        preview: record.preview?.first || record.preview?.latest ? record.preview : previous.preview,
         updatedAt: Math.max(previous.updatedAt, record.updatedAt),
       } : record);
     }

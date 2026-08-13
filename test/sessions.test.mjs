@@ -60,8 +60,8 @@ test("listSessions reads Codex sqlite and Claude index records", async (t) => {
     readClaude: async () => [{ sessionId: "a1", projectPath: root, firstPrompt: " first\n command ", modified: "2026-01-01T00:00:00Z" }],
   });
   assert.deepEqual(result, [
-    { agent: "claude", provider: null, id: "a1", cwd: root, title: "first command", updatedAt: Date.parse("2026-01-01T00:00:00Z") },
-    { agent: "codex", provider: "agp", id: "c1", cwd: root, title: "Codex title", updatedAt: 10 },
+    { agent: "claude", provider: null, id: "a1", cwd: root, title: "first command", preview: { first: null, latest: null }, updatedAt: Date.parse("2026-01-01T00:00:00Z") },
+    { agent: "codex", provider: "agp", id: "c1", cwd: root, title: "Codex title", preview: { first: null, latest: null }, updatedAt: 10 },
   ]);
 });
 
@@ -104,7 +104,9 @@ test("Codex fallback recursively aggregates one nested JSONL session", async (t)
   ].join("\n"));
   const result = await sessions.listSessions({ codexHome: home, claudeHome: "/missing", all: true });
   assert.deepEqual(result.filter(({ id }) => id === "nested"), [{
-    agent: "codex", provider: "agp", id: "nested", cwd: "/repo", title: "first command", updatedAt: Date.parse("2026-08-14T00:00:00Z"),
+    agent: "codex", provider: "agp", id: "nested", cwd: "/repo", title: "first command",
+    preview: { first: { user: "first command", assistant: null }, latest: { user: "second command", assistant: null } },
+    updatedAt: Date.parse("2026-08-14T00:00:00Z"),
   }]);
 });
 
@@ -120,7 +122,9 @@ test("Claude JSONL ai-title wins over first user prompt and excludes subagents",
   await writeFile(path.join(project, "subagents", "child.jsonl"), JSON.stringify({ cwd: "/repo", type: "user", message: { role: "user", content: "hidden" } }));
   const result = await sessions.listSessions({ codexHome: "/missing", claudeHome: home, all: true });
   assert.deepEqual(result.filter(({ id }) => id === "main"), [{
-    agent: "claude", provider: null, id: "main", cwd: "/repo", title: "AI title", updatedAt: Date.parse("2026-08-14T00:00:00Z"),
+    agent: "claude", provider: null, id: "main", cwd: "/repo", title: "AI title", preview: {
+      first: { user: "first prompt", assistant: null }, latest: { user: "first prompt", assistant: null },
+    }, updatedAt: Date.parse("2026-08-14T00:00:00Z"),
   }]);
   assert.equal(result.some(({ title }) => title === "hidden"), false);
 });
@@ -165,6 +169,110 @@ test("repo scope reads Claude project directory encoded from a related worktree 
     id: "one",
     cwd: root,
     title: "scoped prompt",
+    preview: { first: { user: "scoped prompt", assistant: null }, latest: { user: "scoped prompt", assistant: null } },
     updatedAt: Date.parse("2026-08-14T00:00:01Z"),
   }]);
+});
+
+test("JSONL preview keeps the first and latest completed user/assistant pairs", async (t) => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "zgap-preview-"));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const nested = path.join(home, "sessions", "2026");
+  await mkdir(nested, { recursive: true });
+  await writeFile(path.join(nested, "conversation.jsonl"), [
+    { type: "session_meta", payload: { id: "conversation", cwd: "/repo", model_provider: "agp" } },
+    { type: "response_item", payload: { type: "message", role: "system", content: [{ type: "output_text", text: "ignore" }] } },
+    { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "injected instructions" }] } },
+    { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "first user" }] } },
+    { type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "first answer" }] } },
+    { type: "response_item", payload: { type: "message", role: "developer", content: [{ type: "output_text", text: "ignore" }] } },
+    { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "latest user" }] } },
+    { type: "response_item", payload: { type: "function_call", name: "tool", arguments: "{}" } },
+    { type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "latest answer" }] } },
+    { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "unanswered tail" }] } },
+  ].map((event) => JSON.stringify(event)).join("\n"));
+  const result = await sessions.listSessions({ codexHome: home, claudeHome: "/missing", all: true });
+  assert.deepEqual(result.find(({ id }) => id === "conversation")?.preview, {
+    first: { user: "first user", assistant: "first answer" }, latest: { user: "latest user", assistant: "latest answer" },
+  });
+});
+
+test("Claude JSONL preview skips command metadata and tool-only events", async (t) => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "zgap-claude-preview-"));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const project = path.join(home, "projects", "-repo");
+  await mkdir(project, { recursive: true });
+  await writeFile(path.join(project, "conversation.jsonl"), [
+    { type: "user", sessionId: "conversation", cwd: "/repo", message: { role: "user", content: "<command-name>/model</command-name>" } },
+    { type: "user", sessionId: "conversation", cwd: "/repo", message: { role: "user", content: "real question" } },
+    { type: "assistant", sessionId: "conversation", cwd: "/repo", message: { role: "assistant", content: [{ type: "text", text: "real answer" }] } },
+    { type: "assistant", sessionId: "conversation", cwd: "/repo", message: { role: "assistant", content: [{ type: "tool_use", name: "Read" }] } },
+  ].map((event) => JSON.stringify(event)).join("\n"));
+  const result = await sessions.listSessions({ codexHome: "/missing", claudeHome: home, all: true });
+  assert.deepEqual(result.find(({ id }) => id === "conversation")?.preview, {
+    first: { user: "real question", assistant: "real answer" },
+    latest: { user: "real question", assistant: "real answer" },
+  });
+});
+
+test("Codex SQLite lists metadata without scanning JSONL and loads preview on demand", async (t) => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "zgap-codex-sqlite-preview-"));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const { Database } = await import("bun:sqlite");
+  const db = new Database(path.join(home, "state_5.sqlite"));
+  db.run("CREATE TABLE threads (id TEXT, model_provider TEXT, cwd TEXT, title TEXT, first_user_message TEXT, preview TEXT, rollout_path TEXT, updated_at TEXT, updated_at_ms INTEGER)");
+  const rolloutPath = path.join(home, "sessions", "2026", "08", "sqlite-session.jsonl");
+  db.run("INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", ["sqlite-session", "agp", "/repo", "SQLite title", "SQLite prompt", "SQLite preview", rolloutPath, "2026-08-14T00:00:00Z", 100]);
+  db.close();
+
+  const nested = path.join(home, "sessions", "2026", "08");
+  const archived = path.join(home, "archived_sessions", "2026");
+  await mkdir(nested, { recursive: true });
+  await mkdir(archived, { recursive: true });
+  await writeFile(path.join(nested, "sqlite-session.jsonl"), [
+    { type: "session_meta", payload: { id: "sqlite-session", cwd: "/repo", model_provider: "agp" } },
+    { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "JSONL question" }] } },
+    { type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "JSONL answer" }] } },
+  ].map((event) => JSON.stringify(event)).join("\n"));
+  await writeFile(path.join(archived, "archived-session.jsonl"), [
+    { type: "session_meta", payload: { id: "archived-session", cwd: "/repo", model_provider: "agp" } },
+    { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "Archived question" }] } },
+  ].map((event) => JSON.stringify(event)).join("\n"));
+
+  const result = await sessions.listSessions({ codexHome: home, claudeHome: "/missing", all: true });
+  const sqliteSession = result.find(({ id }) => id === "sqlite-session");
+  assert.deepEqual(sqliteSession, {
+    agent: "codex", provider: "agp", id: "sqlite-session", cwd: "/repo", title: "SQLite title",
+    preview: { first: null, latest: null }, previewLocator: { type: "jsonl", path: rolloutPath },
+    updatedAt: 100,
+  });
+  assert.deepEqual(await sessions.loadSessionPreview(sqliteSession), {
+    first: { user: "JSONL question", assistant: "JSONL answer" },
+    latest: { user: "JSONL question", assistant: "JSONL answer" },
+  });
+  assert.equal(result.some(({ id }) => id === "archived-session"), false);
+});
+
+test("lazy preview finds the last turn before a large trailing event", async (t) => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "zgap-large-preview-"));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const rolloutPath = path.join(home, "conversation.jsonl");
+  await writeFile(rolloutPath, [
+    { type: "session_meta", payload: { id: "large", cwd: "/repo", model_provider: "agp" } },
+    { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "first question" }] } },
+    { type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "first answer" }] } },
+    { type: "response_item", payload: { type: "function_call_output", output: "x".repeat(1_200_000) } },
+    { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "last question" }] } },
+    { type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "last answer" }] } },
+    { type: "response_item", payload: { type: "function_call_output", output: "x".repeat(1_200_000) } },
+  ].map((event) => JSON.stringify(event)).join("\n"));
+
+  assert.deepEqual(await sessions.loadSessionPreview({
+    agent: "codex",
+    preview: { first: null, latest: null },
+    previewLocator: { type: "jsonl", path: rolloutPath },
+  }), {
+    first: { user: "first question", assistant: "first answer" },
+    latest: { user: "last question", assistant: "last answer" },
+  });
 });
