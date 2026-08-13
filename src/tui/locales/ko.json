@@ -1,7 +1,6 @@
 {
   "title": "zgap",
   "tagline": "ai-proxy.zz.gg를 통한 에이전트",
-  "signedIn": "로그인됨",
   "sessionExpired": "세션 만료",
   "notSignedIn": "로그인 필요",
   "proxyChecking": "프록시 확인 중…",
