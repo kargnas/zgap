@@ -28,9 +28,9 @@ bun add -g github:kargnas/zgap#main --force --no-cache
 
 Run `zgap` without arguments to enter the OpenTUI start screen immediately while its dependencies load. The screen reads the local zgap credential state and shows the available actions:
 
-- A valid refresh session shows the account email, **CODEX**, and **Claude**.
-- An expired refresh session shows **Session expired** and **Login again**.
-- Missing or invalid credentials show **Not signed in** and **Login**.
+- A valid refresh session shows the account email, **CODEX**, **Claude**, and **Sessions**.
+- An expired refresh session shows **Session expired**, **Login again**, and **Sessions**.
+- Missing or invalid credentials show **Not signed in**, **Login**, and **Sessions**.
 
 For a signed-in session, the screen shows only the account email from the access token. zgap accepts only tokens with the `EdDSA`/`JWT` header, the fixed ai-proxy issuer and audience, numeric subject/session IDs, valid timestamps, and HTTPS proxy products. Signature verification is performed by the server; the client uses the validated payload for display only.
 
@@ -86,6 +86,18 @@ Arguments after `zgap claude` go directly to the installed Claude Code executabl
 
 Claude Code uses the inline helper to obtain the current zgap access token and retries it after authentication failures. A user-supplied `--settings` option is rejected because Claude Code accepts only one effective inline settings object and replacing it would disable zgap authentication.
 
+## Browse sessions
+
+```sh
+zgap sessions
+```
+
+The session browser reads the existing local Codex and Claude Code history without requiring a zgap login. By default, it shows sessions from the current Git repository and every linked worktree for the same repository. Outside a Git repository, the default scope is the current directory and its subdirectories.
+
+Each row shows the agent, the saved Codex provider when available, the session title, its directory, and its last update time. If a saved title is unavailable, zgap shows the first user command, then the session ID. Claude history does not store a separate provider value, so zgap does not infer one.
+
+Press `s` to switch between the repository and all directories, `a` to filter by agent, `p` to filter by Codex provider, and `r` to refresh. Press Up or Down, or `j` or `k`, to move through the list. Backspace returns to the start screen when the browser was opened there.
+
 ## Direct commands
 
 ```text
@@ -93,6 +105,7 @@ zgap login             Sign in with ai-proxy.zz.gg
 zgap logout            Sign out on this device
 zgap codex [args...]   Run Codex through ai-proxy.zz.gg
 zgap claude [args...]  Run Claude through ai-proxy.zz.gg
+zgap sessions          Browse Codex and Claude history
 zgap update            Update zgap from GitHub main
 zgap --help            Show command help
 ```
