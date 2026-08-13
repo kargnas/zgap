@@ -9,6 +9,7 @@ import { runCodex } from "./codex.mjs";
 import { runClaude } from "./claude.mjs";
 import { detectInstallation, printNpmMigrationWarning, updateGlobalInstall } from "./install.mjs";
 import { runStartMenu } from "./tui/menu.mjs";
+import { fetchCurrentUserUsage } from "./usage.mjs";
 
 function printHelp() {
   console.log(`Usage:
@@ -30,6 +31,7 @@ export async function main({
   invokedPath = entryPath,
   modulePath = entryPath,
   startMenu = runStartMenu,
+  usageReader = fetchCurrentUserUsage,
 } = {}) {
   const [command, ...args] = argv;
   const installation = detectInstallation({ entryPath, invokedPath, modulePath, bunGlobalBin });
@@ -49,11 +51,17 @@ export async function main({
     return updateGlobalInstall({ installation, emitWarning: false });
   }
   if (!command) {
+    const credentialFile = credentialsPath(configDir);
     const credentialState = await credentialStateReader({
-      credentialFile: credentialsPath(configDir),
+      credentialFile,
     });
     return startMenu({
       credentialState,
+      usagePromise: credentialState === "signed-in"
+        ? Promise.resolve()
+          .then(() => usageReader({ credentialFile }))
+          .catch(() => null)
+        : undefined,
       actions: {
         login,
         codex: () => runCodex([]),
