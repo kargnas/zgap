@@ -33,6 +33,8 @@ Run `zgap` without arguments to open the OpenTUI start screen. The screen reads 
 - An expired refresh session shows **Session expired** and **Login again**.
 - Missing or invalid credentials show **Not signed in** and **Login**.
 
+For a signed-in session, the screen also fetches the authenticated key's preserved usage from `GET /api/codex/usage`. It shows the proxy plan, request count, total tokens, and the documented input, output, cached-input, and cache-creation token breakdown. The request runs without delaying menu input; a failed request shows **Usage unavailable**. Compact terminals keep both launch actions and the quit hint visible by omitting the usage row.
+
 Press Up or Down to move and Enter to continue. Press Ctrl+C twice or Esc twice within one second to quit. Text remains selectable for terminal copy.
 
 While the screen is open, it continuously checks `https://ai-proxy.zz.gg/health` without delaying input. The screen replaces the displayed full-response time in milliseconds immediately, then starts the next check 250 milliseconds later. A failed response or the three-second timeout shows **Proxy unreachable** until the next successful check.

@@ -85,6 +85,23 @@ function menuContent(credentialState, t) {
   throw new Error(`Unknown credential state: ${credentialState}`);
 }
 
+const USAGE_FIELDS = [
+  ["plan_type", "usagePlan"],
+  ["request_count", "usageRequests"],
+  ["total_tokens", "usageTotalTokens"],
+  ["input_tokens", "usageInputTokens"],
+  ["output_tokens", "usageOutputTokens"],
+  ["cached_input_tokens", "usageCachedInputTokens"],
+  ["cache_creation_input_tokens", "usageCacheCreationInputTokens"],
+];
+
+function usageText(usage, t) {
+  return USAGE_FIELDS
+    .filter(([field]) => usage?.[field] !== undefined && usage?.[field] !== null)
+    .map(([field, key]) => t(key, { value: usage[field] }))
+    .join(" · ");
+}
+
 export async function runStartMenu({
   rendererFactory = createCliRenderer,
   actions = {},
@@ -92,10 +109,12 @@ export async function runStartMenu({
   language = process.env.LANG,
   now = Date.now,
   proxyHealthCheck = checkProxyHealth,
+  usagePromise,
 } = {}) {
   let renderer;
   let keyHandler;
   let resizeHandler;
+  let usageSpinner;
   const proxyAbortController = new AbortController();
   let cleaned = false;
   const cleanup = () => {
@@ -104,6 +123,7 @@ export async function runStartMenu({
     proxyAbortController.abort();
     if (renderer && keyHandler) renderer.keyInput.off("keypress", keyHandler);
     if (renderer && resizeHandler) renderer.off("resize", resizeHandler);
+    if (usageSpinner) clearInterval(usageSpinner);
     renderer?.destroy();
   };
 
@@ -196,6 +216,19 @@ export async function runStartMenu({
     topBar.add(brand);
     topBar.add(statusArea);
 
+    const usageStatus = new TextRenderable(renderer, {
+      content: usagePromise === undefined ? "" : `| ${t("usageInitializing")}`,
+      fg: "#94A3B8",
+      selectable: true,
+    });
+    const usageArea = new BoxRenderable(renderer, {
+      width: "100%",
+      flexDirection: "column",
+      paddingTop: 1,
+    });
+    usageArea.visible = usagePromise !== undefined;
+    usageArea.add(usageStatus);
+
     const centerArea = new BoxRenderable(renderer, {
       width: "100%",
       flexGrow: 1,
@@ -258,6 +291,7 @@ export async function runStartMenu({
     bottomBar.add(ready);
     bottomBar.add(hint);
     root.add(topBar);
+    root.add(usageArea);
     root.add(centerArea);
     root.add(bottomBar);
     renderer.root.add(root);
@@ -288,6 +322,9 @@ export async function runStartMenu({
       bottomBar.justifyContent = compact ? "flex-start" : "space-between";
       ready.visible = !compact;
       hint.content = compact ? t("compactHint") : t("hint");
+      usageArea.paddingTop = compact ? 0 : 1;
+      // Short terminals have no spare row after status, both actions, and the quit hint.
+      usageArea.visible = usagePromise !== undefined && !compact;
     };
     // Terminal resize keeps the primary action and quit instruction visible instead of clipping long locale strings.
     resizeHandler = (width, height) => applyResponsiveLayout(width, height);
@@ -326,6 +363,33 @@ export async function runStartMenu({
       }
     };
     void updateProxyStatus();
+    if (usagePromise !== undefined) {
+      const spinnerFrames = ["|", "/", "-", "\\"];
+      let spinnerIndex = 0;
+      usageSpinner = setInterval(() => {
+        if (cleaned) return;
+        spinnerIndex = (spinnerIndex + 1) % spinnerFrames.length;
+        usageStatus.content = `${spinnerFrames[spinnerIndex]} ${t("usageInitializing")}`;
+      }, 80);
+      Promise.resolve(usagePromise).then((usage) => {
+        if (cleaned) return;
+        clearInterval(usageSpinner);
+        usageSpinner = undefined;
+        if (usage === null) {
+          usageStatus.content = t("usageUnavailable");
+          usageStatus.fg = "#F87171";
+          return;
+        }
+        usageStatus.content = usageText(usage, t) || t("usageUnavailable");
+        usageStatus.fg = "#A7F3D0";
+      }).catch(() => {
+        if (cleaned) return;
+        clearInterval(usageSpinner);
+        usageSpinner = undefined;
+        usageStatus.content = t("usageUnavailable");
+        usageStatus.fg = "#F87171";
+      });
+    }
 
     let lastCtrlC = null;
     let lastEscape = null;

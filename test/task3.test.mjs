@@ -186,6 +186,72 @@ test("TUI는 proxy 실패를 표시하고 종료할 때 진행 중인 확인을 
   assert.equal(requestSignal.aborted, true);
 });
 
+test("TUI는 사용량 요약을 초기화·성공·실패 상태로 표시한다", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runStartMenu } = await import("../src/tui/menu.mjs");
+  const setup = await createTestRenderer({ width: 100, height: 24 });
+  t.after(() => setup.renderer.destroy());
+  let resolveSummary;
+  const summary = new Promise((resolve) => { resolveSummary = resolve; });
+  const resultPromise = runStartMenu({
+    rendererFactory: async () => setup,
+    usagePromise: summary,
+    proxyHealthCheck: async () => ({ state: "online", latencyMs: 1 }),
+    actions: { login: async () => 0 },
+  });
+  await flushMenu(setup);
+  assert.match(setup.captureCharFrame(), /Usage initializing/);
+  const initialLoadingFrame = setup.captureCharFrame();
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  await setup.renderOnce();
+  assert.notEqual(setup.captureCharFrame(), initialLoadingFrame);
+  resolveSummary({ plan_type: "Pro", request_count: 12, total_tokens: 3456 });
+  await flushMenu(setup);
+  const loaded = setup.captureCharFrame();
+  assert.match(loaded, /Requests: 12/);
+  assert.match(loaded, /Pro/);
+  assert.match(loaded, /Tokens: 3456/);
+  await setup.mockInput.pressCtrlC();
+  await setup.mockInput.pressCtrlC();
+  assert.equal(await resultPromise, 130);
+
+  const failedSetup = await createTestRenderer({ width: 100, height: 24 });
+  t.after(() => failedSetup.renderer.destroy());
+  const failedResult = runStartMenu({
+    rendererFactory: async () => failedSetup,
+    usagePromise: (async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      throw new Error("usage unavailable");
+    })(),
+    proxyHealthCheck: async () => ({ state: "online", latencyMs: 1 }),
+    actions: { login: async () => 0 },
+  });
+  await flushMenu(failedSetup);
+  assert.match(failedSetup.captureCharFrame(), /Usage unavailable/);
+  await failedSetup.mockInput.pressCtrlC();
+  await failedSetup.mockInput.pressCtrlC();
+  assert.equal(await failedResult, 130);
+
+  const compactSetup = await createTestRenderer({ width: 40, height: 10 });
+  t.after(() => compactSetup.renderer.destroy());
+  const compactResult = runStartMenu({
+    rendererFactory: async () => compactSetup,
+    credentialState: "signed-in",
+    usagePromise: Promise.resolve({ plan_type: "ai-proxy1", request_count: 12, total_tokens: 3456 }),
+    proxyHealthCheck: async () => ({ state: "online", latencyMs: 1 }),
+    actions: { codex: async () => 0, claude: async () => 0 },
+  });
+  await flushMenu(compactSetup);
+  const compactFrame = compactSetup.captureCharFrame();
+  assert.doesNotMatch(compactFrame, /Requests:/);
+  assert.match(compactFrame, /CODEX/);
+  assert.match(compactFrame, /Claude/);
+  assert.match(compactFrame, /Esc Esc quit/);
+  await compactSetup.mockInput.pressCtrlC();
+  await compactSetup.mockInput.pressCtrlC();
+  assert.equal(await compactResult, 130);
+});
+
 test("Corner Map은 100x24의 네 모서리와 중앙을 사용한다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runStartMenu } = await import("../src/tui/menu.mjs");
