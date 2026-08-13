@@ -266,9 +266,16 @@ test("login은 디바이스 승인 대기와 slow_down을 폴링하고 token pai
     code_challenge: requests[0].body.code_challenge,
     code_challenge_method: "S256",
     device_id: requests[0].body.device_id,
+    system_info: requests[0].body.system_info,
   });
   assert.match(requests[0].body.code_challenge, /^[A-Za-z0-9_-]{43}$/);
   assert.match(requests[0].body.device_id, /^[A-Za-z0-9_-]{43}$/);
+  assert.deepEqual(Object.keys(requests[0].body.system_info).sort(), ["hostname", "os_arch", "os_name", "os_version"]);
+  for (const value of Object.values(requests[0].body.system_info)) {
+    assert.equal(typeof value, "string");
+    assert.ok(value.length > 0);
+    assert.ok(value.length <= 255);
+  }
   assert.equal(openUrl, `${origin}/console/cli-auth?device_code=device-code&user_code=ABCD-EFGH`);
   assert.match(logs[0], new RegExp(`${origin}/console/cli-auth\\?device_code=device-code&user_code=ABCD-EFGH`));
   assert.deepEqual(sleeps, [2_000, 2_000, 7_000]);
