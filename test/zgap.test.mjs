@@ -521,6 +521,56 @@ else {
   await assert.rejects(access(path.join(home, ".codex")), { code: "ENOENT" });
 });
 
+test("provider override는 zgap catalog와 환경 정리 없이 Codex를 실행한다", async (t) => {
+  const root = await tempDir(t);
+  const fakeBin = path.join(root, "bin");
+  const marker = path.join(root, "invocation.json");
+  await mkdir(fakeBin, { recursive: true });
+  const fakeCodex = path.join(fakeBin, "codex");
+  await writeFile(fakeCodex, `#!/usr/bin/env node
+import { writeFileSync } from "node:fs";
+writeFileSync(process.env.PROVIDER_MARKER, JSON.stringify({
+  argv: process.argv.slice(2),
+  openaiBaseUrl: process.env.OPENAI_BASE_URL ?? null,
+  openaiApiKey: process.env.OPENAI_API_KEY ?? null,
+}));
+`);
+  await chmod(fakeCodex, 0o755);
+
+  const previous = {
+    PATH: process.env.PATH,
+    PROVIDER_MARKER: process.env.PROVIDER_MARKER,
+    OPENAI_BASE_URL: process.env.OPENAI_BASE_URL,
+    OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+    CODEX_HOME: process.env.CODEX_HOME,
+    ZGAP_API_KEY: process.env.ZGAP_API_KEY,
+  };
+  Object.assign(process.env, {
+    PATH: `${fakeBin}${path.delimiter}${previous.PATH ?? ""}`,
+    PROVIDER_MARKER: marker,
+    OPENAI_BASE_URL: "https://normal.example",
+    OPENAI_API_KEY: "normal-key",
+    CODEX_HOME: path.join(root, "codex-home"),
+    ZGAP_API_KEY: "zgap-key",
+  });
+  try {
+    const { runCodex } = await import("../src/codex.mjs");
+    assert.equal(await runCodex(["resume", "session-id"], { cwd: root, provider: "openai" }), 0);
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+
+  const invocation = JSON.parse(await readFile(marker, "utf8"));
+  assert.deepEqual(invocation.argv, ["-c", 'model_provider="openai"', "resume", "session-id"]);
+  assert.equal(invocation.openaiBaseUrl, "https://normal.example");
+  assert.equal(invocation.openaiApiKey, "normal-key");
+  assert.equal(invocation.argv.some((arg) => arg.startsWith("model_catalog_json=")), false);
+  assert.equal(invocation.argv.some((arg) => arg.startsWith("model_providers.zgap=")), false);
+});
+
 test("SIGTERM은 Codex 자식에 전달한 뒤 catalog를 정리하고 wrapper도 SIGTERM으로 종료한다", async (t) => {
   const root = await tempDir(t);
   const home = path.join(root, "home");

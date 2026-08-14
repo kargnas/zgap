@@ -22,7 +22,12 @@ function providerConfig(credentialFile) {
   return `model_providers.zgap=${providerTable(credentialFile)}`;
 }
 
-export async function runCodex(args, { configDir = defaultConfigDir(), cwd = process.cwd() } = {}) {
+export async function runCodex(args, {
+  configDir = defaultConfigDir(),
+  cwd = process.cwd(),
+  provider = "zgap",
+} = {}) {
+  const useZgap = provider === "zgap";
   let receivedSignal;
   let child;
   let ephemeral;
@@ -46,26 +51,33 @@ export async function runCodex(args, { configDir = defaultConfigDir(), cwd = pro
     if (receivedSignal) throw new Error(`runCodex interrupted by ${receivedSignal}`);
   };
   const env = { ...process.env };
-  delete env.CODEX_HOME;
-  delete env.OPENAI_BASE_URL;
-  delete env.OPENAI_API_KEY;
-  delete env.ZGAP_API_KEY;
+  if (useZgap) {
+    delete env.CODEX_HOME;
+    delete env.OPENAI_BASE_URL;
+    delete env.OPENAI_API_KEY;
+    delete env.ZGAP_API_KEY;
+  }
 
   try {
-    const codexPath = await resolveCodexExecutable({ cwd });
+    const codexPath = await resolveCodexExecutable({ env, cwd });
     abortIfSignaled();
-    ephemeral = await createEphemeralCatalog({ configDir, codexPath, env });
-    abortIfSignaled();
+    if (useZgap) {
+      ephemeral = await createEphemeralCatalog({ configDir, codexPath, env });
+      abortIfSignaled();
+    }
     return await new Promise((resolve, reject) => {
-      child = spawn(codexPath, [
-        "-c",
-        providerConfig(credentialsPath(configDir)),
-        "-c",
-        'model_provider="zgap"',
-        "-c",
-        `model_catalog_json=${JSON.stringify(ephemeral.target)}`,
-        ...args,
-      ], { cwd, env, stdio: "inherit" });
+      const launchArgs = useZgap
+        ? [
+            "-c",
+            providerConfig(credentialsPath(configDir)),
+            "-c",
+            'model_provider="zgap"',
+            "-c",
+            `model_catalog_json=${JSON.stringify(ephemeral.target)}`,
+            ...args,
+          ]
+        : ["-c", `model_provider=${JSON.stringify(provider)}`, ...args];
+      child = spawn(codexPath, launchArgs, { cwd, env, stdio: "inherit" });
       child.once("error", (error) => reject(error.code === "ENOENT"
         ? new Error("Codex CLI is not installed or not in PATH.")
         : error));

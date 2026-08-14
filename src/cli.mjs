@@ -15,8 +15,16 @@ import { runSessionBrowser } from "./tui/session-browser.mjs";
 
 const BACK_TO_START_MENU = Symbol("back-to-start-menu");
 
-export function resumeSession(session, configDir, { codexRunner = runCodex, claudeRunner = runClaude } = {}) {
-  if (session?.agent === "codex") return codexRunner(["resume", session.id], { configDir, cwd: session.cwd });
+export function resumeSession(session, configDir, {
+  provider,
+  codexRunner = runCodex,
+  claudeRunner = runClaude,
+} = {}) {
+  if (session?.agent === "codex") {
+    const options = { configDir, cwd: session.cwd };
+    if (provider) options.provider = provider;
+    return codexRunner(["resume", session.id], options);
+  }
   if (session?.agent === "claude") return claudeRunner(["--resume", session.id], { configDir, cwd: session.cwd });
   throw new Error(`Unsupported session agent: ${session?.agent ?? "unknown"}`);
 }
@@ -56,7 +64,7 @@ export async function main({
   if (command === "codex") return runCodex(args);
   if (command === "claude") return runClaude(args, { configDir });
   if (command === "sessions") {
-    return sessionBrowser({ cwd, onSelect: (session) => resumeSession(session, configDir) });
+    return sessionBrowser({ cwd, onSelect: (session, selection) => resumeSession(session, configDir, selection) });
   }
   if (command === "update") {
     return updateGlobalInstall();
@@ -88,9 +96,9 @@ export async function main({
             let selected = false;
             const browserResult = await sessionBrowser({
               cwd,
-              onSelect: (session) => {
+              onSelect: (session, selection) => {
                 selected = true;
-                return resumeSession(session, configDir);
+                return resumeSession(session, configDir, selection);
               },
             });
             return selected || browserResult !== 0 ? browserResult : BACK_TO_START_MENU;
