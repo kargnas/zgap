@@ -531,8 +531,10 @@ test("provider override는 zgap catalog와 환경 정리 없이 Codex를 실행�
 import { writeFileSync } from "node:fs";
 writeFileSync(process.env.PROVIDER_MARKER, JSON.stringify({
   argv: process.argv.slice(2),
+  codexHome: process.env.CODEX_HOME ?? null,
   openaiBaseUrl: process.env.OPENAI_BASE_URL ?? null,
   openaiApiKey: process.env.OPENAI_API_KEY ?? null,
+  zgapApiKey: process.env.ZGAP_API_KEY ?? null,
 }));
 `);
   await chmod(fakeCodex, 0o755);
@@ -565,8 +567,10 @@ writeFileSync(process.env.PROVIDER_MARKER, JSON.stringify({
 
   const invocation = JSON.parse(await readFile(marker, "utf8"));
   assert.deepEqual(invocation.argv, ["-c", 'model_provider="openai"', "resume", "session-id"]);
+  assert.equal(invocation.codexHome, path.join(root, "codex-home"));
   assert.equal(invocation.openaiBaseUrl, "https://normal.example");
   assert.equal(invocation.openaiApiKey, "normal-key");
+  assert.equal(invocation.zgapApiKey, "zgap-key");
   assert.equal(invocation.argv.some((arg) => arg.startsWith("model_catalog_json=")), false);
   assert.equal(invocation.argv.some((arg) => arg.startsWith("model_providers.zgap=")), false);
 });

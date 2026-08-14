@@ -195,33 +195,35 @@ function providerMenuText(providers, selectedIndex, activeProvider, width) {
   }));
 }
 
-function previewProviderText(providers, selectedIndex, activeProvider, width, t) {
+function previewProviderText(providers, selectedIndex, activeProvider, width, t, viewportStart = 0, visibleRows = providers.length) {
   const maxWidth = Math.max(4, width - 4);
   const lines = [chunk(t("sessionsPreviewProviderTitle"), COLORS.text, undefined, true)];
-  for (const [index, provider] of providers.entries()) {
+  const end = Math.min(providers.length, viewportStart + visibleRows);
+  for (let index = viewportStart; index < end; index += 1) {
+    const provider = providers[index];
     const selected = index === selectedIndex;
+    const saved = provider === activeProvider;
     const background = selected ? COLORS.amberBackground : undefined;
+    const suffix = saved ? ` · ${t("sessionsPreviewProviderSaved")}` : "";
     lines.push(
       chunk("\n", COLORS.text, background),
       chunk(selected ? "› " : "  ", COLORS.amber, background),
-      chunk(truncateText(displayText(provider), maxWidth), providerColor(provider), background, selected),
+      chunk(truncateText(displayText(provider), Math.max(1, maxWidth - Bun.stringWidth(suffix))), providerColor(provider), background, selected),
+      chunk(suffix, saved ? COLORS.green : COLORS.text, background),
     );
-  }
-  lines.push(chunk(`\n${t("sessionsPreviewProviderSaved")}`, COLORS.green));
-  if (activeProvider && !providers.includes(activeProvider)) {
-    lines.push(chunk(`\n${truncateText(displayText(activeProvider), maxWidth)}`, COLORS.meta));
   }
   return new StyledText(lines);
 }
 
-function previewProviderCompactText(providers, selectedIndex, width, t) {
+function previewProviderCompactText(providers, selectedIndex, activeProvider, width, t) {
   const provider = providers[selectedIndex] ?? "zgap";
+  const saved = activeProvider ? ` · ${t("sessionsPreviewProviderSaved")}: ${displayText(activeProvider)}` : "";
   return new StyledText([
     chunk(truncateText(t("sessionsPreviewProviderCompact", {
       current: selectedIndex + 1,
       count: providers.length,
       provider: displayText(provider),
-    }), Math.max(4, width)), COLORS.text, "#071018", true),
+    }) + saved, Math.max(4, width)), COLORS.text, "#071018", true),
   ]);
 }
 
@@ -395,6 +397,7 @@ export async function runSessionBrowser({
     let previewGeneration = 0;
     let previewProviders = [];
     let previewProviderIndex = 0;
+    let previewProviderViewportStart = 0;
     let previewBodyCompact = null;
     let providerMenuIndex = 0;
     let providerViewportStart = 0;
@@ -550,10 +553,21 @@ export async function runSessionBrowser({
         hint.maxHeight = compact ? 1 : 3;
         hint.content = codexPreview ? t("sessionsPreviewCodexHint") : t("sessionsPreviewHint");
         list.visible = false;
+        const previewProviderVisibleRows = Math.max(1, renderer.height - 6);
+        if (codexPreview && !compact) {
+          if (previewProviderIndex < previewProviderViewportStart) previewProviderViewportStart = previewProviderIndex;
+          if (previewProviderIndex >= previewProviderViewportStart + previewProviderVisibleRows) {
+            previewProviderViewportStart = previewProviderIndex - previewProviderVisibleRows + 1;
+          }
+          previewProviderViewportStart = Math.max(0, Math.min(
+            previewProviderViewportStart,
+            Math.max(0, previewProviders.length - previewProviderVisibleRows),
+          ));
+        }
         previewRail.content = codexPreview
           ? compact
-            ? previewProviderCompactText(previewProviders, previewProviderIndex, renderer.width, t)
-            : previewProviderText(previewProviders, previewProviderIndex, session.provider, PREVIEW_RAIL_WIDTH, t)
+            ? previewProviderCompactText(previewProviders, previewProviderIndex, session.provider, renderer.width, t)
+            : previewProviderText(previewProviders, previewProviderIndex, session.provider, PREVIEW_RAIL_WIDTH, t, previewProviderViewportStart, previewProviderVisibleRows)
           : "";
         previewContent.content = previewLoading
           ? `${SPINNER_FRAMES[spinnerIndex]} ${t("sessionsPreviewLoading")}`
@@ -847,6 +861,7 @@ export async function runSessionBrowser({
         previewError = null;
         previewProviders = session.agent === "codex" ? resumeProviders(sessions) : [];
         previewProviderIndex = Math.max(0, previewProviders.indexOf(session.provider ?? "zgap"));
+        previewProviderViewportStart = 0;
         if (Array.isArray(detailCache.get(session)?.preview?.turns)
           || Array.isArray(session.preview?.turns) && session.preview.turns.length > 0
           || !session.previewLocator) {

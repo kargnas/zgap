@@ -446,6 +446,46 @@ test("Codex preview는 wide rail에서 provider를 선택해 원본 세션을 �
   assert.equal(originalSession.provider, "zgap");
 });
 
+test("Codex wide rail은 저장된 provider 표식을 해당 행에 유지하고 없으면 표시하지 않는다", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
+  const setup = await createTestRenderer({ width: 100, height: 18 });
+  t.after(() => setup.renderer.destroy());
+  const saved = { ...sessions[0], cwd: "/repo" };
+  const result = runSessionBrowser({
+    rendererFactory: async () => setup,
+    discoverScope: async () => ({ roots: ["/repo"] }),
+    sessionLoader: async () => [
+      saved,
+      { ...saved, id: "openai-session", provider: "openai", title: "OpenAI session" },
+      { ...saved, id: "no-saved-session", provider: null, title: "Unconfigured provider" },
+    ],
+  });
+  await flush(setup);
+  setup.mockInput.pressKey(" ");
+  await flush(setup);
+  let frame = setup.captureCharFrame();
+  const zgapLine = frame.split("\n").find((line) => line.includes("zgap"));
+  assert.match(zgapLine, /saved/);
+  assert.doesNotMatch(frame.split("\n").find((line) => line.includes("openai")), /saved/);
+
+  setup.mockInput.pressArrow("down");
+  await flush(setup);
+  frame = setup.captureCharFrame();
+  assert.match(frame.split("\n").find((line) => line.includes("zgap")), /saved/);
+
+  setup.mockInput.pressKey(" ");
+  await flush(setup);
+  setup.mockInput.pressArrow("down");
+  setup.mockInput.pressArrow("down");
+  await setup.mockInput.pressKey(" ");
+  await flush(setup);
+  assert.doesNotMatch(setup.captureCharFrame(), /saved/);
+  await setup.mockInput.pressBackspace();
+  await setup.mockInput.pressBackspace();
+  assert.equal(await result, 0);
+});
+
 test("Codex wide rail은 긴 provider를 22열 안에서 한 줄로 줄인다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
@@ -509,12 +549,40 @@ test("Codex preview는 compact rail에서 모든 줄을 40열 안에 유지한�
   await flush(setup);
   frame = setup.captureCharFrame();
   assert.match(frame, /Provider 2\/3 · openai/);
+  assert.match(frame, /zgap/);
   for (const line of frame.split("\n")) assert.ok(Bun.stringWidth(line) <= 40, line);
 
   setup.mockInput.pressKey(" ");
   await flush(setup);
   await setup.mockInput.pressBackspace();
   assert.equal(await result, 0);
+});
+
+test("Codex wide preview는 짧은 rail viewport에서 End 선택을 보이고 그대로 재개한다", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
+  const setup = await createTestRenderer({ width: 100, height: 10 });
+  t.after(() => setup.renderer.destroy());
+  const providers = ["zgap", "openai", "p1", "p2", "p3", "p4", "p5"];
+  const base = { ...sessions[0], cwd: "/repo" };
+  let selection;
+  const result = runSessionBrowser({
+    rendererFactory: async () => setup,
+    discoverScope: async () => ({ roots: ["/repo"] }),
+    sessionLoader: async () => providers.map((provider, index) => ({ ...base, id: `provider-${index}`, provider })),
+    onSelect: async (_session, options) => { selection = options; return 0; },
+  });
+  await flush(setup);
+  setup.mockInput.pressKey(" ");
+  await flush(setup);
+  setup.mockInput.pressKey("\x1b[F");
+  await flush(setup);
+  const frame = setup.captureCharFrame();
+  assert.match(frame, /› p5/);
+  assert.doesNotMatch(frame, /› zgap/);
+  setup.mockInput.pressEnter();
+  assert.equal(await result, 0);
+  assert.deepEqual(selection, { provider: "p5" });
 });
 
 test("Claude preview에는 provider rail이 없고 기존 닫기 동작을 유지한다", async (t) => {
