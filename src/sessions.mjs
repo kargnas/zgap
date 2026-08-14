@@ -263,6 +263,22 @@ async function readCodexDefault(codexHome) {
   }
 }
 
+export async function readActiveSessionPaths(runLsof = execFileAsync) {
+  let stdout = "";
+  try {
+    ({ stdout } = await runLsof("lsof", ["-Fn", "-c", "codex", "-c", "claude"], {
+      maxBuffer: 16 * 1024 * 1024,
+      timeout: 3_000,
+    }));
+  } catch (error) {
+    // lsof can return 1 for an unmatched command selector while still reporting other matches.
+    stdout = typeof error?.stdout === "string" ? error.stdout : "";
+  }
+  return new Set(stdout.split("\n")
+    .filter((line) => line.startsWith("n") && line.endsWith(".jsonl"))
+    .map((line) => path.resolve(line.slice(1))));
+}
+
 export async function convertCodexSessionProviders(selectedSessions, targetProvider, options = {}) {
   const target = typeof targetProvider === "string" ? targetProvider.trim() : "";
   if (!target) throw new Error("Target provider is required");
@@ -396,5 +412,21 @@ export async function listSessions(options = {}) {
   try { claudeRecords = options.readClaude ? await options.readClaude() : await readClaudeDefault(claudeHome, allScope ? [] : roots); } catch { claudeRecords = []; }
   const normalizeAny = (record, agent) => record?.agent === agent && typeof record.provider !== "undefined" ? record : normalizeRecord(record, agent);
   const values = [...codexRecords.map((record) => normalizeAny(record, "codex")).filter(Boolean), ...claudeRecords.map((record) => normalizeAny(record, "claude")).filter(Boolean)];
-  return values.filter((session) => allScope || roots.some((root) => contains(root, session.cwd))).sort((a, b) => b.updatedAt - a.updatedAt || a.id.localeCompare(b.id));
+  const visible = values.filter((session) => allScope || roots.some((root) => contains(root, session.cwd)));
+  let activePaths;
+  try {
+    activePaths = options.readActiveSessionPaths
+      ? await options.readActiveSessionPaths()
+      : options.readCodex || options.readClaude || options.codexHome || options.claudeHome
+        ? new Set()
+        : await readActiveSessionPaths();
+  } catch {
+    activePaths = new Set();
+  }
+  const normalizedActivePaths = new Set([...activePaths].map((pathname) => path.resolve(pathname)));
+  for (const session of visible) {
+    const pathname = session.previewLocator?.type === "jsonl" ? session.previewLocator.path : "";
+    if (pathname && normalizedActivePaths.has(path.resolve(pathname))) session.active = true;
+  }
+  return visible.sort((a, b) => b.updatedAt - a.updatedAt || a.id.localeCompare(b.id));
 }

@@ -65,6 +65,34 @@ test("listSessions reads Codex sqlite and Claude index records", async (t) => {
   ]);
 });
 
+test("listSessions는 열린 JSONL과 일치하는 세션만 실행 중으로 표시한다", async () => {
+  const activePath = "/sessions/active.jsonl";
+  const result = await sessions.listSessions({
+    cwd: "/repo",
+    repositoryRoots: ["/repo"],
+    readCodex: async () => [
+      { id: "active", model_provider: "zgap", cwd: "/repo", title: "Active", previewPath: activePath, updated_at: 2 },
+      { id: "idle", model_provider: "openai", cwd: "/repo", title: "Idle", previewPath: "/sessions/idle.jsonl", updated_at: 1 },
+    ],
+    readClaude: async () => [],
+    readActiveSessionPaths: async () => new Set([activePath]),
+  });
+
+  assert.equal(result.find(({ id }) => id === "active").active, true);
+  assert.equal(result.find(({ id }) => id === "idle").active, undefined);
+});
+
+test("readActiveSessionPaths는 일부 command가 없어 lsof가 1을 반환해도 열린 JSONL을 보존한다", async () => {
+  const activePath = path.resolve("/sessions/active.jsonl");
+  const error = Object.assign(new Error("lsof exited with code 1"), {
+    stdout: `p123\nn${activePath}\n`,
+  });
+
+  const result = await sessions.readActiveSessionPaths(async () => { throw error; });
+
+  assert.deepEqual([...result], [activePath]);
+});
+
 test("No prompt title은 첫 사용자 명령으로 대체한다", async () => {
   const result = await sessions.listSessions({
     cwd: "/repo",
