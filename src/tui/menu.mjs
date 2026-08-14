@@ -65,6 +65,7 @@ function menuContent(credentialState, accountProfile, t) {
       actions: [
         { name: "codex", label: t("codex"), description: t("codexDescription") },
         { name: "claude", label: t("claude"), description: t("claudeDescription") },
+        { name: "sessions", label: t("sessions"), description: t("sessionsDescription") },
       ],
     };
   }
@@ -72,14 +73,20 @@ function menuContent(credentialState, accountProfile, t) {
     return {
       status: t("sessionExpired"),
       statusColor: "#FCD34D",
-      actions: [{ name: "login", label: t("loginAgain"), description: t("loginAgainDescription") }],
+      actions: [
+        { name: "login", label: t("loginAgain"), description: t("loginAgainDescription") },
+        { name: "sessions", label: t("sessions"), description: t("sessionsDescription") },
+      ],
     };
   }
   if (credentialState === "signed-out") {
     return {
       status: t("notSignedIn"),
       statusColor: "#94A3B8",
-      actions: [{ name: "login", label: t("login"), description: t("loginDescription") }],
+      actions: [
+        { name: "login", label: t("login"), description: t("loginDescription") },
+        { name: "sessions", label: t("sessions"), description: t("sessionsDescription") },
+      ],
     };
   }
   throw new Error(`Unknown credential state: ${credentialState}`);
@@ -221,11 +228,11 @@ export async function runStartMenu({
     });
     const actionRow = new BoxRenderable(renderer, {
       width: "70%",
-      height: content.actions.length > 1 ? 9 : 4,
+      height: content.actions.length > 1 ? (content.actions.length * 4 + (content.actions.length > 2 ? 0 : 1)) : 4,
       flexDirection: "column",
       justifyContent: "center",
       alignItems: "stretch",
-      gap: content.actions.length > 1 ? 1 : 0,
+      gap: content.actions.length > 2 ? 0 : (content.actions.length > 1 ? 1 : 0),
     });
     const actionCards = content.actions.map((item) => {
       const card = new BoxRenderable(renderer, {
@@ -293,11 +300,12 @@ export async function runStartMenu({
       statusArea.alignItems = compact ? "flex-start" : "flex-end";
       statusArea.paddingRight = compact ? 0 : 1;
       centerArea.alignItems = compact ? "stretch" : "center";
+      actionRow.flexDirection = compact && content.actions.length > 2 ? "row" : "column";
       actionRow.width = compact ? "100%" : "70%";
-      actionRow.height = compact ? content.actions.length * 3 : (content.actions.length > 1 ? 9 : 4);
-      actionRow.gap = compact ? 0 : (content.actions.length > 1 ? 1 : 0);
+      actionRow.height = compact ? 3 : (content.actions.length > 1 ? (content.actions.length * 4 + (content.actions.length > 2 ? 0 : 1)) : 4);
+      actionRow.gap = compact ? 0 : (content.actions.length > 2 ? 0 : (content.actions.length > 1 ? 1 : 0));
       actionCards.forEach(({ card, description }) => {
-        card.width = "100%";
+        card.width = compact && content.actions.length > 2 ? `${100 / content.actions.length}%` : "100%";
         card.height = compact ? 3 : 4;
         card.paddingX = compact ? 0 : 1;
         description.visible = !compact;

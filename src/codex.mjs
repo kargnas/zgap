@@ -22,7 +22,7 @@ function providerConfig(credentialFile) {
   return `model_providers.zgap=${providerTable(credentialFile)}`;
 }
 
-export async function runCodex(args, { configDir = defaultConfigDir() } = {}) {
+export async function runCodex(args, { configDir = defaultConfigDir(), cwd = process.cwd() } = {}) {
   let receivedSignal;
   let child;
   let ephemeral;
@@ -52,7 +52,7 @@ export async function runCodex(args, { configDir = defaultConfigDir() } = {}) {
   delete env.ZGAP_API_KEY;
 
   try {
-    const codexPath = await resolveCodexExecutable();
+    const codexPath = await resolveCodexExecutable({ cwd });
     abortIfSignaled();
     ephemeral = await createEphemeralCatalog({ configDir, codexPath, env });
     abortIfSignaled();
@@ -65,7 +65,7 @@ export async function runCodex(args, { configDir = defaultConfigDir() } = {}) {
         "-c",
         `model_catalog_json=${JSON.stringify(ephemeral.target)}`,
         ...args,
-      ], { env, stdio: "inherit" });
+      ], { cwd, env, stdio: "inherit" });
       child.once("error", (error) => reject(error.code === "ENOENT"
         ? new Error("Codex CLI is not installed or not in PATH.")
         : error));
