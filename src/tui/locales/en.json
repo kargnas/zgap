@@ -61,7 +61,7 @@
   "sessionsTurnCount_one": "{{count}} turn",
   "sessionsTurnCount_other": "{{count}} turns",
   "sessionsDetailsUnavailable": "n/a",
-  "sessionsActiveResumeBlocked": "This session is already running",
+  "sessionsActiveResumeConfirm": "This session is already running. Press Enter again within 1 second to resume",
   "hint": "Up/Down move  ·  Enter select  ·  Ctrl+C twice or Esc twice quit",
   "compactHint": "↑↓ move · ↵ select · Esc Esc quit"
 }

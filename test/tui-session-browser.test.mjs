@@ -116,11 +116,11 @@ test("session browser는 loading spinner를 움직이고 완료 후 timer를 정
   });
 
   await flush(setup);
-  assert.equal(interval, 100);
-  assert.match(setup.captureCharFrame(), /\| Initializing sessions/);
+  assert.equal(interval, 90);
+  assert.match(setup.captureCharFrame(), /● · · · Initializing sessions/);
   tick();
   await setup.renderOnce();
-  assert.match(setup.captureCharFrame(), /\/ Initializing sessions/);
+  assert.match(setup.captureCharFrame(), /· ● · · Initializing sessions/);
 
   scope.resolve({ roots: ["/repo"] });
   await flush(setup);
@@ -832,7 +832,7 @@ test("session browser는 Enter로 선택한 세션을 재개한다", async (t) =
   assert.equal(setup.renderer.isDestroyed, true);
 });
 
-test("session browser는 실행 중인 세션의 목록 Enter 재개를 막는다", async (t) => {
+test("session browser는 실행 중인 세션을 목록에서 Enter 두 번으로 재개한다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
   const setup = await createTestRenderer({ width: 72, height: 12 });
@@ -851,11 +851,12 @@ test("session browser는 실행 중인 세션의 목록 Enter 재개를 막는�
   await waitForFrame(setup, (frame) => frame.includes("already running"));
   assert.equal(selected, false);
 
-  await setup.mockInput.pressBackspace();
-  assert.equal(await result, 0);
+  setup.mockInput.pressEnter();
+  assert.equal(await result, 23);
+  assert.equal(selected, true);
 });
 
-test("session browser는 실행 중인 Codex 세션의 미리보기 Enter 재개를 막는다", async (t) => {
+test("session browser는 실행 중인 Codex 세션을 미리보기에서 Enter 두 번으로 재개한다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
   const setup = await createTestRenderer({ width: 72, height: 12 });
@@ -876,9 +877,9 @@ test("session browser는 실행 중인 Codex 세션의 미리보기 Enter 재개
   await waitForFrame(setup, (frame) => frame.includes("already running"));
   assert.equal(selected, false);
 
-  setup.mockInput.pressKey(" ");
-  await setup.mockInput.pressBackspace();
-  assert.equal(await result, 0);
+  setup.mockInput.pressEnter();
+  assert.equal(await result, 23);
+  assert.equal(selected, true);
 });
 
 test("session browser는 최근 상대 시간과 오래된 정확한 시간을 표시한다", async (t) => {

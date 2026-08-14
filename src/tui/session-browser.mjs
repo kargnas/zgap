@@ -9,6 +9,7 @@ import {
   fg,
   createCliRenderer,
 } from "@opentui/core";
+import cliSpinners from "cli-spinners";
 import { convertCodexSessionProviders, discoverRepositoryScope, filterSessions, listSessions, loadSessionDetails, loadSessionPreview, stripTerminalControls } from "../sessions.mjs";
 import { loadMenuTranslator } from "./menu.mjs";
 
@@ -16,10 +17,11 @@ const AGENTS = ["all", "codex", "claude"];
 const COMPACT_WIDTH = 60;
 const PREVIEW_RAIL_WIDTH = 22;
 const EXACT_TIME_AFTER_MS = 3 * 60 * 60_000;
-const LOADING_SPINNER_FRAMES = ["|", "/", "-", "\\"];
-const LOADING_SPINNER_INTERVAL_MS = 100;
-const ACTIVE_SESSION_FRAMES = ["◐", "◓", "◑", "◒"];
-const ACTIVE_SESSION_INTERVAL_MS = 50;
+const ORBIT_SPINNER = {
+  frames: ["● · · ·", "· ● · ·", "· · ● ·", "· · · ●", "· · ● ·", "· ● · ·"],
+  interval: 90,
+};
+const ACTIVE_SESSION_SPINNER = cliSpinners.circleHalves;
 const COLORS = {
   amber: "#FBBF24",
   amberBackground: "#271708",
@@ -128,7 +130,7 @@ function chunk(text, color, background, isBold = false) {
   return value;
 }
 
-function rowText(session, detailsState, selected, language, width, compact, currentTime, t, activeMarker = ACTIVE_SESSION_FRAMES[0]) {
+function rowText(session, detailsState, selected, language, width, compact, currentTime, t, activeMarker = ACTIVE_SESSION_SPINNER.frames[0]) {
   const agent = displayText(session.agent).toUpperCase();
   const provider = truncateText(displayText(session.provider), compact ? 12 : 24);
   const sourceWidth = Bun.stringWidth(agent) + (provider ? Bun.stringWidth(` · ${provider}`) : 0);
@@ -366,6 +368,8 @@ export async function runSessionBrowser({
   let spinnerTimer = null;
   let spinnerMode = null;
   let noticeTimer = null;
+  let activeResumeKey = null;
+  let activeResumeTimer = null;
   const abortController = new AbortController();
   const cleanup = () => {
     if (cleaned) return;
@@ -376,6 +380,9 @@ export async function runSessionBrowser({
     spinnerMode = null;
     if (noticeTimer !== null) (clock.clearTimeout ?? globalThis.clearTimeout)(noticeTimer);
     noticeTimer = null;
+    if (activeResumeTimer !== null) (clock.clearTimeout ?? globalThis.clearTimeout)(activeResumeTimer);
+    activeResumeTimer = null;
+    activeResumeKey = null;
     if (renderer && keyHandler) renderer.keyInput.off("keypress", keyHandler);
     if (renderer && resizeHandler) renderer.off("resize", resizeHandler);
     renderer?.destroy();
@@ -547,12 +554,11 @@ export async function runSessionBrowser({
         spinnerIndex = 0;
       }
       if (spinnerMode !== null && spinnerTimer === null) {
-        const interval = spinnerMode === "active" ? ACTIVE_SESSION_INTERVAL_MS : LOADING_SPINNER_INTERVAL_MS;
-        const frameCount = spinnerMode === "active" ? ACTIVE_SESSION_FRAMES.length : LOADING_SPINNER_FRAMES.length;
+        const spinner = spinnerMode === "active" ? ACTIVE_SESSION_SPINNER : ORBIT_SPINNER;
         spinnerTimer = clock.setInterval(() => {
-          spinnerIndex = (spinnerIndex + 1) % frameCount;
+          spinnerIndex = (spinnerIndex + 1) % spinner.frames.length;
           if (!cleaned) render();
-        }, interval);
+        }, spinner.interval);
       }
       filters.content = new StyledText([
         chunk(`[s ${scope}]`, COLORS.amber, undefined, true),
@@ -581,7 +587,7 @@ export async function runSessionBrowser({
         list.visible = true;
         hint.maxHeight = 3;
         hint.content = providerConvertLoading
-          ? `${LOADING_SPINNER_FRAMES[spinnerIndex]} ${t("sessionsProviderConverting", { count: providerConvertSessions.length })}`
+          ? `${ORBIT_SPINNER.frames[spinnerIndex]} ${t("sessionsProviderConverting", { count: providerConvertSessions.length })}`
           : providerConvertError
             ? `${t("sessionsProviderConvertFailed")}: ${providerConvertError.message}`
             : t("sessionsProviderConvertHint");
@@ -651,7 +657,7 @@ export async function runSessionBrowser({
             : previewProviderText(previewProviders, previewProviderIndex, session.provider, PREVIEW_RAIL_WIDTH, t, previewProviderViewportStart, previewProviderVisibleRows)
           : "";
         previewContent.content = previewLoading
-          ? `${LOADING_SPINNER_FRAMES[spinnerIndex]} ${t("sessionsPreviewLoading")}`
+          ? `${ORBIT_SPINNER.frames[spinnerIndex]} ${t("sessionsPreviewLoading")}`
           : previewError
             ? `${t("sessionsPreviewLoadFailed")}: ${previewError.message}`
             : previewSession
@@ -679,13 +685,13 @@ export async function runSessionBrowser({
       title.visible = true;
       filters.visible = true;
       if (state === "initializing") {
-        list.content = `${LOADING_SPINNER_FRAMES[spinnerIndex]} ${t("sessionsInitializing")}`;
+        list.content = `${ORBIT_SPINNER.frames[spinnerIndex]} ${t("sessionsInitializing")}`;
         list.fg = "#94A3B8";
         renderer.requestRender();
         return;
       }
       if (state === "loading") {
-        list.content = `${LOADING_SPINNER_FRAMES[spinnerIndex]} ${t("sessionsLoading")}`;
+        list.content = `${ORBIT_SPINNER.frames[spinnerIndex]} ${t("sessionsLoading")}`;
         list.fg = "#94A3B8";
         renderer.requestRender();
         return;
@@ -707,7 +713,7 @@ export async function runSessionBrowser({
       const count = visibleRows();
       const visibleSessions = values.slice(viewportStart, viewportStart + count);
       list.content = joinStyledText(visibleSessions
-        .map((session, index) => rowText(session, detailCache.get(session), viewportStart + index === selectedIndex, language, renderer.width, compact, now(), t, spinnerMode === "active" ? ACTIVE_SESSION_FRAMES[spinnerIndex] : ACTIVE_SESSION_FRAMES[0])));
+        .map((session, index) => rowText(session, detailCache.get(session), viewportStart + index === selectedIndex, language, renderer.width, compact, now(), t, spinnerMode === "active" ? ACTIVE_SESSION_SPINNER.frames[spinnerIndex] : ACTIVE_SESSION_SPINNER.frames[0])));
       list.fg = "#E2E8F0";
       renderer.requestRender();
       for (const session of visibleSessions) {
@@ -741,6 +747,24 @@ export async function runSessionBrowser({
         notice = "";
         if (!cleaned) render();
       }, 1_000);
+    };
+    const clearActiveResume = () => {
+      if (activeResumeTimer !== null) (clock.clearTimeout ?? globalThis.clearTimeout)(activeResumeTimer);
+      activeResumeTimer = null;
+      activeResumeKey = null;
+    };
+    const resume = (session, selection) => {
+      const key = `${sessionKey(session)}:${selection?.provider ?? ""}`;
+      if (session.active && activeResumeKey !== key) {
+        clearActiveResume();
+        activeResumeKey = key;
+        activeResumeTimer = (clock.setTimeout ?? globalThis.setTimeout)(clearActiveResume, 1_000);
+        showNotice(t("sessionsActiveResumeConfirm"));
+        return;
+      }
+      clearActiveResume();
+      cleanup();
+      Promise.resolve().then(() => onSelect(session, selection)).then(resolveResult, rejectResult);
     };
     const select = (index) => {
       const values = filteredSessions();
@@ -800,6 +824,7 @@ export async function runSessionBrowser({
     keyHandler = (event) => {
       if (settled || event.eventType !== "press") return;
       const timestamp = now();
+      if (event.name !== "return") clearActiveResume();
       if (event.ctrl && event.name === "c") {
         if (lastCtrlC !== null && timestamp - lastCtrlC <= 1_000) finish(130);
         else {
@@ -922,14 +947,7 @@ export async function runSessionBrowser({
           else if (event.name === "home") previewProviderIndex = 0;
           else if (event.name === "end") previewProviderIndex = previewProviders.length - 1;
           else if (event.name === "return") {
-            if (session.active) {
-              showNotice(t("sessionsActiveResumeBlocked"));
-              return;
-            }
-            cleanup();
-            Promise.resolve()
-              .then(() => onSelect(session, { provider: previewProviders[previewProviderIndex] ?? "zgap" }))
-              .then(resolveResult, rejectResult);
+            resume(session, { provider: previewProviders[previewProviderIndex] ?? "zgap" });
             return;
           }
           render();
@@ -1043,12 +1061,7 @@ export async function runSessionBrowser({
         const values = filteredSessions();
         const session = values[selectedIndex];
         if (!session) return;
-        if (session.active) {
-          showNotice(t("sessionsActiveResumeBlocked"));
-          return;
-        }
-        cleanup();
-        Promise.resolve().then(() => onSelect(session)).then(resolveResult, rejectResult);
+        resume(session);
         return;
       }
       if (["up", "down", "j", "k", "pageup", "pagedown", "home", "end"].includes(event.name)) {
