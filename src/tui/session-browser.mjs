@@ -16,7 +16,8 @@ const AGENTS = ["all", "codex", "claude"];
 const COMPACT_WIDTH = 60;
 const PREVIEW_RAIL_WIDTH = 22;
 const EXACT_TIME_AFTER_MS = 3 * 60 * 60_000;
-const SPINNER_FRAMES = ["|", "/", "-", "\\"];
+const SPINNER_FRAMES = ["◐", "◓", "◑", "◒"];
+const SPINNER_INTERVAL_MS = 50;
 const COLORS = {
   amber: "#FBBF24",
   amberBackground: "#271708",
@@ -529,11 +530,10 @@ export async function runSessionBrowser({
       const compact = renderer.width <= COMPACT_WIDTH;
       const loading = state === "initializing" || state === "loading" || previewLoading || providerConvertLoading;
       if (loading && spinnerTimer === null) {
-        // ASCII frames stay aligned in terminals that calculate emoji width differently.
         spinnerTimer = clock.setInterval(() => {
           spinnerIndex = (spinnerIndex + 1) % SPINNER_FRAMES.length;
           if (!cleaned) render();
-        }, 100);
+        }, SPINNER_INTERVAL_MS);
       } else if (!loading && spinnerTimer !== null) {
         clock.clearInterval(spinnerTimer);
         spinnerTimer = null;

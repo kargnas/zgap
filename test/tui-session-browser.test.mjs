@@ -115,10 +115,10 @@ test("session browser는 loading spinner를 움직이고 완료 후 timer를 정
   });
 
   await flush(setup);
-  assert.match(setup.captureCharFrame(), /\| Initializing sessions/);
+  assert.match(setup.captureCharFrame(), /◐ Initializing sessions/);
   tick();
   await setup.renderOnce();
-  assert.match(setup.captureCharFrame(), /\/ Initializing sessions/);
+  assert.match(setup.captureCharFrame(), /◓ Initializing sessions/);
 
   scope.resolve({ roots: ["/repo"] });
   await flush(setup);
