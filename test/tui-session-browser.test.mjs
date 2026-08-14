@@ -446,6 +446,39 @@ test("Codex preview는 wide rail에서 provider를 선택해 원본 세션을 �
   assert.equal(originalSession.provider, "zgap");
 });
 
+test("Codex wide rail은 긴 provider를 22열 안에서 한 줄로 줄인다", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
+  const setup = await createTestRenderer({ width: 100, height: 18 });
+  t.after(() => setup.renderer.destroy());
+  const longProvider = "super-long-provider-name-that-breaks-rail";
+
+  const result = runSessionBrowser({
+    rendererFactory: async () => setup,
+    discoverScope: async () => ({ roots: ["/repo"] }),
+    sessionLoader: async () => [
+      { ...sessions[0], cwd: "/repo" },
+      { ...sessions[0], id: "codex-long", provider: longProvider, cwd: "/repo" },
+    ],
+  });
+  await flush(setup);
+
+  setup.mockInput.pressKey(" ");
+  await flush(setup);
+  const frame = setup.captureCharFrame();
+  assert.match(frame, /super-long-provid…/);
+  assert.doesNotMatch(frame, new RegExp(longProvider));
+  assert.match(frame, /U Build a session switcher/);
+  const providerLines = frame.split("\n").filter((line) => line.includes("super-long") || line.includes("name-that"));
+  assert.equal(providerLines.length, 1);
+  assert.ok(Bun.stringWidth(providerLines[0].slice(-22).trim()) <= 22);
+
+  setup.mockInput.pressKey(" ");
+  await flush(setup);
+  await setup.mockInput.pressBackspace();
+  assert.equal(await result, 0);
+});
+
 test("Codex preview는 compact rail에서 모든 줄을 40열 안에 유지한다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");

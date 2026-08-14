@@ -14,6 +14,7 @@ import { loadMenuTranslator } from "./menu.mjs";
 
 const AGENTS = ["all", "codex", "claude"];
 const COMPACT_WIDTH = 60;
+const PREVIEW_RAIL_WIDTH = 22;
 const SPINNER_FRAMES = ["|", "/", "-", "\\"];
 const COLORS = {
   amber: "#FBBF24",
@@ -445,7 +446,7 @@ export async function runSessionBrowser({
     });
     const previewRail = new TextRenderable(renderer, {
       content: "",
-      width: 22,
+      width: PREVIEW_RAIL_WIDTH,
       flexShrink: 0,
       bg: "#071018",
       selectable: true,
@@ -540,7 +541,7 @@ export async function runSessionBrowser({
         previewBody.flexDirection = compact ? "column" : "row";
         previewContent.visible = true;
         previewRail.visible = codexPreview;
-        previewRail.width = compact ? "100%" : 22;
+        previewRail.width = compact ? "100%" : PREVIEW_RAIL_WIDTH;
         previewRail.height = compact ? 1 : "100%";
         title.content = t("sessionsPreviewTitle");
         title.visible = true;
@@ -552,14 +553,14 @@ export async function runSessionBrowser({
         previewRail.content = codexPreview
           ? compact
             ? previewProviderCompactText(previewProviders, previewProviderIndex, renderer.width, t)
-            : previewProviderText(previewProviders, previewProviderIndex, session.provider, renderer.width - 22, t)
+            : previewProviderText(previewProviders, previewProviderIndex, session.provider, PREVIEW_RAIL_WIDTH, t)
           : "";
         previewContent.content = previewLoading
           ? `${SPINNER_FRAMES[spinnerIndex]} ${t("sessionsPreviewLoading")}`
           : previewError
             ? `${t("sessionsPreviewLoadFailed")}: ${previewError.message}`
             : previewSession
-              ? previewText(previewSession, compact ? renderer.width : renderer.width - 22, renderer.height, t, { compact })
+              ? previewText(previewSession, compact ? renderer.width : renderer.width - PREVIEW_RAIL_WIDTH, renderer.height, t, { compact })
               : "";
         previewContent.fg = previewError ? "#F87171" : previewLoading ? COLORS.chip : COLORS.text;
         renderer.requestRender();
