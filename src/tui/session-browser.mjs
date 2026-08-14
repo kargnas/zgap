@@ -154,7 +154,7 @@ function rowText(session, detailsState, selected, language, width, compact, curr
     ? truncateText(displayText(path.basename(session.cwd) || session.cwd), locationLimit)
     : "";
   const metaParts = [location && { text: location, color: COLORS.meta }, ...details].filter(Boolean);
-  const titleLimit = Math.max(4, rowWidth - sourceWidth - 4);
+  const titleLimit = Math.max(4, rowWidth - sourceWidth - 6);
   const title = truncateText(displayText(session.title), titleLimit);
   const background = selected ? COLORS.amberBackground : undefined;
   const providerChunk = provider
@@ -163,13 +163,14 @@ function rowText(session, detailsState, selected, language, width, compact, curr
         chunk(provider, providerColor(provider), background),
       ]
     : [];
-  const firstLineWidth = 2 + sourceWidth + 2 + Bun.stringWidth(title);
+  const firstLineWidth = 4 + sourceWidth + 2 + Bun.stringWidth(title);
   const metaLineWidth = Bun.stringWidth(metaPrefix)
     + metaParts.reduce((total, part) => total + Bun.stringWidth(part.text), 0)
     + Math.max(0, metaParts.length - 1) * 3;
   return new StyledText([
     chunk(selected ? "›" : " ", COLORS.amber, background),
     chunk(" ", COLORS.text, background),
+    chunk(session.active ? "● " : "  ", session.active ? COLORS.green : COLORS.meta, background),
     chunk(agent, agentColor(agent), background, true),
     ...providerChunk,
     chunk("  ", COLORS.text, background),
@@ -615,7 +616,7 @@ export async function runSessionBrowser({
         filters.content = "";
         filters.visible = false;
         hint.maxHeight = compact ? 1 : 3;
-        hint.content = codexPreview ? t("sessionsPreviewCodexHint") : t("sessionsPreviewHint");
+        hint.content = notice || (codexPreview ? t("sessionsPreviewCodexHint") : t("sessionsPreviewHint"));
         list.visible = false;
         const previewProviderVisibleRows = Math.max(1, renderer.height - 6);
         if (codexPreview && !compact) {
@@ -905,6 +906,10 @@ export async function runSessionBrowser({
           else if (event.name === "home") previewProviderIndex = 0;
           else if (event.name === "end") previewProviderIndex = previewProviders.length - 1;
           else if (event.name === "return") {
+            if (session.active) {
+              showNotice(t("sessionsActiveResumeBlocked"));
+              return;
+            }
             cleanup();
             Promise.resolve()
               .then(() => onSelect(session, { provider: previewProviders[previewProviderIndex] ?? "zgap" }))
@@ -1022,6 +1027,10 @@ export async function runSessionBrowser({
         const values = filteredSessions();
         const session = values[selectedIndex];
         if (!session) return;
+        if (session.active) {
+          showNotice(t("sessionsActiveResumeBlocked"));
+          return;
+        }
         cleanup();
         Promise.resolve().then(() => onSelect(session)).then(resolveResult, rejectResult);
         return;
