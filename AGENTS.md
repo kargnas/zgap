@@ -42,6 +42,7 @@
 - Read `.agents/skills/opentui/SKILL.md` before changing `src/tui/`; use its linked docs for renderer, keyboard, and testing details.
 - Preserve the alternate-screen renderer, selectable text, signal cleanup, and renderer destruction on selection, errors, and exit signals.
 - Preserve the two-press Ctrl+C and Esc quit behavior within one second; a confirmed quit returns exit code 130.
+- Use `orbit` as the default loading spinner and green `cli-spinners` `circleHalves` frames as the active-session indicator.
 
 ## i18n
 
