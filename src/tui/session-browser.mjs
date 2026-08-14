@@ -15,6 +15,7 @@ import { loadMenuTranslator } from "./menu.mjs";
 const AGENTS = ["all", "codex", "claude"];
 const COMPACT_WIDTH = 60;
 const PREVIEW_RAIL_WIDTH = 22;
+const EXACT_TIME_AFTER_MS = 3 * 60 * 60_000;
 const SPINNER_FRAMES = ["|", "/", "-", "\\"];
 const COLORS = {
   amber: "#FBBF24",
@@ -34,6 +35,17 @@ function nextValue(values, current) {
 
 function timestampLabel(value, language, currentTime) {
   if (!Number.isFinite(value) || value <= 0) return "";
+  const age = currentTime - value;
+  if (age >= EXACT_TIME_AFTER_MS) {
+    const timestamp = new Date(value);
+    const twoDigits = (part) => String(part).padStart(2, "0");
+    const time = `${twoDigits(timestamp.getHours())}:${twoDigits(timestamp.getMinutes())}`;
+    // Session dates follow the user's local day, including its midnight boundary.
+    const today = new Date(currentTime);
+    today.setHours(0, 0, 0, 0);
+    if (value >= today.getTime()) return time;
+    return `${timestamp.getFullYear()}-${twoDigits(timestamp.getMonth() + 1)}-${twoDigits(timestamp.getDate())} ${time}`;
+  }
   const locale = language?.toLowerCase().startsWith("ko") ? "ko" : "en";
   const delta = value - currentTime;
   const absolute = Math.abs(delta);

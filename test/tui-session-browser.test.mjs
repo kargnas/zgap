@@ -751,29 +751,47 @@ test("session browser는 Enter로 선택한 세션을 재개한다", async (t) =
   assert.equal(setup.renderer.isDestroyed, true);
 });
 
-test("session browser는 상대 시간, 턴 수, 세션 파일 크기를 표시한다", async (t) => {
+test("session browser는 최근 상대 시간과 오래된 정확한 시간을 표시한다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
-  const setup = await createTestRenderer({ width: 80, height: 12 });
+  const setup = await createTestRenderer({ width: 100, height: 16 });
   t.after(() => setup.renderer.destroy());
   const details = deferred();
   const previewCalls = [];
-  const now = Date.parse("2026-08-14T00:05:00Z");
+  const now = new Date(2026, 7, 15, 14, 30).getTime();
 
   const result = runSessionBrowser({
     rendererFactory: async () => setup,
     now: () => now,
     discoverScope: async () => ({ roots: ["/repo"] }),
-    sessionLoader: async () => [{
-      ...sessions[0],
-      cwd: "/repo",
-      updatedAt: now - 5 * 60_000,
-    }],
+    sessionLoader: async () => [
+      {
+        ...sessions[0],
+        cwd: "/repo",
+        title: "Recent session",
+        updatedAt: now - 5 * 60_000,
+      },
+      {
+        ...sessions[1],
+        cwd: "/repo",
+        title: "Today session",
+        updatedAt: now - 3 * 60 * 60_000,
+      },
+      {
+        ...sessions[2],
+        cwd: "/repo",
+        title: "Previous day session",
+        updatedAt: new Date(2026, 7, 14, 23, 45).getTime(),
+      },
+    ],
     detailsLoader: async () => details.promise,
     previewLoader: async (session) => { previewCalls.push(session.id); return { turns: [] }; },
   });
   await flush(setup);
-  assert.match(setup.captureCharFrame(), /5m ago/);
+  const frame = setup.captureCharFrame();
+  assert.match(frame, /5m ago/);
+  assert.match(frame, /11:30/);
+  assert.match(frame, /2026-08-14 23:45/);
 
   details.resolve({
     turnCount: 12,
