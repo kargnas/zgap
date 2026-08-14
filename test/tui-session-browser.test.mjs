@@ -103,11 +103,12 @@ test("session browser는 loading spinner를 움직이고 완료 후 timer를 정
   const loading = deferred();
   let tick;
   let cleared = 0;
+  let interval;
 
   const result = runSessionBrowser({
     rendererFactory: async () => setup,
     clock: {
-      setInterval(callback) { tick = callback; return 1; },
+      setInterval(callback, milliseconds) { tick = callback; interval = milliseconds; return 1; },
       clearInterval(handle) { assert.equal(handle, 1); cleared += 1; },
     },
     discoverScope: () => scope.promise,
@@ -115,10 +116,11 @@ test("session browser는 loading spinner를 움직이고 완료 후 timer를 정
   });
 
   await flush(setup);
-  assert.match(setup.captureCharFrame(), /◐ Initializing sessions/);
+  assert.equal(interval, 100);
+  assert.match(setup.captureCharFrame(), /\| Initializing sessions/);
   tick();
   await setup.renderOnce();
-  assert.match(setup.captureCharFrame(), /◓ Initializing sessions/);
+  assert.match(setup.captureCharFrame(), /\/ Initializing sessions/);
 
   scope.resolve({ roots: ["/repo"] });
   await flush(setup);
@@ -237,21 +239,35 @@ test("session browser는 C안의 agent, provider, 선택 색상을 표시한다"
   assert.equal(await result, 0);
 });
 
-test("session browser는 실행 중인 세션에 초록 동그라미를 표시한다", async (t) => {
+test("session browser는 실행 중인 세션에 초록 circleHalves 애니메이션을 표시한다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
   const setup = await createTestRenderer({ width: 100, height: 20 });
   t.after(() => setup.renderer.destroy());
+  let tick;
+  let interval;
 
   const result = runSessionBrowser({
     rendererFactory: async () => setup,
+    clock: {
+      setInterval(callback, milliseconds) { tick = callback; interval = milliseconds; return 1; },
+      clearInterval() {},
+    },
     discoverScope: async () => ({ roots: ["/repo"] }),
     sessionLoader: async () => [{ ...sessions[0], cwd: "/repo", active: true }],
   });
   await flush(setup);
 
-  const spans = setup.captureSpans().lines.flatMap((line) => line.spans);
-  const active = spans.find((span) => span.text.includes("●"));
+  assert.equal(interval, 50);
+  let spans = setup.captureSpans().lines.flatMap((line) => line.spans);
+  let active = spans.find((span) => span.text.includes("◐"));
+  assert.ok(active);
+  assert.deepEqual(Array.from(active.fg.buffer), [110, 231, 183, 255]);
+
+  tick();
+  await setup.renderOnce();
+  spans = setup.captureSpans().lines.flatMap((line) => line.spans);
+  active = spans.find((span) => span.text.includes("◓"));
   assert.ok(active);
   assert.deepEqual(Array.from(active.fg.buffer), [110, 231, 183, 255]);
 

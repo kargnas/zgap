@@ -16,8 +16,10 @@ const AGENTS = ["all", "codex", "claude"];
 const COMPACT_WIDTH = 60;
 const PREVIEW_RAIL_WIDTH = 22;
 const EXACT_TIME_AFTER_MS = 3 * 60 * 60_000;
-const SPINNER_FRAMES = ["◐", "◓", "◑", "◒"];
-const SPINNER_INTERVAL_MS = 50;
+const LOADING_SPINNER_FRAMES = ["|", "/", "-", "\\"];
+const LOADING_SPINNER_INTERVAL_MS = 100;
+const ACTIVE_SESSION_FRAMES = ["◐", "◓", "◑", "◒"];
+const ACTIVE_SESSION_INTERVAL_MS = 50;
 const COLORS = {
   amber: "#FBBF24",
   amberBackground: "#271708",
@@ -126,7 +128,7 @@ function chunk(text, color, background, isBold = false) {
   return value;
 }
 
-function rowText(session, detailsState, selected, language, width, compact, currentTime, t) {
+function rowText(session, detailsState, selected, language, width, compact, currentTime, t, activeMarker = ACTIVE_SESSION_FRAMES[0]) {
   const agent = displayText(session.agent).toUpperCase();
   const provider = truncateText(displayText(session.provider), compact ? 12 : 24);
   const sourceWidth = Bun.stringWidth(agent) + (provider ? Bun.stringWidth(` · ${provider}`) : 0);
@@ -171,7 +173,7 @@ function rowText(session, detailsState, selected, language, width, compact, curr
   return new StyledText([
     chunk(selected ? "›" : " ", COLORS.amber, background),
     chunk(" ", COLORS.text, background),
-    chunk(session.active ? "● " : "  ", session.active ? COLORS.green : COLORS.meta, background),
+    chunk(session.active ? `${activeMarker} ` : "  ", session.active ? COLORS.green : COLORS.meta, background),
     chunk(agent, agentColor(agent), background, true),
     ...providerChunk,
     chunk("  ", COLORS.text, background),
@@ -362,6 +364,7 @@ export async function runSessionBrowser({
   let generation = 0;
   let spinnerIndex = 0;
   let spinnerTimer = null;
+  let spinnerMode = null;
   let noticeTimer = null;
   const abortController = new AbortController();
   const cleanup = () => {
@@ -370,6 +373,7 @@ export async function runSessionBrowser({
     abortController.abort();
     if (spinnerTimer !== null) clock.clearInterval(spinnerTimer);
     spinnerTimer = null;
+    spinnerMode = null;
     if (noticeTimer !== null) (clock.clearTimeout ?? globalThis.clearTimeout)(noticeTimer);
     noticeTimer = null;
     if (renderer && keyHandler) renderer.keyInput.off("keypress", keyHandler);
@@ -529,14 +533,26 @@ export async function runSessionBrowser({
     const render = () => {
       const compact = renderer.width <= COMPACT_WIDTH;
       const loading = state === "initializing" || state === "loading" || previewLoading || providerConvertLoading;
-      if (loading && spinnerTimer === null) {
-        spinnerTimer = clock.setInterval(() => {
-          spinnerIndex = (spinnerIndex + 1) % SPINNER_FRAMES.length;
-          if (!cleaned) render();
-        }, SPINNER_INTERVAL_MS);
-      } else if (!loading && spinnerTimer !== null) {
-        clock.clearInterval(spinnerTimer);
+      const mainListVisible = !showProviderConvert && !showProviderMenu && !showPreview && !showHelp;
+      const activeSessions = state === "ready" && mainListVisible ? filteredSessions() : [];
+      const nextSpinnerMode = loading
+        ? "loading"
+        : activeSessions.some((session) => session.active)
+          ? "active"
+          : null;
+      if (nextSpinnerMode !== spinnerMode) {
+        if (spinnerTimer !== null) clock.clearInterval(spinnerTimer);
         spinnerTimer = null;
+        spinnerMode = nextSpinnerMode;
+        spinnerIndex = 0;
+      }
+      if (spinnerMode !== null && spinnerTimer === null) {
+        const interval = spinnerMode === "active" ? ACTIVE_SESSION_INTERVAL_MS : LOADING_SPINNER_INTERVAL_MS;
+        const frameCount = spinnerMode === "active" ? ACTIVE_SESSION_FRAMES.length : LOADING_SPINNER_FRAMES.length;
+        spinnerTimer = clock.setInterval(() => {
+          spinnerIndex = (spinnerIndex + 1) % frameCount;
+          if (!cleaned) render();
+        }, interval);
       }
       filters.content = new StyledText([
         chunk(`[s ${scope}]`, COLORS.amber, undefined, true),
@@ -565,7 +581,7 @@ export async function runSessionBrowser({
         list.visible = true;
         hint.maxHeight = 3;
         hint.content = providerConvertLoading
-          ? `${SPINNER_FRAMES[spinnerIndex]} ${t("sessionsProviderConverting", { count: providerConvertSessions.length })}`
+          ? `${LOADING_SPINNER_FRAMES[spinnerIndex]} ${t("sessionsProviderConverting", { count: providerConvertSessions.length })}`
           : providerConvertError
             ? `${t("sessionsProviderConvertFailed")}: ${providerConvertError.message}`
             : t("sessionsProviderConvertHint");
@@ -635,7 +651,7 @@ export async function runSessionBrowser({
             : previewProviderText(previewProviders, previewProviderIndex, session.provider, PREVIEW_RAIL_WIDTH, t, previewProviderViewportStart, previewProviderVisibleRows)
           : "";
         previewContent.content = previewLoading
-          ? `${SPINNER_FRAMES[spinnerIndex]} ${t("sessionsPreviewLoading")}`
+          ? `${LOADING_SPINNER_FRAMES[spinnerIndex]} ${t("sessionsPreviewLoading")}`
           : previewError
             ? `${t("sessionsPreviewLoadFailed")}: ${previewError.message}`
             : previewSession
@@ -663,13 +679,13 @@ export async function runSessionBrowser({
       title.visible = true;
       filters.visible = true;
       if (state === "initializing") {
-        list.content = `${SPINNER_FRAMES[spinnerIndex]} ${t("sessionsInitializing")}`;
+        list.content = `${LOADING_SPINNER_FRAMES[spinnerIndex]} ${t("sessionsInitializing")}`;
         list.fg = "#94A3B8";
         renderer.requestRender();
         return;
       }
       if (state === "loading") {
-        list.content = `${SPINNER_FRAMES[spinnerIndex]} ${t("sessionsLoading")}`;
+        list.content = `${LOADING_SPINNER_FRAMES[spinnerIndex]} ${t("sessionsLoading")}`;
         list.fg = "#94A3B8";
         renderer.requestRender();
         return;
@@ -691,7 +707,7 @@ export async function runSessionBrowser({
       const count = visibleRows();
       const visibleSessions = values.slice(viewportStart, viewportStart + count);
       list.content = joinStyledText(visibleSessions
-        .map((session, index) => rowText(session, detailCache.get(session), viewportStart + index === selectedIndex, language, renderer.width, compact, now(), t)));
+        .map((session, index) => rowText(session, detailCache.get(session), viewportStart + index === selectedIndex, language, renderer.width, compact, now(), t, spinnerMode === "active" ? ACTIVE_SESSION_FRAMES[spinnerIndex] : ACTIVE_SESSION_FRAMES[0])));
       list.fg = "#E2E8F0";
       renderer.requestRender();
       for (const session of visibleSessions) {
