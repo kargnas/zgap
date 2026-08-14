@@ -88,6 +88,16 @@ function providerColor(provider) {
   return PROVIDER_COLORS[hash % PROVIDER_COLORS.length];
 }
 
+export function resumeProviders(sessions) {
+  const discovered = [...new Set(
+    sessions
+      .filter((session) => session.agent === "codex")
+      .map((session) => session.provider)
+      .filter(Boolean),
+  )].sort();
+  return [...new Set(["zgap", "openai", ...discovered])];
+}
+
 function agentColor(agent) {
   if (agent === "CODEX") return COLORS.amber;
   if (agent === "CLAUDE") return COLORS.rose;
@@ -184,6 +194,36 @@ function providerMenuText(providers, selectedIndex, activeProvider, width) {
   }));
 }
 
+function previewProviderText(providers, selectedIndex, activeProvider, width, t) {
+  const maxWidth = Math.max(4, width - 4);
+  const lines = [chunk(t("sessionsPreviewProviderTitle"), COLORS.text, undefined, true)];
+  for (const [index, provider] of providers.entries()) {
+    const selected = index === selectedIndex;
+    const background = selected ? COLORS.amberBackground : undefined;
+    lines.push(
+      chunk("\n", COLORS.text, background),
+      chunk(selected ? "› " : "  ", COLORS.amber, background),
+      chunk(truncateText(displayText(provider), maxWidth), providerColor(provider), background, selected),
+    );
+  }
+  lines.push(chunk(`\n${t("sessionsPreviewProviderSaved")}`, COLORS.green));
+  if (activeProvider && !providers.includes(activeProvider)) {
+    lines.push(chunk(`\n${truncateText(displayText(activeProvider), maxWidth)}`, COLORS.meta));
+  }
+  return new StyledText(lines);
+}
+
+function previewProviderCompactText(providers, selectedIndex, width, t) {
+  const provider = providers[selectedIndex] ?? "zgap";
+  return new StyledText([
+    chunk(truncateText(t("sessionsPreviewProviderCompact", {
+      current: selectedIndex + 1,
+      count: providers.length,
+      provider: displayText(provider),
+    }), Math.max(4, width)), COLORS.text, "#071018", true),
+  ]);
+}
+
 function wrapPreviewText(value, maxWidth, maxLines) {
   let remaining = displayText(value);
   const lines = [];
@@ -234,10 +274,12 @@ function previewTurnIndices(turnCount, rowBudget) {
   ];
 }
 
-function previewText(session, width, height, t) {
+function previewText(session, width, height, t, { compact = false } = {}) {
   const maxWidth = Math.max(8, width - 4);
   const turns = Array.isArray(session.preview?.turns) ? session.preview.turns.filter((turn) => turn?.user) : [];
-  const chunks = [chunk(truncateText(displayText(session.title), maxWidth), COLORS.text, undefined, true)];
+  const chunks = compact && turns.length > 0
+    ? []
+    : [chunk(truncateText(displayText(session.title), maxWidth), COLORS.text, undefined, true)];
   if (turns.length === 0) {
     chunks.push(chunk(`\n${t("sessionsPreviewEmpty")}`, COLORS.meta));
     return new StyledText(chunks);
@@ -248,7 +290,7 @@ function previewText(session, width, height, t) {
   let previousIndex = null;
   for (const index of indices) {
     if (previousIndex !== null && index - previousIndex > 1) {
-      chunks.push(chunk(`\n${t("sessionsPreviewOmitted", { count: index - previousIndex - 1 })}`, COLORS.meta, undefined, true));
+      chunks.push(chunk(`${chunks.length ? "\n" : ""}${t("sessionsPreviewOmitted", { count: index - previousIndex - 1 })}`, COLORS.meta, undefined, true));
     }
     const pair = turns[index];
     const userLines = wrapPreviewText(pair.user, maxWidth - 2, remainingRows > 0 ? 2 : 1);
@@ -256,7 +298,7 @@ function previewText(session, width, height, t) {
     const assistantLines = wrapPreviewText(pair.assistant || "—", maxWidth - 2, remainingRows > 0 ? 2 : 1);
     if (assistantLines.length > 1) remainingRows -= 1;
     chunks.push(
-      chunk("\nU ", COLORS.amber, undefined, true),
+      chunk(`${chunks.length ? "\n" : ""}U `, COLORS.amber, undefined, true),
       chunk(userLines[0], COLORS.text),
       ...(userLines.slice(1).flatMap((line) => [chunk("\n  ", COLORS.meta), chunk(line, COLORS.text)])),
       chunk("\nA ", COLORS.rose, undefined, true),
@@ -350,6 +392,9 @@ export async function runSessionBrowser({
     let previewLoading = false;
     let previewError = null;
     let previewGeneration = 0;
+    let previewProviders = [];
+    let previewProviderIndex = 0;
+    let previewBodyCompact = null;
     let providerMenuIndex = 0;
     let providerViewportStart = 0;
     let notice = "";
@@ -387,13 +432,47 @@ export async function runSessionBrowser({
       flexShrink: 0,
       selectable: true,
     });
+    const previewBody = new BoxRenderable(renderer, {
+      width: "100%",
+      flexGrow: 1,
+      flexDirection: "row",
+      visible: false,
+    });
+    const previewContent = new TextRenderable(renderer, {
+      content: "",
+      flexGrow: 1,
+      selectable: true,
+    });
+    const previewRail = new TextRenderable(renderer, {
+      content: "",
+      width: 22,
+      flexShrink: 0,
+      bg: "#071018",
+      selectable: true,
+    });
+    previewBody.add(previewContent);
+    previewBody.add(previewRail);
     root.add(title);
     root.add(filters);
     root.add(list);
+    root.add(previewBody);
     root.add(hint);
     renderer.root.add(root);
 
     const visibleRows = () => Math.max(1, Math.floor((renderer.height - 6) / 2));
+    const setPreviewOrder = (compact) => {
+      if (previewBodyCompact === compact) return;
+      previewBody.remove(previewContent);
+      previewBody.remove(previewRail);
+      if (compact) {
+        previewBody.add(previewRail);
+        previewBody.add(previewContent);
+      } else {
+        previewBody.add(previewContent);
+        previewBody.add(previewRail);
+      }
+      previewBodyCompact = compact;
+    };
     const availableProviders = () => [
       "all",
       ...new Set(sessions.map((session) => session.provider).filter(Boolean).sort()),
@@ -455,20 +534,40 @@ export async function runSessionBrowser({
         const previewSession = session && detailCache.get(session)?.preview
           ? { ...session, preview: detailCache.get(session).preview }
           : session;
+        const codexPreview = session?.agent === "codex";
+        setPreviewOrder(compact);
+        previewBody.visible = true;
+        previewBody.flexDirection = compact ? "column" : "row";
+        previewContent.visible = true;
+        previewRail.visible = codexPreview;
+        previewRail.width = compact ? "100%" : 22;
+        previewRail.height = compact ? 1 : "100%";
         title.content = t("sessionsPreviewTitle");
         title.visible = true;
         filters.content = "";
         filters.visible = false;
-        hint.content = t("sessionsPreviewHint");
-        list.content = previewLoading
+        hint.maxHeight = compact ? 1 : 3;
+        hint.content = codexPreview ? t("sessionsPreviewCodexHint") : t("sessionsPreviewHint");
+        list.visible = false;
+        previewRail.content = codexPreview
+          ? compact
+            ? previewProviderCompactText(previewProviders, previewProviderIndex, renderer.width, t)
+            : previewProviderText(previewProviders, previewProviderIndex, session.provider, renderer.width - 22, t)
+          : "";
+        previewContent.content = previewLoading
           ? `${SPINNER_FRAMES[spinnerIndex]} ${t("sessionsPreviewLoading")}`
           : previewError
             ? `${t("sessionsPreviewLoadFailed")}: ${previewError.message}`
-            : previewSession ? previewText(previewSession, renderer.width, renderer.height, t) : "";
-        list.fg = previewError ? "#F87171" : previewLoading ? COLORS.chip : COLORS.text;
+            : previewSession
+              ? previewText(previewSession, compact ? renderer.width : renderer.width - 22, renderer.height, t, { compact })
+              : "";
+        previewContent.fg = previewError ? "#F87171" : previewLoading ? COLORS.chip : COLORS.text;
         renderer.requestRender();
         return;
       }
+      previewBody.visible = false;
+      list.visible = true;
+      hint.maxHeight = 3;
       if (showHelp) {
         title.content = t("sessionsHelpTitle");
         title.visible = true;
@@ -664,6 +763,21 @@ export async function runSessionBrowser({
           showPreview = false;
           render();
         }
+        const session = filteredSessions()[selectedIndex];
+        if (session?.agent === "codex") {
+          if (["up", "k"].includes(event.name)) previewProviderIndex = Math.max(0, previewProviderIndex - 1);
+          else if (["down", "j"].includes(event.name)) previewProviderIndex = Math.min(previewProviders.length - 1, previewProviderIndex + 1);
+          else if (event.name === "home") previewProviderIndex = 0;
+          else if (event.name === "end") previewProviderIndex = previewProviders.length - 1;
+          else if (event.name === "return") {
+            cleanup();
+            Promise.resolve()
+              .then(() => onSelect(session, { provider: previewProviders[previewProviderIndex] ?? "zgap" }))
+              .then(resolveResult, rejectResult);
+            return;
+          }
+          render();
+        }
         return;
       }
       if (showProviderMenu) {
@@ -730,6 +844,8 @@ export async function runSessionBrowser({
         if (!session) return;
         showPreview = true;
         previewError = null;
+        previewProviders = session.agent === "codex" ? resumeProviders(sessions) : [];
+        previewProviderIndex = Math.max(0, previewProviders.indexOf(session.provider ?? "zgap"));
         if (Array.isArray(detailCache.get(session)?.preview?.turns)
           || Array.isArray(session.preview?.turns) && session.preview.turns.length > 0
           || !session.previewLocator) {

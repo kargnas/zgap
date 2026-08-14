@@ -398,6 +398,128 @@ test("session browser는 Space로 첫 U/A와 마지막 U/A를 미리 본다", as
   assert.equal(await result, 0);
 });
 
+test("Codex preview는 wide rail에서 provider를 선택해 원본 세션을 보존한다", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
+  const setup = await createTestRenderer({ width: 100, height: 18 });
+  t.after(() => setup.renderer.destroy());
+  const originalSession = { ...sessions[0], cwd: "/repo" };
+  const codexSessions = [
+    originalSession,
+    { ...sessions[0], id: "codex-openai", provider: "openai", cwd: "/repo", title: "OpenAI session" },
+    { ...sessions[0], id: "codex-agp", provider: "agp", cwd: "/repo", title: "AGP session" },
+  ];
+  let selectedSession;
+  let selection;
+
+  const result = runSessionBrowser({
+    rendererFactory: async () => setup,
+    discoverScope: async () => ({ roots: ["/repo"] }),
+    sessionLoader: async () => codexSessions,
+    onSelect: async (session, options) => {
+      selectedSession = session;
+      selection = options;
+      return 17;
+    },
+  });
+  await flush(setup);
+
+  setup.mockInput.pressKey(" ");
+  await flush(setup);
+  let frame = setup.captureCharFrame();
+  assert.match(frame, /RESUME WITH/);
+  assert.match(frame, /› zgap/);
+  assert.match(frame, /  openai/);
+  assert.match(frame, /  agp/);
+  assert.match(frame, /saved/);
+  assert.match(frame, /U Build a session switcher/);
+  assert.match(frame, /A I will inspect the session/);
+  const wideRailLine = frame.split("\n").find((line) => line.includes("RESUME WITH"));
+  assert.ok(wideRailLine.indexOf("RESUME WITH") > 40);
+
+  setup.mockInput.pressArrow("down");
+  await flush(setup);
+  setup.mockInput.pressEnter();
+  assert.equal(await result, 17);
+  assert.equal(selectedSession, originalSession);
+  assert.deepEqual(selection, { provider: "openai" });
+  assert.equal(originalSession.provider, "zgap");
+});
+
+test("Codex preview는 compact rail에서 모든 줄을 40열 안에 유지한다", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
+  const setup = await createTestRenderer({ width: 40, height: 10 });
+  t.after(() => setup.renderer.destroy());
+
+  const result = runSessionBrowser({
+    rendererFactory: async () => setup,
+    discoverScope: async () => ({ roots: ["/repo"] }),
+    sessionLoader: async () => [
+      { ...sessions[0], cwd: "/repo" },
+      { ...sessions[0], id: "codex-openai", provider: "openai", cwd: "/repo" },
+      { ...sessions[0], id: "codex-agp", provider: "agp", cwd: "/repo" },
+    ],
+  });
+  await flush(setup);
+
+  setup.mockInput.pressKey(" ");
+  await flush(setup);
+  let frame = setup.captureCharFrame();
+  assert.match(frame, /Provider 1\/3 · zgap/);
+  assert.match(frame, /U Build a session switcher/);
+  assert.match(frame, /A I will inspect the session/);
+  assert.ok(frame.indexOf("Provider 1/3") < frame.indexOf("U Build a session switcher"));
+  for (const line of frame.split("\n")) assert.ok(Bun.stringWidth(line) <= 40, line);
+
+  setup.mockInput.pressArrow("down");
+  await flush(setup);
+  frame = setup.captureCharFrame();
+  assert.match(frame, /Provider 2\/3 · openai/);
+  for (const line of frame.split("\n")) assert.ok(Bun.stringWidth(line) <= 40, line);
+
+  setup.mockInput.pressKey(" ");
+  await flush(setup);
+  await setup.mockInput.pressBackspace();
+  assert.equal(await result, 0);
+});
+
+test("Claude preview에는 provider rail이 없고 기존 닫기 동작을 유지한다", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
+  const setup = await createTestRenderer({ width: 40, height: 10 });
+  t.after(() => setup.renderer.destroy());
+  let selected = false;
+
+  const result = runSessionBrowser({
+    rendererFactory: async () => setup,
+    discoverScope: async () => ({ roots: ["/repo"] }),
+    sessionLoader: async () => [{ ...sessions[2], cwd: "/repo", preview: {
+      turns: [{ user: "Review parser behavior", assistant: "I will inspect the parser." }],
+    } }],
+    onSelect: async () => { selected = true; return 23; },
+  });
+  await flush(setup);
+
+  setup.mockInput.pressKey(" ");
+  await flush(setup);
+  let frame = setup.captureCharFrame();
+  assert.doesNotMatch(frame, /RESUME WITH|Provider/);
+  assert.match(frame, /U Review parser behavior/);
+  setup.mockInput.pressArrow("down");
+  setup.mockInput.pressArrow("up");
+  setup.mockInput.pressEnter();
+  await flush(setup);
+  assert.equal(selected, false);
+  assert.match(setup.captureCharFrame(), /U Review parser behavior/);
+
+  setup.mockInput.pressKey(" ");
+  await flush(setup);
+  assert.match(setup.captureCharFrame(), /› CLAUDE/);
+  await setup.mockInput.pressBackspace();
+  assert.equal(await result, 0);
+});
+
 test("작은 preview는 첫 turn과 마지막 turn 사이의 생략 수를 표시한다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
