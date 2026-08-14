@@ -712,6 +712,7 @@ test("session browser는 긴 provider와 위치를 terminal 너비 안에서 줄
 
   const result = runSessionBrowser({
     rendererFactory: async () => setup,
+    now: () => sessions[0].updatedAt,
     discoverScope: async () => ({ roots: ["/repo"] }),
     sessionLoader: async () => [{
       ...sessions[0],
@@ -727,7 +728,7 @@ test("session browser는 긴 provider와 위치를 terminal 너비 안에서 줄
   await flush(setup);
   const frame = setup.captureCharFrame();
   assert.match(frame, /\[p enterprise-…\]/);
-  assert.match(frame, /└ a-very-long-w…/);
+  assert.match(frame, /└ a-very-long-wor…/);
   assert.match(frame, /2t/);
   assert.match(frame, /0 B/);
   assert.equal(frame.split("\n").every((line) => Bun.stringWidth(line) <= 40), true);
