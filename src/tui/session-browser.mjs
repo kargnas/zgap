@@ -9,7 +9,7 @@ import {
   fg,
   createCliRenderer,
 } from "@opentui/core";
-import { discoverRepositoryScope, filterSessions, listSessions, loadSessionDetails, loadSessionPreview, stripTerminalControls } from "../sessions.mjs";
+import { convertCodexSessionProviders, discoverRepositoryScope, filterSessions, listSessions, loadSessionDetails, loadSessionPreview, stripTerminalControls } from "../sessions.mjs";
 import { loadMenuTranslator } from "./menu.mjs";
 
 const AGENTS = ["all", "codex", "claude"];
@@ -207,6 +207,15 @@ function providerMenuText(providers, selectedIndex, activeProvider, width) {
   }));
 }
 
+function providerConvertText(providers, selectedIndex, count, width, t) {
+  const menu = providerMenuText(providers, selectedIndex, "", width);
+  return new StyledText([
+    chunk(t("sessionsProviderConvertCount", { count }), COLORS.amber, undefined, true),
+    chunk("\n\n", COLORS.text),
+    ...menu.chunks,
+  ]);
+}
+
 function previewProviderText(providers, selectedIndex, activeProvider, width, t, viewportStart = 0, visibleRows = providers.length) {
   const maxWidth = Math.max(4, width - 4);
   const lines = [chunk(t("sessionsPreviewProviderTitle"), COLORS.text, undefined, true)];
@@ -341,6 +350,7 @@ export async function runSessionBrowser({
   previewLoader = loadSessionPreview,
   detailsLoader = loadSessionDetails,
   sessionFilter = filterSessions,
+  providerConverter = convertCodexSessionProviders,
 } = {}) {
   let renderer;
   let keyHandler;
@@ -413,6 +423,14 @@ export async function runSessionBrowser({
     let previewBodyCompact = null;
     let providerMenuIndex = 0;
     let providerViewportStart = 0;
+    let showProviderConvert = false;
+    let providerConvertSource = "";
+    let providerConvertTargets = [];
+    let providerConvertIndex = 0;
+    let providerConvertViewportStart = 0;
+    let providerConvertSessions = [];
+    let providerConvertLoading = false;
+    let providerConvertError = null;
     let notice = "";
 
     const root = new BoxRenderable(renderer, {
@@ -508,7 +526,7 @@ export async function runSessionBrowser({
     };
     const render = () => {
       const compact = renderer.width <= COMPACT_WIDTH;
-      const loading = state === "initializing" || state === "loading" || previewLoading;
+      const loading = state === "initializing" || state === "loading" || previewLoading || providerConvertLoading;
       if (loading && spinnerTimer === null) {
         // ASCII frames stay aligned in terminals that calculate emoji width differently.
         spinnerTimer = clock.setInterval(() => {
@@ -527,6 +545,40 @@ export async function runSessionBrowser({
         chunk(`[p ${truncateText(displayText(provider), compact ? 12 : 24)}]`, COLORS.chip),
       ]);
       hint.content = notice || (compact ? t("sessionsCompactHint") : t("sessionsHint"));
+      if (showProviderConvert) {
+        providerConvertIndex = Math.max(0, Math.min(providerConvertIndex, providerConvertTargets.length - 1));
+        const providerConvertVisibleRows = Math.max(1, renderer.height - 6);
+        if (providerConvertIndex < providerConvertViewportStart) providerConvertViewportStart = providerConvertIndex;
+        if (providerConvertIndex >= providerConvertViewportStart + providerConvertVisibleRows) {
+          providerConvertViewportStart = providerConvertIndex - providerConvertVisibleRows + 1;
+        }
+        providerConvertViewportStart = Math.max(0, Math.min(
+          providerConvertViewportStart,
+          Math.max(0, providerConvertTargets.length - providerConvertVisibleRows),
+        ));
+        title.content = t("sessionsProviderConvertTitle", { source: displayText(providerConvertSource) });
+        title.visible = true;
+        filters.content = "";
+        filters.visible = false;
+        previewBody.visible = false;
+        list.visible = true;
+        hint.maxHeight = 3;
+        hint.content = providerConvertLoading
+          ? `${SPINNER_FRAMES[spinnerIndex]} ${t("sessionsProviderConverting", { count: providerConvertSessions.length })}`
+          : providerConvertError
+            ? `${t("sessionsProviderConvertFailed")}: ${providerConvertError.message}`
+            : t("sessionsProviderConvertHint");
+        list.content = providerConvertText(
+          providerConvertTargets.slice(providerConvertViewportStart, providerConvertViewportStart + providerConvertVisibleRows),
+          providerConvertIndex - providerConvertViewportStart,
+          providerConvertSessions.length,
+          renderer.width,
+          t,
+        );
+        list.fg = providerConvertError ? "#F87171" : COLORS.text;
+        renderer.requestRender();
+        return;
+      }
       if (showProviderMenu) {
         const providers = availableProviders();
         providerMenuIndex = Math.max(0, Math.min(providerMenuIndex, providers.length - 1));
@@ -728,7 +780,6 @@ export async function runSessionBrowser({
     resizeHandler = () => render();
     renderer.on("resize", resizeHandler);
     let lastCtrlC = null;
-    let lastEscape = null;
     keyHandler = (event) => {
       if (settled || event.eventType !== "press") return;
       const timestamp = now();
@@ -741,7 +792,12 @@ export async function runSessionBrowser({
         return;
       }
       if (event.name === "escape") {
-        if (showPreview) {
+        if (showProviderConvert) {
+          if (providerConvertLoading) return;
+          showProviderConvert = false;
+          providerConvertError = null;
+          render();
+        } else if (showPreview) {
           previewGeneration += 1;
           showPreview = false;
           render();
@@ -751,11 +807,7 @@ export async function runSessionBrowser({
         } else if (showHelp) {
           showHelp = false;
           render();
-        } else if (lastEscape !== null && timestamp - lastEscape <= 1_000) finish(130);
-        else {
-          lastEscape = timestamp;
-          showNotice(t("sessionsEscapeExitPrompt"));
-        }
+        } else finish(0);
         return;
       }
       clearNotice();
@@ -765,6 +817,13 @@ export async function runSessionBrowser({
         return;
       }
       if (event.name === "backspace") {
+        if (showProviderConvert) {
+          if (providerConvertLoading) return;
+          showProviderConvert = false;
+          providerConvertError = null;
+          render();
+          return;
+        }
         if (showPreview) {
           previewGeneration += 1;
           showPreview = false;
@@ -782,6 +841,55 @@ export async function runSessionBrowser({
           return;
         }
         finish(0);
+        return;
+      }
+      if (showProviderConvert) {
+        if (providerConvertLoading) return;
+        if (["up", "k"].includes(event.name)) {
+          providerConvertIndex = Math.max(0, providerConvertIndex - 1);
+          render();
+        } else if (["down", "j"].includes(event.name)) {
+          providerConvertIndex = Math.min(providerConvertTargets.length - 1, providerConvertIndex + 1);
+          render();
+        } else if (event.name === "home") {
+          providerConvertIndex = 0;
+          render();
+        } else if (event.name === "end") {
+          providerConvertIndex = providerConvertTargets.length - 1;
+          render();
+        } else if (event.name === "return") {
+          const targetProvider = providerConvertTargets[providerConvertIndex];
+          if (!targetProvider || providerConvertSessions.length === 0) return;
+          const convertedSessions = [...providerConvertSessions];
+          providerConvertLoading = true;
+          providerConvertError = null;
+          render();
+          Promise.resolve()
+            .then(() => providerConverter(convertedSessions, targetProvider))
+            .then((convertedCount) => {
+              if (cleaned) return;
+              if (convertedCount !== convertedSessions.length) {
+                throw new Error(`Converted ${convertedCount} of ${convertedSessions.length} sessions`);
+              }
+              for (const session of convertedSessions) session.provider = targetProvider;
+              provider = targetProvider;
+              showProviderConvert = false;
+              showProviderMenu = false;
+              providerConvertLoading = false;
+              providerConvertError = null;
+              providerViewportStart = 0;
+              selectedIndex = 0;
+              viewportStart = 0;
+              selectedKey = null;
+              showNotice(t("sessionsProviderConverted", { count: convertedCount, provider: displayText(targetProvider) }));
+            })
+            .catch((convertError) => {
+              if (cleaned) return;
+              providerConvertLoading = false;
+              providerConvertError = convertError;
+              render();
+            });
+        }
         return;
       }
       if (showPreview) {
@@ -823,6 +931,18 @@ export async function runSessionBrowser({
           render();
         } else if (event.name === "end") {
           providerMenuIndex = providers.length - 1;
+          render();
+        } else if (event.name === "c") {
+          const sourceProvider = providers[providerMenuIndex];
+          if (!sourceProvider || sourceProvider === "all") return;
+          providerConvertSessions = sessionFilter(sessions, { scope, roots, agent, provider: sourceProvider });
+          if (providerConvertSessions.length === 0) return;
+          providerConvertSource = sourceProvider;
+          providerConvertTargets = resumeProviders(sessions).filter((candidate) => candidate !== sourceProvider);
+          providerConvertIndex = 0;
+          providerConvertViewportStart = 0;
+          providerConvertError = null;
+          showProviderConvert = true;
           render();
         } else if (event.name === "return") {
           provider = providers[providerMenuIndex] ?? "all";

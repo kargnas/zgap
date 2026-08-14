@@ -320,6 +320,49 @@ test("session browser는 provider 선택을 Enter로 적용하고 p와 Esc로 �
   assert.equal(await result, 0);
 });
 
+test("provider menu는 source를 골라 c로 target과 변경 개수를 확인한 뒤 일괄 변환한다", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
+  const setup = await createTestRenderer({ width: 72, height: 12 });
+  t.after(() => setup.renderer.destroy());
+  const converted = [];
+  const sourceSessions = [
+    { ...sessions[0], cwd: "/repo" },
+    { ...sessions[0], id: "codex-zgap-two", cwd: "/repo", title: "Second zgap session" },
+    { ...sessions[1], cwd: "/repo" },
+  ];
+
+  const result = runSessionBrowser({
+    rendererFactory: async () => setup,
+    discoverScope: async () => ({ roots: ["/repo"] }),
+    sessionLoader: async () => sourceSessions,
+    providerConverter: async (selected, target) => {
+      converted.push({ ids: selected.map(({ id }) => id), target });
+      return selected.length;
+    },
+  });
+  await flush(setup);
+
+  setup.mockInput.pressKey("p");
+  setup.mockInput.pressKey("\x1b[F");
+  setup.mockInput.pressKey("c");
+  await waitForFrame(setup, (frame) => frame.includes("CONVERT · zgap") && frame.includes("2 sessions will change"));
+  let frame = setup.captureCharFrame();
+  assert.match(frame, /CONVERT · zgap/);
+  assert.match(frame, /2 sessions will change/);
+  assert.match(frame, /openai/);
+
+  setup.mockInput.pressEnter();
+  await waitForFrame(setup, (value) => value.includes("[p openai]") && value.includes("Second zgap session"));
+  frame = setup.captureCharFrame();
+  assert.deepEqual(converted, [{ ids: ["codex-zgap", "codex-zgap-two"], target: "openai" }]);
+  assert.match(frame, /\[p openai\]/);
+  assert.match(frame, /CODEX · openai/);
+
+  await setup.mockInput.pressBackspace();
+  assert.equal(await result, 0);
+});
+
 test("session browser는 Page Up/Down, Home, End로 목록을 이동한다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
@@ -830,12 +873,12 @@ test("session browser는 ? 키로 단축키 화면을 열고 닫는다", async (
   await flush(setup);
 
   setup.mockInput.pressKey("?");
-  await waitForFrame(setup, (value) => value.includes("PgUp/PgDn") && value.includes("Esc×2"));
+  await waitForFrame(setup, (value) => value.includes("PgUp/PgDn") && value.includes("Esc/Backspace"));
   let frame = setup.captureCharFrame();
   assert.match(frame, /PgUp\/PgDn/);
   assert.match(frame, /Home\/End/);
-  assert.match(frame, /Backspace/);
-  assert.match(frame, /Esc×2 \/ \^C×2 Quit/);
+  assert.match(frame, /Esc\/Backspace Back/);
+  assert.match(frame, /\^C×2 Quit/);
   assert.doesNotMatch(frame, /Add session switcher/);
 
   setup.mockInput.pressKey("?");
@@ -1115,48 +1158,22 @@ test("session browser는 double quit와 renderer cleanup을 보존한다", async
   assert.equal(destroyed, 1);
 });
 
-test("session browser는 Esc 두 번으로도 종료한다", async (t) => {
+test("session browser는 root Esc 한 번으로 뒤로 간다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
   const setup = await createTestRenderer({ width: 72, height: 12 });
   t.after(() => setup.renderer.destroy());
-  let now = 0;
 
   const result = runSessionBrowser({
     rendererFactory: async () => setup,
-    now: () => now,
     discoverScope: async () => ({ roots: ["/repo"] }),
     sessionLoader: async () => sessions,
   });
   await flush(setup);
 
   setup.mockInput.pressEscape();
-  await flush(setup);
-  now = 500;
-  setup.mockInput.pressEscape();
-  assert.equal(await result, 130);
-});
-
-test("session browser는 첫 Esc 뒤에 종료 안내를 표시한다", async (t) => {
-  const { createTestRenderer } = await import("@opentui/core/testing");
-  const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
-  const setup = await createTestRenderer({ width: 72, height: 12 });
-  t.after(() => setup.renderer.destroy());
-  let now = 0;
-
-  const result = runSessionBrowser({
-    rendererFactory: async () => setup,
-    now: () => now,
-    discoverScope: async () => ({ roots: ["/repo"] }),
-    sessionLoader: async () => sessions,
-  });
-  await flush(setup);
-
-  setup.mockInput.pressEscape();
-  await flush(setup);
-  assert.match(setup.captureCharFrame(), /Press Esc again to quit/);
-
-  now = 500;
-  setup.mockInput.pressEscape();
-  assert.equal(await result, 130);
+  assert.equal(await Promise.race([
+    result,
+    new Promise((resolve) => setTimeout(() => resolve("pending"), 50)),
+  ]), 0);
 });

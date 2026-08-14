@@ -259,6 +259,53 @@ test("Codex SQLite lists metadata without scanning JSONL and loads preview on de
   assert.equal(result.some(({ id }) => id === "archived-session"), false);
 });
 
+test("Codex provider conversion updates only selected SQLite rows", async (t) => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "zgap-codex-provider-convert-"));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const { Database } = await import("bun:sqlite");
+  const databasePath = path.join(home, "state_5.sqlite");
+  const db = new Database(databasePath);
+  db.run("CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT)");
+  db.run("INSERT INTO threads VALUES (?, ?)", ["one", "zgap"]);
+  db.run("INSERT INTO threads VALUES (?, ?)", ["two", "zgap"]);
+  db.run("INSERT INTO threads VALUES (?, ?)", ["other", "openai"]);
+  db.close();
+
+  const count = await sessions.convertCodexSessionProviders([
+    { agent: "codex", id: "one", provider: "zgap" },
+    { agent: "codex", id: "two", provider: "zgap" },
+  ], "openai", { codexHome: home });
+
+  const verified = new Database(databasePath, { readonly: true });
+  t.after(() => verified.close());
+  assert.equal(count, 2);
+  assert.deepEqual(verified.query("SELECT id, model_provider FROM threads ORDER BY id").all(), [
+    { id: "one", model_provider: "openai" },
+    { id: "other", model_provider: "openai" },
+    { id: "two", model_provider: "openai" },
+  ]);
+});
+
+test("Codex provider conversion rolls back every row when one session is stale", async (t) => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "zgap-codex-provider-rollback-"));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const { Database } = await import("bun:sqlite");
+  const databasePath = path.join(home, "state_5.sqlite");
+  const db = new Database(databasePath);
+  db.run("CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT)");
+  db.run("INSERT INTO threads VALUES (?, ?)", ["current", "zgap"]);
+  db.close();
+
+  await assert.rejects(() => sessions.convertCodexSessionProviders([
+    { agent: "codex", id: "current", provider: "zgap" },
+    { agent: "codex", id: "stale", provider: "zgap" },
+  ], "openai", { codexHome: home }), /Session provider changed before conversion: stale/);
+
+  const verified = new Database(databasePath, { readonly: true });
+  t.after(() => verified.close());
+  assert.equal(verified.query("SELECT model_provider FROM threads WHERE id = ?").get("current").model_provider, "zgap");
+});
+
 test("lazy preview finds the last turn before a large trailing event", async (t) => {
   const home = await mkdtemp(path.join(os.tmpdir(), "zgap-large-preview-"));
   t.after(() => rm(home, { recursive: true, force: true }));
