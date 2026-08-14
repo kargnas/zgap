@@ -8,6 +8,7 @@ import {
   REQUEST_TIMEOUT_MS,
 } from "./constants.mjs";
 import { credentialsPath, decodeAccessTokenProfile, defaultConfigDir, deviceIdFor, writePrivateJson } from "./credentials.mjs";
+import { readSystemInfo } from "./system-info.mjs";
 
 function defaultOpenBrowser(url) {
   const command = process.platform === "darwin" ? "open" : process.platform === "win32" ? "cmd" : "xdg-open";
@@ -28,6 +29,7 @@ export async function login({
   log = console.log,
 } = {}) {
   const deviceId = await deviceIdFor(configDir);
+  const systemInfo = await readSystemInfo();
   const verifier = randomBytes(32).toString("base64url");
   const challenge = createHash("sha256").update(verifier).digest("base64url");
   const deadline = Date.now() + timeoutMs;
@@ -70,6 +72,7 @@ export async function login({
       code_challenge: challenge,
       code_challenge_method: "S256",
       device_id: deviceId,
+      system_info: systemInfo,
     });
     const authorization = await authorizationResponse.json().catch(() => null);
     let verificationUrl;
