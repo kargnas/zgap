@@ -19,7 +19,7 @@
   "claude": "Claude",
   "claudeDescription": "Launch through ai-proxy.zz.gg",
   "sessions": "Sessions",
-  "sessionsDescription": "Browse Codex and Claude history",
+  "sessionsDescription": "Browse agent history",
   "sessionsTitle": "SESSIONS",
   "sessionsScope": "Scope: {{value}}",
   "sessionsAgent": "Agent: {{value}}",
