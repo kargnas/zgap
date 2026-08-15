@@ -109,6 +109,28 @@ test("No prompt title은 첫 사용자 명령으로 대체한다", async () => {
   assert.equal(result[0]?.title, "actual first command");
 });
 
+test("listSessions는 소스가 끝날 때마다 onUpdate로 부분 결과를 전달한다", async () => {
+  const updates = [];
+  let releaseClaude;
+  const claudeGate = new Promise((resolve) => { releaseClaude = resolve; });
+  const result = await sessions.listSessions({
+    cwd: "/repo",
+    all: true,
+    readCodex: async () => [{ id: "c1", model_provider: "agp", cwd: "/repo", title: "codex", updated_at: 10 }],
+    readClaude: async () => {
+      await claudeGate;
+      return [{ sessionId: "a1", projectPath: "/repo", firstPrompt: "claude", modified: 20 }];
+    },
+    onUpdate: (partial) => {
+      updates.push(partial.map(({ id }) => id));
+      releaseClaude();
+    },
+  });
+  assert.deepEqual(updates[0], ["c1"]);
+  assert.deepEqual(result.map(({ id }) => id), ["a1", "c1"]);
+  assert.deepEqual(updates.at(-1), ["a1", "c1"]);
+});
+
 test("malformed records are isolated and repository containment is segment-safe", async () => {
   const values = await sessions.listSessions({
     cwd: "/repo",

@@ -135,6 +135,40 @@ test("session browser는 loading spinner를 움직이고 완료 후 timer를 정
   assert.equal(cleared, 1);
 });
 
+test("session browser는 로딩 중 부분 결과를 즉시 렌더링하고 이동을 허용한다", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
+  const setup = await createTestRenderer({ width: 100, height: 20 });
+  t.after(() => setup.renderer.destroy());
+  const loading = deferred();
+  let selectedTitle = null;
+
+  const result = runSessionBrowser({
+    rendererFactory: async () => setup,
+    cwd: "/repo/worktrees/feature",
+    discoverScope: async () => ({ roots: ["/repo", "/repo/worktrees/feature"] }),
+    sessionLoader: async ({ onUpdate }) => {
+      onUpdate([sessions[0]]);
+      return loading.promise;
+    },
+    onSelect: async (session) => {
+      selectedTitle = session.title;
+      return 0;
+    },
+  });
+
+  await flush(setup);
+  let frame = setup.captureCharFrame();
+  assert.match(frame, /Add session switcher/);
+  assert.match(frame, /Loading sessions/);
+
+  setup.mockInput.pressKey("down");
+  await flush(setup);
+  await setup.mockInput.pressEnter();
+  assert.equal(await result, 0);
+  assert.equal(selectedTitle, "Add session switcher");
+});
+
 test("session browser는 scope, agent, provider filter와 목록 이동을 적용한다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");

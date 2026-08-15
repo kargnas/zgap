@@ -316,13 +316,16 @@ export async function convertCodexSessionProviders(selectedSessions, targetProvi
   }
 }
 
-async function readCodexFallback(codexHome) {
+async function readCodexFallback(codexHome, onRecords) {
   const paths = [];
   for (const directory of [path.join(codexHome, "sessions"), path.join(codexHome, "archived_sessions")]) paths.push(...await walkJsonl(directory));
   const output = [];
   for (const pathname of paths) {
     const record = await readBoundedJsonl(pathname, "codex");
-    if (record) output.push(record);
+    if (record) {
+      output.push(record);
+      onRecords?.(output);
+    }
   }
   return output;
 }
@@ -357,7 +360,7 @@ function claudeProjectPrefixes(roots) {
   return roots.map((root) => path.resolve(root).replaceAll(path.sep, "-"));
 }
 
-async function readClaudeDefault(claudeHome, roots = []) {
+async function readClaudeDefault(claudeHome, roots = [], onRecords) {
   const projectsDir = path.join(claudeHome, "projects");
   let projects;
   try { projects = await readdir(projectsDir, { withFileTypes: true }); } catch { return []; }
@@ -374,6 +377,7 @@ async function readClaudeDefault(claudeHome, roots = []) {
           if (normalized) byId.set(normalized.id, normalized);
         }
       }
+      onRecords?.([...byId.values()]);
     } catch { /* JSONL remains authoritative when the index is absent or malformed. */ }
     for (const pathname of await walkJsonl(directory, { skipSubagents: true })) {
       const record = await readBoundedJsonl(pathname, "claude");
@@ -387,6 +391,7 @@ async function readClaudeDefault(claudeHome, roots = []) {
         ...(record.previewLocator ? { previewLocator: record.previewLocator } : {}),
         updatedAt: Math.max(previous.updatedAt, record.updatedAt),
       } : record);
+      onRecords?.([...byId.values()]);
     }
   }
   return [...byId.values()];
@@ -405,28 +410,71 @@ export async function listSessions(options = {}) {
   const roots = allScope ? [] : await discoverRepositoryScope(cwd, options);
   const codexHome = options.codexHome ?? process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex");
   const claudeHome = options.claudeHome ?? path.join(os.homedir(), ".claude");
-  let codexRecords;
-  try { codexRecords = options.readCodex ? await options.readCodex() : await readCodexDefault(codexHome); } catch { codexRecords = []; }
-  if (!options.readCodex && codexRecords.length === 0) codexRecords = await readCodexFallback(codexHome);
-  let claudeRecords;
-  try { claudeRecords = options.readClaude ? await options.readClaude() : await readClaudeDefault(claudeHome, allScope ? [] : roots); } catch { claudeRecords = []; }
-  const normalizeAny = (record, agent) => record?.agent === agent && typeof record.provider !== "undefined" ? record : normalizeRecord(record, agent);
-  const values = [...codexRecords.map((record) => normalizeAny(record, "codex")).filter(Boolean), ...claudeRecords.map((record) => normalizeAny(record, "claude")).filter(Boolean)];
-  const visible = values.filter((session) => allScope || roots.some((root) => contains(root, session.cwd)));
-  let activePaths;
-  try {
-    activePaths = options.readActiveSessionPaths
-      ? await options.readActiveSessionPaths()
-      : options.readCodex || options.readClaude || options.codexHome || options.claudeHome
-        ? new Set()
-        : await readActiveSessionPaths();
-  } catch {
-    activePaths = new Set();
-  }
-  const normalizedActivePaths = new Set([...activePaths].map((pathname) => path.resolve(pathname)));
-  for (const session of visible) {
-    const pathname = session.previewLocator?.type === "jsonl" ? session.previewLocator.path : "";
-    if (pathname && normalizedActivePaths.has(path.resolve(pathname))) session.active = true;
-  }
-  return visible.sort((a, b) => b.updatedAt - a.updatedAt || a.id.localeCompare(b.id));
+  let codexRecords = [];
+  let claudeRecords = [];
+  let activePaths = new Set();
+  // Partial emits reuse normalized objects so the TUI's per-session detail cache stays warm across updates.
+  const normalizedCache = new WeakMap();
+  const normalizeAny = (record, agent) => {
+    if (!record || typeof record !== "object") return null;
+    if (record.agent === agent && typeof record.provider !== "undefined") return record;
+    if (!normalizedCache.has(record)) normalizedCache.set(record, normalizeRecord(record, agent));
+    return normalizedCache.get(record);
+  };
+  const assemble = () => {
+    const values = [...codexRecords.map((record) => normalizeAny(record, "codex")).filter(Boolean), ...claudeRecords.map((record) => normalizeAny(record, "claude")).filter(Boolean)];
+    const visible = values.filter((session) => allScope || roots.some((root) => contains(root, session.cwd)));
+    const normalizedActivePaths = new Set([...activePaths].map((pathname) => path.resolve(pathname)));
+    for (const session of visible) {
+      const pathname = session.previewLocator?.type === "jsonl" ? session.previewLocator.path : "";
+      if (pathname && normalizedActivePaths.has(path.resolve(pathname))) session.active = true;
+    }
+    return visible.sort((a, b) => b.updatedAt - a.updatedAt || a.id.localeCompare(b.id));
+  };
+  // Empty partials carry no information the loading state doesn't already show, so only non-empty lists are emitted.
+  const emitNow = () => {
+    if (!options.onUpdate) return;
+    const assembled = assemble();
+    if (assembled.length > 0) options.onUpdate(assembled);
+  };
+  let lastEmit = 0;
+  // ponytail: time-throttled per-record emits; each source-completion emitNow and the final return carry the trailing records.
+  const emitThrottled = () => {
+    if (!options.onUpdate) return;
+    const timestamp = Date.now();
+    if (timestamp - lastEmit < 80) return;
+    lastEmit = timestamp;
+    emitNow();
+  };
+  // The three sources are independent IO; running them in parallel keeps a slow lsof or JSONL walk from blocking the list.
+  await Promise.all([
+    (async () => {
+      try { codexRecords = options.readCodex ? await options.readCodex() : await readCodexDefault(codexHome); } catch { codexRecords = []; }
+      if (!options.readCodex && codexRecords.length === 0) {
+        codexRecords = await readCodexFallback(codexHome, (records) => { codexRecords = records; emitThrottled(); });
+      }
+      emitNow();
+    })(),
+    (async () => {
+      try {
+        claudeRecords = options.readClaude
+          ? await options.readClaude()
+          : await readClaudeDefault(claudeHome, allScope ? [] : roots, (records) => { claudeRecords = records; emitThrottled(); });
+      } catch { claudeRecords = []; }
+      emitNow();
+    })(),
+    (async () => {
+      try {
+        activePaths = options.readActiveSessionPaths
+          ? await options.readActiveSessionPaths()
+          : options.readCodex || options.readClaude || options.codexHome || options.claudeHome
+            ? new Set()
+            : await readActiveSessionPaths();
+      } catch {
+        activePaths = new Set();
+      }
+      emitNow();
+    })(),
+  ]);
+  return assemble();
 }

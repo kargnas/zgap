@@ -348,10 +348,11 @@ export async function runSessionBrowser({
   now = Date.now,
   clock = globalThis,
   discoverScope = discoverRepositoryScope,
-  sessionLoader = ({ scope, roots }) => listSessions({
+  sessionLoader = ({ scope, roots, onUpdate }) => listSessions({
     cwd,
     scope,
     repositoryRoots: scope === "repo" ? roots : undefined,
+    onUpdate,
   }),
   previewLoader = loadSessionPreview,
   detailsLoader = loadSessionDetails,
@@ -691,10 +692,14 @@ export async function runSessionBrowser({
         return;
       }
       if (state === "loading") {
-        list.content = `${ORBIT_SPINNER.frames[spinnerIndex]} ${t("sessionsLoading")}`;
-        list.fg = "#94A3B8";
-        renderer.requestRender();
-        return;
+        if (sessions.length === 0) {
+          list.content = `${ORBIT_SPINNER.frames[spinnerIndex]} ${t("sessionsLoading")}`;
+          list.fg = "#94A3B8";
+          renderer.requestRender();
+          return;
+        }
+        // Partial results render as the normal list; the hint keeps the spinner so the scan visibly continues.
+        hint.content = notice || `${ORBIT_SPINNER.frames[spinnerIndex]} ${t("sessionsLoading")}`;
       }
       if (state === "error") {
         list.content = error?.message ? `${t("sessionsLoadFailed")}: ${error.message}` : t("sessionsLoadFailed");
@@ -705,7 +710,9 @@ export async function runSessionBrowser({
       const values = filteredSessions();
       keepSelection(values);
       if (values.length === 0) {
-        list.content = scope === "repo" ? t("sessionsEmptyRepo") : t("sessionsEmptyAll");
+        list.content = state === "loading"
+          ? `${ORBIT_SPINNER.frames[spinnerIndex]} ${t("sessionsLoading")}`
+          : scope === "repo" ? t("sessionsEmptyRepo") : t("sessionsEmptyAll");
         list.fg = "#94A3B8";
         renderer.requestRender();
         return;
@@ -785,7 +792,12 @@ export async function runSessionBrowser({
       error = null;
       render();
       try {
-        const loaded = await sessionLoader({ cwd, roots, scope: requestedScope, signal: abortController.signal });
+        const onUpdate = (partial) => {
+          if (cleaned || currentGeneration !== generation || !Array.isArray(partial)) return;
+          sessions = partial;
+          render();
+        };
+        const loaded = await sessionLoader({ cwd, roots, scope: requestedScope, signal: abortController.signal, onUpdate });
         if (cleaned || currentGeneration !== generation) return;
         sessions = Array.isArray(loaded) ? loaded : [];
         sessionCache.set(requestedScope, sessions);
@@ -1008,7 +1020,8 @@ export async function runSessionBrowser({
         void load(scope);
         return;
       }
-      if (state !== "ready") return;
+      // Partial results are complete session records, so navigation and resume work while the scan finishes.
+      if (state !== "ready" && !(state === "loading" && sessions.length > 0)) return;
       if (event.name === "a") {
         agent = nextValue(AGENTS, agent);
         selectedIndex = 0;
