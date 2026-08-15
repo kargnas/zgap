@@ -48,6 +48,49 @@ test("proxy health는 전체 응답 시간을 반올림한다", async () => {
   assert.ok(request.options.signal instanceof AbortSignal);
 });
 
+test("proxy health는 설정한 origin을 사용한다", async () => {
+  const { checkProxyHealth } = await import("../src/tui/menu.mjs");
+  let requestedUrl;
+
+  await checkProxyHealth({
+    origin: "https://proxy.example.test",
+    fetchImpl: async (url) => {
+      requestedUrl = url.toString();
+      return new Response("ok", { status: 200 });
+    },
+  });
+
+  assert.equal(requestedUrl, "https://proxy.example.test/health");
+});
+
+test("TUI는 설정한 host를 표시하고 health 확인에 origin을 전달한다", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runStartMenu } = await import("../src/tui/menu.mjs");
+  const setup = await createTestRenderer({ width: 100, height: 24 });
+  t.after(() => setup.renderer.destroy());
+  let healthOptions;
+  const resultPromise = runStartMenu({
+    rendererFactory: async () => setup,
+    credentialState: "signed-in",
+    host: "proxy.example.test",
+    origin: "https://proxy.example.test",
+    proxyHealthCheck: async (options) => {
+      healthOptions = options;
+      return { state: "online", latencyMs: 12 };
+    },
+    actions: { codex: async () => 0, claude: async () => 0 },
+  });
+
+  await flushMenu(setup);
+  const frame = setup.captureCharFrame();
+  assert.match(frame, /Agents through proxy\.example\.test/);
+  assert.match(frame, /Launch through proxy\.example\.test/);
+  assert.equal(healthOptions.origin, "https://proxy.example.test");
+  await setup.mockInput.pressCtrlC();
+  await setup.mockInput.pressCtrlC();
+  assert.equal(await resultPromise, 130);
+});
+
 test("인자 없는 진입점은 CLI 모듈 import가 끝나기 전에 alternate screen을 연다", async (t) => {
   const root = await tempDir(t);
   const delayedCli = path.join(root, "delayed-cli.mjs");

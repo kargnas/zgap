@@ -4,7 +4,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { createInstance } from "i18next";
 import { BoxRenderable, TextAttributes, TextRenderable, createCliRenderer } from "@opentui/core";
-import { ORIGIN } from "../constants.mjs";
+import { DEFAULT_HOST, ORIGIN } from "../constants.mjs";
 
 const LOCALES = ["en", "ko"];
 const LOCALE_DIR = fileURLToPath(new URL("./locales/", import.meta.url));
@@ -15,6 +15,7 @@ const PROXY_REFRESH_MS = 250;
 export async function checkProxyHealth({
   fetchImpl = fetch,
   now = () => performance.now(),
+  origin = ORIGIN,
   signal,
   timeoutMs = 3_000,
 } = {}) {
@@ -23,7 +24,7 @@ export async function checkProxyHealth({
     : AbortSignal.timeout(timeoutMs);
   const startedAt = now();
   try {
-    const response = await fetchImpl(new URL("/health", ORIGIN), {
+    const response = await fetchImpl(new URL("/health", origin), {
       method: "GET",
       signal: requestSignal,
     });
@@ -57,14 +58,14 @@ export async function loadMenuTranslator(language = process.env.LANG) {
   return instance.t.bind(instance);
 }
 
-function menuContent(credentialState, accountProfile, t) {
+function menuContent(credentialState, accountProfile, t, host) {
   if (credentialState === "signed-in") {
     return {
       status: accountProfile?.email ?? t("accountUnavailable"),
       statusColor: accountProfile ? "#86EFAC" : "#F87171",
       actions: [
-        { name: "codex", label: t("codex"), description: t("codexDescription") },
-        { name: "claude", label: t("claude"), description: t("claudeDescription") },
+        { name: "codex", label: t("codex"), description: t("codexDescription", { host }) },
+        { name: "claude", label: t("claude"), description: t("claudeDescription", { host }) },
         { name: "sessions", label: t("sessions"), description: t("sessionsDescription") },
       ],
     };
@@ -96,8 +97,10 @@ export async function runStartMenu({
   rendererFactory = createCliRenderer,
   actions = {},
   credentialState = "signed-out",
+  host = DEFAULT_HOST,
   language = process.env.LANG,
   now = Date.now,
+  origin = ORIGIN,
   proxyHealthCheck = checkProxyHealth,
   updateChecker,
   accountProfile,
@@ -128,7 +131,7 @@ export async function runStartMenu({
     });
     renderer = setup?.renderer ?? setup;
     const t = await loadMenuTranslator(language);
-    const content = menuContent(credentialState, accountProfile, t);
+    const content = menuContent(credentialState, accountProfile, t, host);
     let settled = false;
     let resolveResult;
     let rejectResult;
@@ -180,7 +183,7 @@ export async function runStartMenu({
       selectable: true,
     });
     const tagline = new TextRenderable(renderer, {
-      content: t("tagline"),
+      content: t("tagline", { host }),
       fg: "#64748B",
       selectable: true,
     });
@@ -334,7 +337,7 @@ export async function runStartMenu({
       while (!cleaned) {
         let health;
         try {
-          health = await proxyHealthCheck({ signal: proxyAbortController.signal });
+          health = await proxyHealthCheck({ origin, signal: proxyAbortController.signal });
         } catch {
           health = { state: "unreachable" };
         }
