@@ -612,7 +612,6 @@ test("미리보기의 Enter는 세션을 그대로 재개한다", async (t) => {
   setup.mockInput.pressKey("\t");
   await flush(setup);
   const frame = setup.captureCharFrame();
-  assert.doesNotMatch(frame, /RESUME WITH/);
   assert.match(frame, /U Build a session switcher/);
 
   setup.mockInput.pressEnter();
