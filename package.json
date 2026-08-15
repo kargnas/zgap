@@ -25,6 +25,7 @@
   "dependencies": {
     "@opentui/core": "^0.5.1",
     "cli-spinners": "^3.4.0",
-    "i18next": "^26.3.6"
+    "i18next": "^26.3.6",
+    "yaml": "2.9.0"
   }
 }
