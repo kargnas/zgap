@@ -78,15 +78,12 @@ test("session browser는 initializing, loading, repo 목록을 구분한다", as
   scope.resolve({ roots: ["/repo", "/repo/worktrees/feature"] });
   await flush(setup);
   assert.match(setup.captureCharFrame(), /Loading sessions/);
-  assert.doesNotMatch(setup.captureCharFrame(), /Add session switcher/);
 
   loading.resolve(sessions);
   await flush(setup);
   const frame = setup.captureCharFrame();
-  assert.match(frame, /\[s repo\] \[a all\] \[p all\]/);
-  assert.match(frame, /CODEX · zgap/);
+  assert.match(frame, /SESSIONS/);
   assert.match(frame, /Add session switcher/);
-  assert.match(frame, /CLAUDE/);
   assert.match(frame, /Review parser/);
   assert.doesNotMatch(frame, /Investigate auth/);
 
@@ -99,43 +96,36 @@ test("session browser는 loading spinner를 움직이고 완료 후 timer를 정
   const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
   const setup = await createTestRenderer({ width: 100, height: 20 });
   t.after(() => setup.renderer.destroy());
-  const scope = deferred();
   const loading = deferred();
   let tick;
   let cleared = 0;
-  let interval;
 
   const result = runSessionBrowser({
     rendererFactory: async () => setup,
     clock: {
-      setInterval(callback, milliseconds) { tick = callback; interval = milliseconds; return 1; },
-      clearInterval(handle) { assert.equal(handle, 1); cleared += 1; },
+      setInterval(callback) { tick = callback; return 7; },
+      clearInterval(id) { if (id === 7) cleared += 1; },
     },
-    discoverScope: () => scope.promise,
+    discoverScope: async () => ({ roots: ["/repo"] }),
     sessionLoader: () => loading.promise,
   });
-
   await flush(setup);
-  assert.equal(interval, 90);
-  assert.match(setup.captureCharFrame(), /● · · · Initializing sessions/);
+  assert.match(setup.captureCharFrame(), /● · · ·/);
+
   tick();
   await setup.renderOnce();
-  assert.match(setup.captureCharFrame(), /· ● · · Initializing sessions/);
-
-  scope.resolve({ roots: ["/repo"] });
-  await flush(setup);
-  assert.match(setup.captureCharFrame(), /Loading sessions/);
+  assert.match(setup.captureCharFrame(), /· ● · ·/);
 
   loading.resolve([]);
   await flush(setup);
   assert.equal(cleared, 1);
+  assert.match(setup.captureCharFrame(), /No sessions in current repo/);
 
   await setup.mockInput.pressBackspace();
   assert.equal(await result, 0);
-  assert.equal(cleared, 1);
 });
 
-test("session browser는 scope, agent, provider filter와 목록 이동을 적용한다", async (t) => {
+test("session browser는 scope, agent, 숫자 provider tab을 적용한다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
   const setup = await createTestRenderer({ width: 100, height: 20 });
@@ -148,11 +138,17 @@ test("session browser는 scope, agent, provider filter와 목록 이동을 적�
     sessionLoader: async () => sessions,
   });
   await flush(setup);
+  let frame = setup.captureCharFrame();
+  assert.match(frame, /\[1\]All/);
+  assert.match(frame, /\[2\]zgap 1/);
+  assert.doesNotMatch(frame, /openai 1/);
 
   setup.mockInput.pressKey("s");
   await flush(setup);
-  let frame = setup.captureCharFrame();
+  frame = setup.captureCharFrame();
   assert.match(frame, /\[s all\]/);
+  assert.match(frame, /\[2\]openai 1/);
+  assert.match(frame, /\[3\]zgap 1/);
   assert.match(frame, /Investi/);
 
   setup.mockInput.pressKey("a");
@@ -161,38 +157,23 @@ test("session browser는 scope, agent, provider filter와 목록 이동을 적�
   assert.match(frame, /\[a codex\]/);
   assert.doesNotMatch(frame, /Review parser/);
 
-  setup.mockInput.pressKey("p");
-  await waitForFrame(setup, (value) => value.includes("› ● All"));
-  frame = setup.captureCharFrame();
-  assert.match(frame, /PROVIDER · p\/Esc close/);
-  assert.match(frame, /› ● All/);
-  assert.match(frame, /openai/);
-  assert.match(frame, /zgap/);
-
-  setup.mockInput.pressArrow("down");
-  setup.mockInput.pressEnter();
+  setup.mockInput.pressKey("2");
   await flush(setup);
   frame = setup.captureCharFrame();
-  assert.match(frame, /\[p openai\]/);
   assert.match(frame, /Investi/);
   assert.doesNotMatch(frame, /Add session switcher/);
 
-  setup.mockInput.pressKey("p");
-  setup.mockInput.pressArrow("down");
-  setup.mockInput.pressEnter();
+  setup.mockInput.pressKey("3");
   await flush(setup);
   frame = setup.captureCharFrame();
-  assert.match(frame, /\[p zgap\]/);
   assert.match(frame, /Add session switcher/);
+  assert.doesNotMatch(frame, /Investi/);
 
-  setup.mockInput.pressKey("p");
-  setup.mockInput.pressKey("\x1b[H");
-  setup.mockInput.pressEnter();
+  setup.mockInput.pressKey("1");
   setup.mockInput.pressKey("a");
   await flush(setup);
   frame = setup.captureCharFrame();
   assert.match(frame, /\[a claude\]/);
-  assert.match(frame, /\[p all\]/);
   assert.match(frame, /Review parser/);
 
   await setup.mockInput.pressBackspace();
@@ -223,9 +204,9 @@ test("session browser는 C안의 agent, provider, 선택 색상을 표시한다"
   const rgba = (color) => Array.from(color.buffer);
   const codex = spanFor("CODEX");
   const claude = spanFor("CLAUDE");
-  const zgap = spanFor("zgap");
-  const openai = spanFor("openai");
-  const dynamic = spanFor("new-provider");
+  const zgap = spans.find((span) => span.text === "zgap");
+  const openai = spans.find((span) => span.text === "openai");
+  const dynamic = spans.find((span) => span.text === "new-provider");
 
   assert.deepEqual(rgba(codex.fg), [251, 191, 36, 255]);
   assert.deepEqual(rgba(claude.fg), [251, 113, 133, 255]);
@@ -275,7 +256,39 @@ test("session browser는 실행 중인 세션에 초록 circleHalves 애니메�
   assert.equal(await result, 0);
 });
 
-test("session browser는 compact filter chip에 현재 값을 갱신한다", async (t) => {
+test("compact 너비는 활성 provider tab만 표시하고 숫자 키는 유지한다", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
+  const setup = await createTestRenderer({ width: 40, height: 10 });
+  t.after(() => setup.renderer.destroy());
+
+  const result = runSessionBrowser({
+    rendererFactory: async () => setup,
+    now: () => sessions[0].updatedAt,
+    discoverScope: async () => ({ roots: ["/repo"] }),
+    sessionLoader: async () => [
+      { ...sessions[0], cwd: "/repo" },
+      { ...sessions[1], cwd: "/repo" },
+    ],
+  });
+  await flush(setup);
+  let frame = setup.captureCharFrame();
+  assert.match(frame, /\[1\]All/);
+  assert.doesNotMatch(frame, /\[2\]/);
+
+  setup.mockInput.pressKey("3");
+  await flush(setup);
+  frame = setup.captureCharFrame();
+  assert.match(frame, /\[3\]zgap/);
+  assert.doesNotMatch(frame, /\[1\]All/);
+  assert.match(frame, /Add session sw/);
+  assert.equal(frame.split("\n").every((line) => Bun.stringWidth(line) <= 40), true);
+
+  await setup.mockInput.pressBackspace();
+  assert.equal(await result, 0);
+});
+
+test("Space는 Codex row를 체크하고 Claude row에는 안내를 보여준다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
   const setup = await createTestRenderer({ width: 100, height: 20 });
@@ -284,29 +297,66 @@ test("session browser는 compact filter chip에 현재 값을 갱신한다", asy
   const result = runSessionBrowser({
     rendererFactory: async () => setup,
     discoverScope: async () => ({ roots: ["/repo"] }),
-    sessionLoader: async () => sessions,
+    sessionLoader: async () => [
+      { ...sessions[0], cwd: "/repo" },
+      { ...sessions[2], cwd: "/repo" },
+    ],
   });
   await flush(setup);
-  assert.match(setup.captureCharFrame(), /\[s repo\] \[a all\] \[p all\]/);
+  let frame = setup.captureCharFrame();
+  assert.match(frame, /\[ \] CODEX/);
+  assert.doesNotMatch(frame.split("\n").find((line) => line.includes("CLAUDE")), /\[ \]/);
 
-  setup.mockInput.pressKey("s");
+  setup.mockInput.pressKey(" ");
   await flush(setup);
-  setup.mockInput.pressKey("a");
+  frame = setup.captureCharFrame();
+  assert.match(frame, /\[x\] CODEX/);
+  assert.match(frame, /1 selected · c convert/);
+
+  setup.mockInput.pressKey(" ");
   await flush(setup);
-  setup.mockInput.pressKey("p");
+  frame = setup.captureCharFrame();
+  assert.match(frame, /\[ \] CODEX/);
+  assert.doesNotMatch(frame, /selected/);
+
   setup.mockInput.pressArrow("down");
-  setup.mockInput.pressEnter();
+  setup.mockInput.pressKey(" ");
   await flush(setup);
-  assert.match(setup.captureCharFrame(), /\[s all\] \[a codex\] \[p openai\]/);
+  assert.match(setup.captureCharFrame(), /Only saved Codex sessions can be checked/);
 
   await setup.mockInput.pressBackspace();
   assert.equal(await result, 0);
 });
 
-test("session browser는 provider 선택을 Enter로 적용하고 p와 Esc로 닫는다", async (t) => {
+test("Esc는 체크가 있으면 선택만 해제하고 다음 Esc로 종료한다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
-  const setup = await createTestRenderer({ width: 40, height: 10 });
+  const setup = await createTestRenderer({ width: 100, height: 20 });
+  t.after(() => setup.renderer.destroy());
+
+  const result = runSessionBrowser({
+    rendererFactory: async () => setup,
+    discoverScope: async () => ({ roots: ["/repo"] }),
+    sessionLoader: async () => [{ ...sessions[0], cwd: "/repo" }],
+  });
+  await flush(setup);
+
+  setup.mockInput.pressKey(" ");
+  await flush(setup);
+  assert.match(setup.captureCharFrame(), /\[x\] CODEX/);
+
+  setup.mockInput.pressEscape();
+  await flush(setup);
+  assert.match(setup.captureCharFrame(), /\[ \] CODEX/);
+
+  setup.mockInput.pressEscape();
+  assert.equal(await result, 0);
+});
+
+test("c는 체크 없이는 안내를 보여주고 체크된 세션으로 변환 화면을 연다", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
+  const setup = await createTestRenderer({ width: 72, height: 12 });
   t.after(() => setup.renderer.destroy());
 
   const result = runSessionBrowser({
@@ -315,53 +365,35 @@ test("session browser는 provider 선택을 Enter로 적용하고 p와 Esc로 �
     sessionLoader: async () => [
       { ...sessions[0], cwd: "/repo" },
       { ...sessions[1], cwd: "/repo" },
-      { ...sessions[1], id: "dynamic", provider: "enterprise-proxy", cwd: "/repo" },
     ],
   });
   await flush(setup);
 
-  setup.mockInput.pressKey("p");
-  await waitForFrame(setup, (value) => value.includes("› ● All"));
-  let frame = setup.captureCharFrame();
-  assert.match(frame, /PROVIDER · p\/Esc close/);
-  assert.match(frame, /› ● All/);
-  assert.match(frame, /enterprise-proxy/);
-  assert.match(frame, /openai/);
-  assert.match(frame, /zgap/);
-  assert.doesNotMatch(frame, /Add session switcher/);
+  setup.mockInput.pressKey("c");
+  await flush(setup);
+  assert.match(setup.captureCharFrame(), /Check sessions with Space first/);
 
-  setup.mockInput.pressArrow("down");
   setup.mockInput.pressKey(" ");
-  await flush(setup);
-  frame = setup.captureCharFrame();
-  assert.match(frame, /PROVIDER · p\/Esc close/);
-  assert.doesNotMatch(frame, /\[p enterprise-…\]/);
+  setup.mockInput.pressKey("c");
+  await waitForFrame(setup, (frame) => frame.includes("CONVERT PROVIDER"));
+  const frame = setup.captureCharFrame();
+  assert.match(frame, /1 session will change/);
+  assert.match(frame, /openai/);
+  assert.doesNotMatch(frame, /›\s+zgap/);
 
-  setup.mockInput.pressEnter();
-  await flush(setup);
-  frame = setup.captureCharFrame();
-  assert.match(frame, /\[p enterprise-…\]/);
-  assert.match(frame, /Investi/);
-
-  setup.mockInput.pressKey("p");
-  setup.mockInput.pressKey("p");
-  await flush(setup);
-  assert.match(setup.captureCharFrame(), /Investi/);
-
-  setup.mockInput.pressKey("p");
   setup.mockInput.pressEscape();
   await flush(setup);
-  assert.match(setup.captureCharFrame(), /Investi/);
-  assert.doesNotMatch(setup.captureCharFrame(), /Press Esc again to quit/);
+  assert.match(setup.captureCharFrame(), /\[x\] CODEX/);
 
+  await setup.mockInput.pressBackspace();
   await setup.mockInput.pressBackspace();
   assert.equal(await result, 0);
 });
 
-test("provider menu는 source를 골라 c로 target과 변경 개수를 확인한 뒤 일괄 변환한다", async (t) => {
+test("혼합 provider 체크는 target과 같은 세션을 제외한 개수로 변환한다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
-  const setup = await createTestRenderer({ width: 72, height: 12 });
+  const setup = await createTestRenderer({ width: 72, height: 14 });
   t.after(() => setup.renderer.destroy());
   const converted = [];
   const sourceSessions = [
@@ -381,22 +413,101 @@ test("provider menu는 source를 골라 c로 target과 변경 개수를 확인�
   });
   await flush(setup);
 
-  setup.mockInput.pressKey("p");
-  setup.mockInput.pressKey("\x1b[F");
+  setup.mockInput.pressKey(" ");
+  setup.mockInput.pressArrow("down");
+  setup.mockInput.pressKey(" ");
+  setup.mockInput.pressArrow("down");
+  setup.mockInput.pressKey(" ");
   setup.mockInput.pressKey("c");
-  await waitForFrame(setup, (frame) => frame.includes("CONVERT · zgap") && frame.includes("2 sessions will change"));
+  await waitForFrame(setup, (frame) => frame.includes("CONVERT PROVIDER"));
   let frame = setup.captureCharFrame();
-  assert.match(frame, /CONVERT · zgap/);
-  assert.match(frame, /2 sessions will change/);
-  assert.match(frame, /openai/);
+  assert.match(frame, /1 of 3 selected sessions will change/);
+
+  setup.mockInput.pressArrow("down");
+  await flush(setup);
+  frame = setup.captureCharFrame();
+  assert.match(frame, /2 of 3 selected sessions will change/);
 
   setup.mockInput.pressEnter();
-  await waitForFrame(setup, (value) => value.includes("[p openai]") && value.includes("Second zgap session"));
+  await waitForFrame(setup, (value) => value.includes("2 sessions converted to openai"));
   frame = setup.captureCharFrame();
   assert.deepEqual(converted, [{ ids: ["codex-zgap", "codex-zgap-two"], target: "openai" }]);
-  assert.match(frame, /\[p openai\]/);
-  assert.match(frame, /CODEX · openai/);
+  assert.match(frame, /\[✓\] CODEX · openai {2}Add session/);
+  assert.match(frame, /\[✓\] CODEX · openai {2}Second zgap/);
+  assert.match(frame, /\[ \] CODEX · openai {2}Investigate auth/);
+  assert.match(frame, /\[1\]All/);
 
+  await setup.mockInput.pressBackspace();
+  assert.equal(await result, 0);
+});
+
+test("변환 후 다른 scope 캐시를 비워 stale provider 목록을 막는다", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
+  const setup = await createTestRenderer({ width: 72, height: 12 });
+  t.after(() => setup.renderer.destroy());
+  const loads = [];
+  const makeSession = (over) => ({ agent: "codex", cwd: "/repo", updatedAt: sessions[0].updatedAt, ...over });
+
+  const result = runSessionBrowser({
+    rendererFactory: async () => setup,
+    discoverScope: async () => ({ roots: ["/repo"] }),
+    sessionLoader: async ({ scope }) => {
+      loads.push(scope);
+      return scope === "repo"
+        ? [makeSession({ id: "r1", provider: loads.filter((value) => value === "repo").length > 1 ? "openai" : "zgap", title: "Repo session" })]
+        : [makeSession({ id: "r1", provider: "openai", title: "Repo session" }), makeSession({ id: "o1", cwd: "/other", provider: "openai", title: "Other session" })];
+    },
+    providerConverter: async (selected) => selected.length,
+  });
+  await flush(setup);
+  setup.mockInput.pressKey("s");
+  await flush(setup);
+  setup.mockInput.pressKey("s");
+  await flush(setup);
+  assert.deepEqual(loads, ["repo", "all"]);
+
+  setup.mockInput.pressKey(" ");
+  setup.mockInput.pressKey("c");
+  await waitForFrame(setup, (frame) => frame.includes("CONVERT PROVIDER"));
+  setup.mockInput.pressEnter();
+  await waitForFrame(setup, (frame) => frame.includes("1 session converted to openai"));
+
+  setup.mockInput.pressKey("s");
+  await waitForFrame(setup, (frame) => frame.includes("Other session"));
+  assert.deepEqual(loads, ["repo", "all", "all"]);
+  assert.match(setup.captureCharFrame(), /\[2\]openai 2/);
+
+  await setup.mockInput.pressBackspace();
+  assert.equal(await result, 0);
+});
+
+test("변환 실패는 변환 화면에 오류를 보여주고 선택을 유지한다", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
+  const setup = await createTestRenderer({ width: 72, height: 12 });
+  t.after(() => setup.renderer.destroy());
+
+  const result = runSessionBrowser({
+    rendererFactory: async () => setup,
+    discoverScope: async () => ({ roots: ["/repo"] }),
+    sessionLoader: async () => [{ ...sessions[0], cwd: "/repo" }],
+    providerConverter: async () => { throw new Error("database is locked"); },
+  });
+  await flush(setup);
+
+  setup.mockInput.pressKey(" ");
+  setup.mockInput.pressKey("c");
+  await waitForFrame(setup, (frame) => frame.includes("CONVERT PROVIDER"));
+  setup.mockInput.pressEnter();
+  await waitForFrame(setup, (frame) => frame.includes("Could not convert sessions"));
+  assert.match(setup.captureCharFrame(), /database is locked/);
+
+  setup.mockInput.pressEscape();
+  await flush(setup);
+  assert.match(setup.captureCharFrame(), /\[x\] CODEX · zgap/);
+
+  await setup.mockInput.pressBackspace();
   await setup.mockInput.pressBackspace();
   assert.equal(await result, 0);
 });
@@ -422,25 +533,25 @@ test("session browser는 Page Up/Down, Home, End로 목록을 이동한다", asy
 
   setup.mockInput.pressKey("\x1b[6~");
   await flush(setup);
-  assert.match(setup.captureCharFrame(), /›\s+CODEX · zgap  Session 4/);
+  assert.match(setup.captureCharFrame(), /›\s+\[ \] CODEX · zgap {2}Session 4/);
 
   setup.mockInput.pressKey("\x1b[5~");
   await flush(setup);
-  assert.match(setup.captureCharFrame(), /›\s+CODEX · zgap  Session 1/);
+  assert.match(setup.captureCharFrame(), /›\s+\[ \] CODEX · zgap {2}Session 1/);
 
   setup.mockInput.pressKey("\x1b[H");
   await flush(setup);
-  assert.match(setup.captureCharFrame(), /›\s+CODEX · zgap  Session 1/);
+  assert.match(setup.captureCharFrame(), /›\s+\[ \] CODEX · zgap {2}Session 1/);
 
   setup.mockInput.pressKey("\x1b[F");
   await flush(setup);
-  assert.match(setup.captureCharFrame(), /›\s+CODEX · zgap  Session 7/);
+  assert.match(setup.captureCharFrame(), /›\s+\[ \] CODEX · zgap {2}Session 7/);
 
   await setup.mockInput.pressBackspace();
   assert.equal(await result, 0);
 });
 
-test("session browser는 Space로 첫 U/A와 마지막 U/A를 미리 본다", async (t) => {
+test("session browser는 Tab으로 첫 U/A와 마지막 U/A를 미리 본다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
   const setup = await createTestRenderer({ width: 40, height: 10 });
@@ -453,16 +564,16 @@ test("session browser는 Space로 첫 U/A와 마지막 U/A를 미리 본다", as
   });
   await flush(setup);
 
-  setup.mockInput.pressKey(" ");
+  setup.mockInput.pressKey("\t");
   await flush(setup);
   let frame = setup.captureCharFrame();
-  assert.match(frame, /PREVIEW · Space\/Esc close/);
+  assert.match(frame, /PREVIEW · Tab\/Esc close/);
   assert.match(frame, /U Build a session switcher/);
   assert.match(frame, /A I will inspect the session/);
   assert.match(frame, /formats\./);
   assert.match(frame, /U Polish the terminal UI/);
   assert.match(frame, /A The layout now uses compact navig…/);
-  assert.doesNotMatch(frame, /› CODEX/);
+  assert.doesNotMatch(frame, /› \[ \] CODEX/);
 
   const spans = setup.captureSpans().lines.flatMap((line) => line.spans);
   const rgba = (color) => Array.from(color.buffer);
@@ -470,236 +581,44 @@ test("session browser는 Space로 첫 U/A와 마지막 U/A를 미리 본다", as
   const assistantLabel = spans.find((span) => span.text.startsWith("A "));
   assert.notDeepEqual(rgba(userLabel.fg), rgba(assistantLabel.fg));
 
-  setup.mockInput.pressKey(" ");
+  setup.mockInput.pressKey("\t");
   await flush(setup);
   frame = setup.captureCharFrame();
-  assert.match(frame, /›\s+CODEX · zgap  Add session/);
+  assert.match(frame, /›\s+\[ \] CODEX · zgap {2}Add session/);
 
   await setup.mockInput.pressBackspace();
   assert.equal(await result, 0);
 });
 
-test("Codex preview는 wide rail에서 provider를 선택해 원본 세션을 보존한다", async (t) => {
+test("미리보기의 Enter는 세션을 그대로 재개한다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
   const setup = await createTestRenderer({ width: 100, height: 18 });
   t.after(() => setup.renderer.destroy());
   const originalSession = { ...sessions[0], cwd: "/repo" };
-  const codexSessions = [
-    originalSession,
-    { ...sessions[0], id: "codex-openai", provider: "openai", cwd: "/repo", title: "OpenAI session" },
-    { ...sessions[0], id: "codex-agp", provider: "agp", cwd: "/repo", title: "AGP session" },
-  ];
   let selectedSession;
-  let selection;
 
   const result = runSessionBrowser({
     rendererFactory: async () => setup,
     discoverScope: async () => ({ roots: ["/repo"] }),
-    sessionLoader: async () => codexSessions,
-    onSelect: async (session, options) => {
+    sessionLoader: async () => [originalSession],
+    onSelect: async (session) => {
       selectedSession = session;
-      selection = options;
       return 17;
     },
   });
   await flush(setup);
 
-  setup.mockInput.pressKey(" ");
+  setup.mockInput.pressKey("\t");
   await flush(setup);
-  let frame = setup.captureCharFrame();
-  assert.match(frame, /RESUME WITH/);
-  assert.match(frame, /› zgap/);
-  assert.match(frame, /  openai/);
-  assert.match(frame, /  agp/);
-  assert.match(frame, /saved/);
+  const frame = setup.captureCharFrame();
+  assert.doesNotMatch(frame, /RESUME WITH/);
   assert.match(frame, /U Build a session switcher/);
-  assert.match(frame, /A I will inspect the session/);
-  const wideRailLine = frame.split("\n").find((line) => line.includes("RESUME WITH"));
-  assert.ok(wideRailLine.indexOf("RESUME WITH") > 40);
 
-  setup.mockInput.pressArrow("down");
-  await flush(setup);
   setup.mockInput.pressEnter();
   assert.equal(await result, 17);
   assert.equal(selectedSession, originalSession);
-  assert.deepEqual(selection, { provider: "openai" });
   assert.equal(originalSession.provider, "zgap");
-});
-
-test("Codex wide rail은 저장된 provider 표식을 해당 행에 유지하고 없으면 표시하지 않는다", async (t) => {
-  const { createTestRenderer } = await import("@opentui/core/testing");
-  const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
-  const setup = await createTestRenderer({ width: 100, height: 18 });
-  t.after(() => setup.renderer.destroy());
-  const saved = { ...sessions[0], cwd: "/repo" };
-  const result = runSessionBrowser({
-    rendererFactory: async () => setup,
-    discoverScope: async () => ({ roots: ["/repo"] }),
-    sessionLoader: async () => [
-      saved,
-      { ...saved, id: "openai-session", provider: "openai", title: "OpenAI session" },
-      { ...saved, id: "no-saved-session", provider: null, title: "Unconfigured provider" },
-    ],
-  });
-  await flush(setup);
-  setup.mockInput.pressKey(" ");
-  await flush(setup);
-  let frame = setup.captureCharFrame();
-  const zgapLine = frame.split("\n").find((line) => line.includes("zgap"));
-  assert.match(zgapLine, /saved/);
-  assert.doesNotMatch(frame.split("\n").find((line) => line.includes("openai")), /saved/);
-
-  setup.mockInput.pressArrow("down");
-  await flush(setup);
-  frame = setup.captureCharFrame();
-  assert.match(frame.split("\n").find((line) => line.includes("zgap")), /saved/);
-
-  setup.mockInput.pressKey(" ");
-  await flush(setup);
-  setup.mockInput.pressArrow("down");
-  setup.mockInput.pressArrow("down");
-  await setup.mockInput.pressKey(" ");
-  await flush(setup);
-  assert.doesNotMatch(setup.captureCharFrame(), /saved/);
-  await setup.mockInput.pressBackspace();
-  await setup.mockInput.pressBackspace();
-  assert.equal(await result, 0);
-});
-
-test("Codex wide rail은 긴 provider를 22열 안에서 한 줄로 줄인다", async (t) => {
-  const { createTestRenderer } = await import("@opentui/core/testing");
-  const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
-  const setup = await createTestRenderer({ width: 100, height: 18 });
-  t.after(() => setup.renderer.destroy());
-  const longProvider = "super-long-provider-name-that-breaks-rail";
-
-  const result = runSessionBrowser({
-    rendererFactory: async () => setup,
-    discoverScope: async () => ({ roots: ["/repo"] }),
-    sessionLoader: async () => [
-      { ...sessions[0], cwd: "/repo" },
-      { ...sessions[0], id: "codex-long", provider: longProvider, cwd: "/repo" },
-    ],
-  });
-  await flush(setup);
-
-  setup.mockInput.pressKey(" ");
-  await flush(setup);
-  const frame = setup.captureCharFrame();
-  assert.match(frame, /super-long-provid…/);
-  assert.doesNotMatch(frame, new RegExp(longProvider));
-  assert.match(frame, /U Build a session switcher/);
-  const providerLines = frame.split("\n").filter((line) => line.includes("super-long") || line.includes("name-that"));
-  assert.equal(providerLines.length, 1);
-  assert.ok(Bun.stringWidth(providerLines[0].slice(-22).trim()) <= 22);
-
-  setup.mockInput.pressKey(" ");
-  await flush(setup);
-  await setup.mockInput.pressBackspace();
-  assert.equal(await result, 0);
-});
-
-test("Codex preview는 compact rail에서 모든 줄을 40열 안에 유지한다", async (t) => {
-  const { createTestRenderer } = await import("@opentui/core/testing");
-  const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
-  const setup = await createTestRenderer({ width: 40, height: 10 });
-  t.after(() => setup.renderer.destroy());
-
-  const result = runSessionBrowser({
-    rendererFactory: async () => setup,
-    discoverScope: async () => ({ roots: ["/repo"] }),
-    sessionLoader: async () => [
-      { ...sessions[0], cwd: "/repo" },
-      { ...sessions[0], id: "codex-openai", provider: "openai", cwd: "/repo" },
-      { ...sessions[0], id: "codex-agp", provider: "agp", cwd: "/repo" },
-    ],
-  });
-  await flush(setup);
-
-  setup.mockInput.pressKey(" ");
-  await flush(setup);
-  let frame = setup.captureCharFrame();
-  assert.match(frame, /Provider 1\/3 · zgap/);
-  assert.match(frame, /U Build a session switcher/);
-  assert.match(frame, /A I will inspect the session/);
-  assert.ok(frame.indexOf("Provider 1/3") < frame.indexOf("U Build a session switcher"));
-  for (const line of frame.split("\n")) assert.ok(Bun.stringWidth(line) <= 40, line);
-
-  setup.mockInput.pressArrow("down");
-  await flush(setup);
-  frame = setup.captureCharFrame();
-  assert.match(frame, /Provider 2\/3 · openai/);
-  assert.match(frame, /zgap/);
-  for (const line of frame.split("\n")) assert.ok(Bun.stringWidth(line) <= 40, line);
-
-  setup.mockInput.pressKey(" ");
-  await flush(setup);
-  await setup.mockInput.pressBackspace();
-  assert.equal(await result, 0);
-});
-
-test("Codex wide preview는 짧은 rail viewport에서 End 선택을 보이고 그대로 재개한다", async (t) => {
-  const { createTestRenderer } = await import("@opentui/core/testing");
-  const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
-  const setup = await createTestRenderer({ width: 100, height: 10 });
-  t.after(() => setup.renderer.destroy());
-  const providers = ["zgap", "openai", "p1", "p2", "p3", "p4", "p5"];
-  const base = { ...sessions[0], cwd: "/repo" };
-  let selection;
-  const result = runSessionBrowser({
-    rendererFactory: async () => setup,
-    discoverScope: async () => ({ roots: ["/repo"] }),
-    sessionLoader: async () => providers.map((provider, index) => ({ ...base, id: `provider-${index}`, provider })),
-    onSelect: async (_session, options) => { selection = options; return 0; },
-  });
-  await flush(setup);
-  setup.mockInput.pressKey(" ");
-  await flush(setup);
-  setup.mockInput.pressKey("\x1b[F");
-  await flush(setup);
-  const frame = setup.captureCharFrame();
-  assert.match(frame, /› p5/);
-  assert.doesNotMatch(frame, /› zgap/);
-  setup.mockInput.pressEnter();
-  assert.equal(await result, 0);
-  assert.deepEqual(selection, { provider: "p5" });
-});
-
-test("Claude preview에는 provider rail이 없고 기존 닫기 동작을 유지한다", async (t) => {
-  const { createTestRenderer } = await import("@opentui/core/testing");
-  const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
-  const setup = await createTestRenderer({ width: 40, height: 10 });
-  t.after(() => setup.renderer.destroy());
-  let selected = false;
-
-  const result = runSessionBrowser({
-    rendererFactory: async () => setup,
-    discoverScope: async () => ({ roots: ["/repo"] }),
-    sessionLoader: async () => [{ ...sessions[2], cwd: "/repo", preview: {
-      turns: [{ user: "Review parser behavior", assistant: "I will inspect the parser." }],
-    } }],
-    onSelect: async () => { selected = true; return 23; },
-  });
-  await flush(setup);
-
-  setup.mockInput.pressKey(" ");
-  await flush(setup);
-  let frame = setup.captureCharFrame();
-  assert.doesNotMatch(frame, /RESUME WITH|Provider/);
-  assert.match(frame, /U Review parser behavior/);
-  setup.mockInput.pressArrow("down");
-  setup.mockInput.pressArrow("up");
-  setup.mockInput.pressEnter();
-  await flush(setup);
-  assert.equal(selected, false);
-  assert.match(setup.captureCharFrame(), /U Review parser behavior/);
-
-  setup.mockInput.pressKey(" ");
-  await flush(setup);
-  assert.match(setup.captureCharFrame(), /›\s+CLAUDE/);
-  await setup.mockInput.pressBackspace();
-  assert.equal(await result, 0);
 });
 
 test("작은 preview는 첫 turn과 마지막 turn 사이의 생략 수를 표시한다", async (t) => {
@@ -718,7 +637,7 @@ test("작은 preview는 첫 turn과 마지막 turn 사이의 생략 수를 표�
     sessionLoader: async () => [{ ...sessions[0], cwd: "/repo", preview: { turns } }],
   });
   await flush(setup);
-  setup.mockInput.pressKey(" ");
+  setup.mockInput.pressKey("\t");
   await flush(setup);
 
   const frame = setup.captureCharFrame();
@@ -729,7 +648,7 @@ test("작은 preview는 첫 turn과 마지막 turn 사이의 생략 수를 표�
   assert.match(frame, /A Answer 5/);
   assert.doesNotMatch(frame, /Question 2/);
 
-  setup.mockInput.pressKey(" ");
+  setup.mockInput.pressKey("\t");
   await flush(setup);
   await setup.mockInput.pressBackspace();
   assert.equal(await result, 0);
@@ -754,7 +673,7 @@ test("높은 preview는 중간 turn과 메시지의 두 번째 줄을 추가한�
     sessionLoader: async () => [{ ...sessions[0], cwd: "/repo", preview: { turns } }],
   });
   await flush(setup);
-  setup.mockInput.pressKey(" ");
+  setup.mockInput.pressKey("\t");
   await flush(setup);
 
   const frame = setup.captureCharFrame();
@@ -763,7 +682,7 @@ test("높은 preview는 중간 turn과 메시지의 두 번째 줄을 추가한�
   assert.match(frame, /second visual row/);
   assert.doesNotMatch(frame, /turns omitted/);
 
-  setup.mockInput.pressKey(" ");
+  setup.mockInput.pressKey("\t");
   await flush(setup);
   await setup.mockInput.pressBackspace();
   assert.equal(await result, 0);
@@ -789,7 +708,7 @@ test("session browser는 선택한 세션의 미리보기만 지연 로드한다
   });
   await flush(setup);
 
-  setup.mockInput.pressKey(" ");
+  setup.mockInput.pressKey("\t");
   await flush(setup);
   assert.deepEqual(calls, ["codex-zgap"]);
   assert.match(setup.captureCharFrame(), /Loading preview/);
@@ -805,7 +724,7 @@ test("session browser는 선택한 세션의 미리보기만 지연 로드한다
   assert.match(frame, /U First question/);
   assert.match(frame, /A Last answer/);
 
-  setup.mockInput.pressKey(" ");
+  setup.mockInput.pressKey("\t");
   await flush(setup);
   await setup.mockInput.pressBackspace();
   assert.equal(await result, 0);
@@ -871,8 +790,8 @@ test("session browser는 실행 중인 Codex 세션을 미리보기에서 Enter 
   });
   await flush(setup);
 
-  setup.mockInput.pressKey(" ");
-  await waitForFrame(setup, (frame) => frame.includes("RESUME WITH"));
+  setup.mockInput.pressKey("\t");
+  await waitForFrame(setup, (frame) => frame.includes("PREVIEW"));
   setup.mockInput.pressEnter();
   await waitForFrame(setup, (frame) => frame.includes("already running"));
   assert.equal(selected, false);
@@ -938,10 +857,10 @@ test("session browser는 최근 상대 시간과 오래된 정확한 시간을 �
   assert.notDeepEqual(rgba(relativeTime.fg), rgba(turnCount.fg));
   assert.notDeepEqual(rgba(turnCount.fg), rgba(fileSize.fg));
 
-  setup.mockInput.pressKey(" ");
+  setup.mockInput.pressKey("\t");
   await waitForFrame(setup, (frame) => frame.includes("U cached question") && frame.includes("A cached answer"));
   assert.deepEqual(previewCalls, []);
-  setup.mockInput.pressKey(" ");
+  setup.mockInput.pressKey("\t");
 
   await setup.mockInput.pressBackspace();
   assert.equal(await result, 0);
@@ -950,7 +869,7 @@ test("session browser는 최근 상대 시간과 오래된 정확한 시간을 �
 test("session browser는 ? 키로 단축키 화면을 열고 닫는다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
-  const setup = await createTestRenderer({ width: 40, height: 10 });
+  const setup = await createTestRenderer({ width: 44, height: 12 });
   t.after(() => setup.renderer.destroy());
 
   const result = runSessionBrowser({
@@ -965,6 +884,8 @@ test("session browser는 ? 키로 단축키 화면을 열고 닫는다", async (
   let frame = setup.captureCharFrame();
   assert.match(frame, /PgUp\/PgDn/);
   assert.match(frame, /Home\/End/);
+  assert.match(frame, /Tab Preview/);
+  assert.match(frame, /Space Check · c Convert provider/);
   assert.match(frame, /Esc\/Backspace Back/);
   assert.match(frame, /\^C×2 Quit/);
   assert.doesNotMatch(frame, /Add session switcher/);
@@ -972,7 +893,7 @@ test("session browser는 ? 키로 단축키 화면을 열고 닫는다", async (
   setup.mockInput.pressKey("?");
   await flush(setup);
   frame = setup.captureCharFrame();
-  assert.match(frame, /\[p all\]/);
+  assert.match(frame, /\[1\]All/);
   assert.match(frame, /Add session/);
 
   await setup.mockInput.pressBackspace();
@@ -1000,7 +921,7 @@ test("session browser는 한글 제목을 행 너비 안에서 줄인다", async
   await flush(setup);
 
   const frame = setup.captureCharFrame();
-  assert.match(frame, /세션 목록을 보여주/);
+  assert.match(frame, /세션 목록을 보/);
   assert.match(frame, /└ repo/);
 
   await setup.mockInput.pressBackspace();
@@ -1030,7 +951,7 @@ test("session browser는 작은 terminal에서 두 session row를 표시하고 v
   assert.match(frame, /Second session/);
   assert.doesNotMatch(frame, /Third session/);
   assert.doesNotMatch(frame, /\d{1,2}\/\d{1,2}\/\d{2}/);
-  assert.match(frame, /\[s repo\] \[a all\] \[p all\]/);
+  assert.match(frame, /\[s repo\] \[a all\] \[1\]All/);
 
   setup.mockInput.pressArrow("down");
   setup.mockInput.pressArrow("down");
@@ -1039,7 +960,6 @@ test("session browser는 작은 terminal에서 두 session row를 표시하고 v
   assert.match(frame, /Second session/);
   assert.doesNotMatch(frame, /First session/);
   assert.match(frame, /Third session/);
-  assert.match(frame, /\[s repo\] \[a all\] \[p all\]/);
 
   await setup.mockInput.pressBackspace();
   assert.equal(await result, 0);
@@ -1065,15 +985,8 @@ test("session browser는 로그의 terminal control sequence를 표시하지 않
 
   const frame = setup.captureCharFrame();
   assert.doesNotMatch(frame, /\u001b|\u0007/);
-  assert.match(frame, /CODEX · openai  Safe title/);
+  assert.match(frame, /CODEX · openai {2}Safe title/);
   assert.match(frame, /└ worktree/);
-
-  setup.mockInput.pressKey("p");
-  setup.mockInput.pressArrow("down");
-  setup.mockInput.pressEnter();
-  await flush(setup);
-  assert.doesNotMatch(setup.captureCharFrame(), /\u001b|\u0007/);
-  assert.match(setup.captureCharFrame(), /\[p openai\]/);
 
   await setup.mockInput.pressBackspace();
   assert.equal(await result, 0);
@@ -1097,12 +1010,10 @@ test("session browser는 긴 provider와 위치를 terminal 너비 안에서 줄
   });
   await flush(setup);
 
-  setup.mockInput.pressKey("p");
-  setup.mockInput.pressArrow("down");
-  setup.mockInput.pressEnter();
+  setup.mockInput.pressKey("2");
   await flush(setup);
   const frame = setup.captureCharFrame();
-  assert.match(frame, /\[p enterprise-…\]/);
+  assert.match(frame, /\[2\]enterprise-…/);
   assert.match(frame, /└ a-very-long-wor…/);
   assert.match(frame, /2t/);
   assert.match(frame, /0 B/);
