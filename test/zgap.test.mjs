@@ -147,7 +147,7 @@ test("심볼릭 링크로 실행해도 CLI main이 시작된다", async (t) => {
   const [code] = await once(child, "exit");
   assert.equal(code, 0);
   assert.match(stdout, /zgap login/);
-  assert.match(stdout, /normal ~\/\.codex and ~\/\.claude directories/);
+  assert.match(stdout, /each supported agent's normal local configuration and history/);
 });
 
 test("Codex PATH의 빈 항목은 현재 디렉터리를 사용하고 실행 가능한 디렉터리는 건너뛴다", async (t) => {

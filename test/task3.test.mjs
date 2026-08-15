@@ -801,7 +801,7 @@ test("CLI help는 logout direct command를 안내한다", async () => {
   const [code] = await once(child, "exit");
   assert.equal(code, 0);
   assert.match(stdout, /zgap logout\s+Sign out on this device/);
-  assert.match(stdout, /zgap sessions\s+Browse Codex and Claude history/);
+  assert.match(stdout, /zgap sessions\s+Browse agent history/);
   assert.match(stdout, /zgap update\s+Update zgap from GitHub main/);
 });
 

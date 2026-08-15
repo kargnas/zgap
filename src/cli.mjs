@@ -35,10 +35,10 @@ function printHelp() {
   zgap logout            Sign out on this device
   zgap codex [args...]   Run Codex through ai-proxy.zz.gg
   zgap claude [args...]  Run Claude through ai-proxy.zz.gg
-  zgap sessions          Browse Codex and Claude history
+  zgap sessions          Browse agent history
   zgap update            Update zgap from GitHub main
 
-zgap keeps the normal ~/.codex and ~/.claude directories, including their existing history.`);
+zgap keeps each supported agent's normal local configuration and history.`);
 }
 
 export async function main({
