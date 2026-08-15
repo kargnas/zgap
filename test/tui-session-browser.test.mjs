@@ -984,9 +984,12 @@ test("session browser는 한글 제목을 행 너비 안에서 줄인다", async
   const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
   const setup = await createTestRenderer({ width: 40, height: 10 });
   t.after(() => setup.renderer.destroy());
+  // 고정 updatedAt은 날짜가 지나면 16칸짜리 정확한 시간 표기로 바뀌어 좁은 행에서 위치를 밀어낸다.
+  const now = sessions[0].updatedAt + 5 * 60_000;
 
   const result = runSessionBrowser({
     rendererFactory: async () => setup,
+    now: () => now,
     discoverScope: async () => ({ roots: ["/repo"] }),
     sessionLoader: async () => [{
       ...sessions[0],
