@@ -1,5 +1,5 @@
-export const ORIGIN = "https://ai-proxy.zz.gg";
-export const API_BASE_URL = `${ORIGIN}/v1`;
+export const DEFAULT_HOST = "ai-proxy.zz.gg";
+export const ORIGIN = `https://${DEFAULT_HOST}`;
 export const CLIENT_ID = "zgap";
 export const LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
 export const REFRESH_START_MS = 4 * 60 * 60 * 1000;
