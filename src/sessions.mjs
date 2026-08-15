@@ -288,10 +288,9 @@ export async function convertCodexSessionProviders(selectedSessions, targetProvi
   }
   const sessionsById = new Map(values.map((session) => [session.id, session]));
   if (sessionsById.size === 0) return 0;
-  const sourceProviders = new Set([...sessionsById.values()].map((session) => session.provider));
-  if (sourceProviders.size !== 1) throw new Error("Sessions must share one source provider");
-  const [source] = sourceProviders;
-  if (source === target) throw new Error("Target provider must differ from source provider");
+  if ([...sessionsById.values()].some((session) => session.provider === target)) {
+    throw new Error("Target provider must differ from each session's saved provider");
+  }
 
   const codexHome = options.codexHome ?? process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex");
   const databasePath = path.join(codexHome, "state_5.sqlite");
@@ -304,8 +303,8 @@ export async function convertCodexSessionProviders(selectedSessions, targetProvi
     const update = db.query("UPDATE threads SET model_provider = ? WHERE id = ? AND model_provider = ?");
     // One stale row aborts the transaction so the visible batch is never partially converted.
     db.transaction(() => {
-      for (const id of sessionsById.keys()) {
-        if (update.run(target, id, source).changes !== 1) {
+      for (const [id, session] of sessionsById) {
+        if (update.run(target, id, session.provider).changes !== 1) {
           throw new Error(`Session provider changed before conversion: ${id}`);
         }
       }
