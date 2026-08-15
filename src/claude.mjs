@@ -28,15 +28,17 @@ const CLEARED_ENV = [
   "CLAUDE_CODE_USE_FOUNDRY", "CLAUDE_CODE_USE_GATEWAY", "CLAUDE_CODE_USE_MANTLE", "CLAUDE_CODE_USE_ANTHROPIC_AWS",
   "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD", "CLAUDE_CODE_USE_CCR_V2", "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST",
 ];
-const CLAUDE_SETTINGS_ENV = {
-  ...Object.fromEntries(CLEARED_ENV.map((name) => [name, ""])),
-  ANTHROPIC_BASE_URL: ORIGIN,
-  ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-5[1m]",
-  ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-5[1m]",
-  CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
-  CLAUDE_CODE_MAX_CONTEXT_TOKENS: "262144",
-  CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK: "1",
-};
+function claudeSettingsEnv(origin) {
+  return {
+    ...Object.fromEntries(CLEARED_ENV.map((name) => [name, ""])),
+    ANTHROPIC_BASE_URL: origin,
+    ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-5[1m]",
+    ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-5[1m]",
+    CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
+    CLAUDE_CODE_MAX_CONTEXT_TOKENS: "262144",
+    CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK: "1",
+  };
+}
 
 async function executable(pathname) {
   try {
@@ -66,7 +68,7 @@ function apiKeyHelper(credentialFile) {
   return [process.execPath, CLI_FILE, "auth-token", credentialFile].map(shellQuote).join(" ");
 }
 
-export async function runClaude(args, { configDir = defaultConfigDir(), cwd = process.cwd() } = {}) {
+export async function runClaude(args, { configDir = defaultConfigDir(), cwd = process.cwd(), origin = ORIGIN } = {}) {
   if (args.some((arg) => arg === "--settings" || arg.startsWith("--settings="))) {
     throw new Error("zgap claude supplies --settings automatically; remove the user-provided --settings option.");
   }
@@ -90,7 +92,7 @@ export async function runClaude(args, { configDir = defaultConfigDir(), cwd = pr
   }
   const env = { ...process.env };
   for (const name of CLEARED_ENV) delete env[name];
-  env.ANTHROPIC_BASE_URL = ORIGIN;
+  env.ANTHROPIC_BASE_URL = origin;
   env.ANTHROPIC_DEFAULT_OPUS_MODEL = "claude-opus-5[1m]";
   env.ANTHROPIC_DEFAULT_SONNET_MODEL = "claude-sonnet-5[1m]";
   env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY = "1";
@@ -104,7 +106,7 @@ export async function runClaude(args, { configDir = defaultConfigDir(), cwd = pr
     return await new Promise((resolve, reject) => {
       child = spawn(claudePath, [
         "--settings",
-        JSON.stringify({ apiKeyHelper: apiKeyHelper(credentialsPath(configDir)), env: CLAUDE_SETTINGS_ENV }),
+        JSON.stringify({ apiKeyHelper: apiKeyHelper(credentialsPath(configDir)), env: claudeSettingsEnv(origin) }),
         ...args,
       ], { cwd, env, stdio: "inherit" });
       child.once("error", (error) => reject(error.code === "ENOENT"

@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { API_BASE_URL } from "./constants.mjs";
+import { ORIGIN } from "./constants.mjs";
 import { credentialsPath, defaultConfigDir } from "./credentials.mjs";
 import { createEphemeralCatalog, removeEphemeralCatalog, resolveCodexExecutable } from "./catalog.mjs";
 
@@ -10,21 +10,23 @@ const FORWARDED_SIGNALS = process.platform === "win32"
   ? ["SIGINT", "SIGTERM"]
   : ["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT"];
 
-function providerTable(credentialFile, spaced = false) {
+function providerTable(credentialFile, origin, spaced = false) {
   const quote = JSON.stringify;
+  const apiBaseUrl = `${origin}/v1`;
   if (spaced) {
-    return `{ name = ${quote("zgap")}, base_url = ${quote(API_BASE_URL)}, auth = { command = ${quote(process.execPath)}, args = [${quote(CLI_FILE)}, ${quote("auth-token")}, ${quote(credentialFile)}] } }`;
+    return `{ name = ${quote("zgap")}, base_url = ${quote(apiBaseUrl)}, auth = { command = ${quote(process.execPath)}, args = [${quote(CLI_FILE)}, ${quote("auth-token")}, ${quote(credentialFile)}] } }`;
   }
-  return `{name=${quote("zgap")},base_url=${quote(API_BASE_URL)},auth={command=${quote(process.execPath)},args=[${quote(CLI_FILE)},${quote("auth-token")},${quote(credentialFile)}]}}`;
+  return `{name=${quote("zgap")},base_url=${quote(apiBaseUrl)},auth={command=${quote(process.execPath)},args=[${quote(CLI_FILE)},${quote("auth-token")},${quote(credentialFile)}]}}`;
 }
 
-function providerConfig(credentialFile) {
-  return `model_providers.zgap=${providerTable(credentialFile)}`;
+function providerConfig(credentialFile, origin) {
+  return `model_providers.zgap=${providerTable(credentialFile, origin)}`;
 }
 
 export async function runCodex(args, {
   configDir = defaultConfigDir(),
   cwd = process.cwd(),
+  origin = ORIGIN,
   provider = "zgap",
 } = {}) {
   const useZgap = provider === "zgap";
@@ -69,7 +71,7 @@ export async function runCodex(args, {
       const launchArgs = useZgap
         ? [
             "-c",
-            providerConfig(credentialsPath(configDir)),
+            providerConfig(credentialsPath(configDir), origin),
             "-c",
             'model_provider="zgap"',
             "-c",

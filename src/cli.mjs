@@ -9,6 +9,7 @@ import {
 import { login } from "./login.mjs";
 import { runCodex } from "./codex.mjs";
 import { runClaude } from "./claude.mjs";
+import { readProxyConfig } from "./config.mjs";
 import { checkForGlobalUpdate, updateGlobalInstall } from "./install.mjs";
 import { runStartMenu } from "./tui/menu.mjs";
 import { runSessionBrowser } from "./tui/session-browser.mjs";
@@ -16,25 +17,31 @@ import { runSessionBrowser } from "./tui/session-browser.mjs";
 const BACK_TO_START_MENU = Symbol("back-to-start-menu");
 
 export function resumeSession(session, configDir, {
+  origin,
   provider,
   codexRunner = runCodex,
   claudeRunner = runClaude,
 } = {}) {
   if (session?.agent === "codex") {
     const options = { configDir, cwd: session.cwd };
+    if (origin) options.origin = origin;
     if (provider) options.provider = provider;
     return codexRunner(["resume", session.id], options);
   }
-  if (session?.agent === "claude") return claudeRunner(["--resume", session.id], { configDir, cwd: session.cwd });
+  if (session?.agent === "claude") {
+    const options = { configDir, cwd: session.cwd };
+    if (origin) options.origin = origin;
+    return claudeRunner(["--resume", session.id], options);
+  }
   throw new Error(`Unsupported session agent: ${session?.agent ?? "unknown"}`);
 }
 
 function printHelp() {
   console.log(`Usage:
-  zgap login             Sign in with ai-proxy.zz.gg
+  zgap login             Sign in to the credential service
   zgap logout            Sign out on this device
-  zgap codex [args...]   Run Codex through ai-proxy.zz.gg
-  zgap claude [args...]  Run Claude through ai-proxy.zz.gg
+  zgap codex [args...]   Run Codex through the configured proxy
+  zgap claude [args...]  Run Claude through the configured proxy
   zgap sessions          Browse agent history
   zgap update            Update zgap from GitHub main
 
@@ -49,6 +56,7 @@ export async function main({
   startMenu = runStartMenu,
   sessionBrowser = runSessionBrowser,
   updateChecker = checkForGlobalUpdate,
+  configReader = readProxyConfig,
   cwd = process.cwd(),
 } = {}) {
   const [command, ...args] = argv;
@@ -61,15 +69,28 @@ export async function main({
     console.log("Logged out.");
     return 0;
   }
-  if (command === "codex") return runCodex(args);
-  if (command === "claude") return runClaude(args, { configDir });
+  if (command === "codex") {
+    const { origin } = await configReader(configDir);
+    return runCodex(args, { configDir, origin });
+  }
+  if (command === "claude") {
+    const { origin } = await configReader(configDir);
+    return runClaude(args, { configDir, origin });
+  }
   if (command === "sessions") {
-    return sessionBrowser({ cwd, onSelect: (session, selection) => resumeSession(session, configDir, selection) });
+    return sessionBrowser({
+      cwd,
+      onSelect: async (session, selection) => {
+        const { origin } = await configReader(configDir);
+        return resumeSession(session, configDir, { ...selection, origin });
+      },
+    });
   }
   if (command === "update") {
     return updateGlobalInstall();
   }
   if (!command) {
+    const proxyConfig = await configReader(configDir);
     while (true) {
       const credentialFile = credentialsPath(configDir);
       const credentialState = await credentialStateReader({
@@ -87,18 +108,20 @@ export async function main({
       const menuResult = await startMenu({
         credentialState,
         accountProfile,
+        host: proxyConfig.host,
+        origin: proxyConfig.origin,
         updateChecker,
         actions: {
           login,
-          codex: () => runCodex([]),
-          claude: () => runClaude([], { configDir }),
+          codex: () => runCodex([], { configDir, origin: proxyConfig.origin }),
+          claude: () => runClaude([], { configDir, origin: proxyConfig.origin }),
           sessions: async () => {
             let selected = false;
             const browserResult = await sessionBrowser({
               cwd,
               onSelect: (session, selection) => {
                 selected = true;
-                return resumeSession(session, configDir, selection);
+                return resumeSession(session, configDir, { ...selection, origin: proxyConfig.origin });
               },
             });
             return selected || browserResult !== 0 ? browserResult : BACK_TO_START_MENU;

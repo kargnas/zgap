@@ -454,6 +454,7 @@ test("codex는 기본 Codex home을 유지하고 refresh 가능한 auth command�
   t.after(() => gateway.close());
   const origin = "https://ai-proxy.zz.gg";
   const fetchRedirectModule = await installGatewayFetchRedirect(t, gateway.address().port);
+  await writeFile(path.join(configDir, "config.yml"), "host: proxy.example.test\n");
   await writeFile(path.join(configDir, "credentials.json"), JSON.stringify({
     access_expires_at: "2099-01-02T00:00:00.000Z",
     access_token: ACCESS_OLD,
@@ -507,7 +508,7 @@ else {
 
   const joined = invocation.argv.join("\n");
   assert.match(joined, /model_provider="zgap"/);
-  assert.match(joined, /model_providers\.zgap=\{name="zgap",base_url="https:\/\/ai-proxy\.zz\.gg\/v1"/);
+  assert.match(joined, /model_providers\.zgap=\{name="zgap",base_url="https:\/\/proxy\.example\.test\/v1"/);
   assert.match(joined, /auth=\{command=/);
   assert.match(joined, /auth-token/);
   assert.match(joined, new RegExp(credentialPathPattern(path.join(configDir, "credentials.json"))));
@@ -737,6 +738,7 @@ test("claude는 gateway 환경과 apiKeyHelper 설정만 프로세스에 주입�
   const marker = path.join(root, "claude.json");
   await mkdir(configDir, { recursive: true });
   await mkdir(fakeBin, { recursive: true });
+  await writeFile(path.join(configDir, "config.yml"), "host: proxy.example.test\n");
   await writeFile(path.join(configDir, "credentials.json"), "{}");
   const fakeClaude = path.join(fakeBin, "claude");
   await writeFile(fakeClaude, `#!/usr/bin/env node
@@ -757,7 +759,7 @@ process.exitCode = 7;
   const settings = JSON.parse(invocation.argv[settingsIndex + 1]);
   assert.match(settings.apiKeyHelper, /auth-token/);
   assert.match(settings.apiKeyHelper, /credentials\.json/);
-  assert.equal(settings.env.ANTHROPIC_BASE_URL, "https://ai-proxy.zz.gg");
+  assert.equal(settings.env.ANTHROPIC_BASE_URL, "https://proxy.example.test");
   assert.equal(settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL, "claude-opus-5[1m]");
   assert.equal(settings.env.ANTHROPIC_DEFAULT_SONNET_MODEL, "claude-sonnet-5[1m]");
   assert.equal(settings.env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY, "1");
@@ -771,7 +773,7 @@ process.exitCode = 7;
     "CLAUDE_CODE_SESSION_ACCESS_TOKEN", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_FOUNDRY",
     "CLAUDE_CODE_USE_GATEWAY", "CLAUDE_CODE_USE_VERTEX",
   ]) assert.equal(settings.env[name], "", name);
-  assert.equal(invocation.env.ANTHROPIC_BASE_URL, "https://ai-proxy.zz.gg");
+  assert.equal(invocation.env.ANTHROPIC_BASE_URL, "https://proxy.example.test");
   assert.equal(invocation.env.ANTHROPIC_API_KEY, null);
   assert.equal(invocation.env.ANTHROPIC_AUTH_TOKEN, null);
   assert.equal(invocation.env.ANTHROPIC_FOUNDRY_API_KEY, null);
