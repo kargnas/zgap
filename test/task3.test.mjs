@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { test } from "node:test";
+import { test } from "./harness.mjs";
 import { fileURLToPath } from "node:url";
 
 const repoDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -379,26 +379,46 @@ test("sessions direct command는 현재 디렉터리의 browser를 연다", asyn
   assert.equal(options.cwd, "/repo/worktree");
 });
 
-test("session resume은 선택한 agent의 정확한 id와 저장된 디렉터리를 전달한다", async () => {
+test("session resume은 선택한 agent의 정확한 id와 저장된 디렉터리를 전달한다", async (t) => {
   const cli = await import("../src/cli.mjs");
   assert.equal(typeof cli.resumeSession, "function");
+  const root = await tempDir(t);
+  const codexCwd = path.join(root, "codex");
+  const codexDefaultCwd = path.join(root, "codex-default");
+  const claudeCwd = path.join(root, "claude");
+  await mkdir(codexCwd, { recursive: true });
+  await mkdir(codexDefaultCwd, { recursive: true });
+  await mkdir(claudeCwd, { recursive: true });
   const calls = [];
   const runners = {
     codexRunner: async (args, options) => { calls.push({ agent: "codex", args, options }); return 11; },
     claudeRunner: async (args, options) => { calls.push({ agent: "claude", args, options }); return 12; },
   };
 
-  assert.equal(await cli.resumeSession({ agent: "codex", id: "codex-id", cwd: "/repo/codex" }, "/config", {
+  assert.equal(await cli.resumeSession({ agent: "codex", id: "codex-id", cwd: codexCwd }, "/config", {
     ...runners,
     provider: "openai",
   }), 11);
-  assert.equal(await cli.resumeSession({ agent: "codex", id: "codex-default", cwd: "/repo/codex-default" }, "/config", runners), 11);
-  assert.equal(await cli.resumeSession({ agent: "claude", id: "claude-id", cwd: "/repo/claude" }, "/config", runners), 12);
+  assert.equal(await cli.resumeSession({ agent: "codex", id: "codex-default", cwd: codexDefaultCwd }, "/config", runners), 11);
+  assert.equal(await cli.resumeSession({ agent: "claude", id: "claude-id", cwd: claudeCwd }, "/config", runners), 12);
   assert.deepEqual(calls, [
-    { agent: "codex", args: ["resume", "codex-id"], options: { configDir: "/config", cwd: "/repo/codex", provider: "openai" } },
-    { agent: "codex", args: ["resume", "codex-default"], options: { configDir: "/config", cwd: "/repo/codex-default" } },
-    { agent: "claude", args: ["--resume", "claude-id"], options: { configDir: "/config", cwd: "/repo/claude" } },
+    { agent: "codex", args: ["resume", "codex-id"], options: { configDir: "/config", cwd: codexCwd, provider: "openai" } },
+    { agent: "codex", args: ["resume", "codex-default"], options: { configDir: "/config", cwd: codexDefaultCwd } },
+    { agent: "claude", args: ["--resume", "claude-id"], options: { configDir: "/config", cwd: claudeCwd } },
   ]);
+});
+
+test("session resume은 삭제된 작업 디렉터리를 CLI 미설치와 구분해 알린다", async (t) => {
+  const cli = await import("../src/cli.mjs");
+  const root = await tempDir(t);
+  const gone = path.join(root, "removed-checkout");
+  await assert.rejects(
+    cli.resumeSession({ agent: "claude", id: "gone-id", cwd: gone }, "/config", {
+      codexRunner: async () => { throw new Error("must not spawn"); },
+      claudeRunner: async () => { throw new Error("must not spawn"); },
+    }),
+    (error) => error.message.includes(gone) && !error.message.includes("not installed"),
+  );
 });
 
 test("start menu의 Sessions에서 뒤로 오면 start menu를 다시 연다", async () => {

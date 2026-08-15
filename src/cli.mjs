@@ -9,6 +9,7 @@ import {
 import { login } from "./login.mjs";
 import { runCodex } from "./codex.mjs";
 import { runClaude } from "./claude.mjs";
+import { stat } from "node:fs/promises";
 import { readProxyConfig } from "./config.mjs";
 import { checkForGlobalUpdate, updateGlobalInstall } from "./install.mjs";
 import { runStartMenu } from "./tui/menu.mjs";
@@ -16,12 +17,17 @@ import { runSessionBrowser } from "./tui/session-browser.mjs";
 
 const BACK_TO_START_MENU = Symbol("back-to-start-menu");
 
-export function resumeSession(session, configDir, {
+export async function resumeSession(session, configDir, {
   origin,
   provider,
   codexRunner = runCodex,
   claudeRunner = runClaude,
 } = {}) {
+  // spawn() reports a deleted cwd as ENOENT, which the runners would misdiagnose as a
+  // missing agent CLI; old sessions from removed checkouts need their own message.
+  if (typeof session?.cwd === "string" && !await stat(session.cwd).then((entry) => entry.isDirectory(), () => false)) {
+    throw new Error(`Session directory no longer exists: ${session.cwd}`);
+  }
   if (session?.agent === "codex") {
     const options = { configDir, cwd: session.cwd };
     if (origin) options.origin = origin;

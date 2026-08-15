@@ -1,9 +1,5 @@
 import assert from "node:assert/strict";
-import { test as nodeTest } from "node:test";
-
-const test = (name, options, fn) => typeof options === "function"
-  ? nodeTest(name, { concurrency: false }, options)
-  : nodeTest(name, { ...options, concurrency: false }, fn);
+import { test } from "./harness.mjs";
 
 async function flush(setup) {
   await new Promise((resolve) => setTimeout(resolve, 25));
@@ -1022,6 +1018,9 @@ test("session browser는 한글 제목을 행 너비 안에서 줄인다", async
   const result = runSessionBrowser({
     rendererFactory: async () => setup,
     discoverScope: async () => ({ roots: ["/repo"] }),
+    // Pinned clock: the fixture's updatedAt is absolute, so a real Date.now() would flip the
+    // meta line to an exact timestamp after 3 hours and push the location label out of width 40.
+    now: () => sessions[0].updatedAt + 5 * 60_000,
     sessionLoader: async () => [{
       ...sessions[0],
       cwd: "/repo",
