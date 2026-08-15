@@ -32,3 +32,6 @@ fi
 
 command -v bun >/dev/null 2>&1
 bun add -g github:kargnas/zgap#main --force --no-cache
+# `bun add` keeps the lockfile's previously pinned commit even with --force --no-cache,
+# so reruns of this installer need `bun update` to re-resolve #main to the latest commit.
+bun update -g zgap --force --no-cache

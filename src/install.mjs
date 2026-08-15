@@ -3,7 +3,9 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const UPDATE_SPEC = "github:kargnas/zgap#main";
+// Bun reuses the global lockfile's pinned commit when re-adding a branch spec, even with
+// --force and --no-cache, so updates must go through `bun update`, which re-resolves #main.
+const UPDATE_ARGS = ["update", "-g", "zgap", "--force", "--no-cache"];
 const GITHUB_MAIN_API = "https://api.github.com/repos/kargnas/zgap/commits/main";
 
 function runCommand(command, args) {
@@ -25,7 +27,7 @@ function runSilentCommand(command, args) {
 export async function updateGlobalInstall({
   run = runCommand,
 } = {}) {
-  return run("bun", ["add", "-g", UPDATE_SPEC, "--force", "--no-cache"]);
+  return run("bun", UPDATE_ARGS);
 }
 
 function isWithin(root, target) {
@@ -96,8 +98,14 @@ export async function checkForGlobalUpdate({
     }
     if (remote.sha.toLowerCase().startsWith(installed)) return { state: "current", commitDate };
 
-    const exitCode = await run("bun", ["add", "-g", UPDATE_SPEC, "--force", "--no-cache"]);
-    return exitCode === 0 ? { state: "updated", commitDate } : { state: "error" };
+    const exitCode = await run("bun", UPDATE_ARGS);
+    if (exitCode !== 0) return { state: "error" };
+    // Bun exits 0 even when it keeps the previous commit, so only the lockfile pin
+    // moving to the remote sha proves the reinstall actually happened.
+    const updatedLockfile = await readFile(path.join(resolvedGlobalRoot, "bun.lock"), "utf8").catch(() => null);
+    const reinstalled = updatedLockfile === null ? null : installedCommit(updatedLockfile);
+    if (!reinstalled || !remote.sha.toLowerCase().startsWith(reinstalled)) return { state: "error" };
+    return { state: "updated", commitDate };
   } catch {
     return { state: "error" };
   }

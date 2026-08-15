@@ -848,14 +848,14 @@ test("CLI help는 logout direct command를 안내한다", async () => {
   assert.match(stdout, /zgap update\s+Update zgap from GitHub main/);
 });
 
-test("global update reinstalls the GitHub main branch without cached resolution", async () => {
+test("global update re-resolves GitHub main past the lockfile pin", async () => {
   const { updateGlobalInstall } = await import("../src/install.mjs");
   const calls = [];
   const result = await updateGlobalInstall({
     run: async (...args) => { calls.push(args); return 0; },
   });
   assert.equal(result, 0);
-  assert.deepEqual(calls, [["bun", ["add", "-g", "github:kargnas/zgap#main", "--force", "--no-cache"]]]);
+  assert.deepEqual(calls, [["bun", ["update", "-g", "zgap", "--force", "--no-cache"]]]);
 });
 
 test("Bun package dry-run contains runtime files only", async () => {
@@ -890,7 +890,7 @@ test("installer uses existing Bun and never manages zgap files", async (t) => {
   const marker = path.join(root, "bun-args");
   await mkdir(fakeBin, { recursive: true });
   await writeFile(path.join(fakeBin, "bun"), `#!/bin/sh
-printf '%s\\n' "$@" > ${marker}
+printf '%s\\n' "$@" >> ${marker}
 `);
   await chmod(path.join(fakeBin, "bun"), 0o755);
   const child = spawn("/bin/bash", [path.join(repoDir, "install.sh")], {
@@ -898,7 +898,11 @@ printf '%s\\n' "$@" > ${marker}
   });
   const [code] = await once(child, "exit");
   assert.equal(code, 0);
-  assert.equal(await readFile(marker, "utf8"), "add\n-g\ngithub:kargnas/zgap#main\n--force\n--no-cache\n");
+  assert.equal(
+    await readFile(marker, "utf8"),
+    "add\n-g\ngithub:kargnas/zgap#main\n--force\n--no-cache\n"
+      + "update\n-g\nzgap\n--force\n--no-cache\n",
+  );
   assert.equal((await readdir(root)).includes("zgap"), false);
 });
 
@@ -912,7 +916,7 @@ test("installer installs Bun through the official curl command when Bun is absen
   await writeFile(path.join(fakeBin, "curl"), `#!/bin/sh
 printf '%s\\n' "$@" > ${curlArgs}
 mkdir -p ${bunInstall}/bin
-printf '#!/bin/sh\\nprintf "%%s\\n" "$@" > ${bunArgs}\\n' > ${bunInstall}/bin/bun
+printf '#!/bin/sh\\nprintf "%%s\\n" "$@" >> ${bunArgs}\\n' > ${bunInstall}/bin/bun
 chmod +x ${bunInstall}/bin/bun
 `);
   await chmod(path.join(fakeBin, "curl"), 0o755);
@@ -922,7 +926,11 @@ chmod +x ${bunInstall}/bin/bun
   const [code] = await once(child, "exit");
   assert.equal(code, 0);
   assert.equal(await readFile(curlArgs, "utf8"), "-fsSL\nhttps://bun.com/install\n");
-  assert.equal(await readFile(bunArgs, "utf8"), "add\n-g\ngithub:kargnas/zgap#main\n--force\n--no-cache\n");
+  assert.equal(
+    await readFile(bunArgs, "utf8"),
+    "add\n-g\ngithub:kargnas/zgap#main\n--force\n--no-cache\n"
+      + "update\n-g\nzgap\n--force\n--no-cache\n",
+  );
 });
 
 test("Ubuntu installer installs unzip with apt-get before Bun", async (t) => {
