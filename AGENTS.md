@@ -12,7 +12,9 @@
 - `bin/zgap.mjs`: Bun executable entrypoint.
 - `src/cli.mjs`: command dispatch, help, installation detection, and start screen wiring.
 - `src/login.mjs` and `src/credentials.mjs`: browser OAuth and private credential storage.
-- `src/catalog.mjs` and `src/codex.mjs`: Codex discovery, ephemeral catalog assembly, and launch arguments.
+- `src/catalog.mjs` and `src/codex.mjs`: Codex-specific discovery, ephemeral catalog assembly, and launch arguments.
+- `src/claude.mjs`: Claude Code launch arguments, inline settings, and child environment cleanup.
+- `src/sessions.mjs`: Multi-agent session discovery and shared history parsing.
 - `src/tui/`: OpenTUI start screen and locale resources.
 - `test/`: Node test-runner suites executed by Bun.
 
@@ -50,10 +52,11 @@
 - Add or edit locale JSON only under `src/tui/locales/`; keep English as the fallback and preserve the existing locale keys in every file.
 - Keep user-facing menu copy in the locale resources rather than hard-coding new strings in render code.
 
-## Codex Contract
+## Multi-Agent Contract
 
 - Keep `login` credential-only: write the zgap credential path and do not mutate the user's Codex configuration.
-- Keep `zgap codex` configuration process-local: inject launch arguments, clear conflicting Codex environment variables, and remove the temporary catalog after the child exits.
+- Keep agent configuration process-local: `zgap codex` injects launch arguments and a temporary catalog, while `zgap claude` injects child environment and inline settings.
+- Preserve each supported agent's normal local configuration and history.
 
 ## Self reviewing
 

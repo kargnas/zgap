@@ -1,7 +1,7 @@
 {
   "name": "zgap",
   "version": "0.1.0",
-  "description": "OAuth-authenticated Codex and Claude Code wrapper for ai-proxy.zz.gg",
+  "description": "Small multi-agent wrapper client for a private personal-use AI proxy",
   "type": "module",
   "packageManager": "bun@1.3.6",
   "bin": {
