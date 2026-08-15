@@ -26,6 +26,16 @@ zgap sessions          Browse agent history
 zgap --help            Show all commands
 ```
 
+## Proxy Host
+
+The agent proxy defaults to `ai-proxy.zz.gg`. To use another hostname, create `~/.config/zgap/config.yml`:
+
+```yaml
+host: proxy.example.com
+```
+
+Use a hostname without `https://`, a port, or a path. This changes Codex, Claude Code, and health-check traffic while keeping login, token refresh, and the model catalog on the credential service.
+
 ## Development
 
 ```sh

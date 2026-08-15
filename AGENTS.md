@@ -12,6 +12,7 @@
 - `bin/zgap.mjs`: Bun executable entrypoint.
 - `src/cli.mjs`: command dispatch, help, installation detection, and start screen wiring.
 - `src/login.mjs` and `src/credentials.mjs`: browser OAuth and private credential storage.
+- `src/config.mjs`: strict `config.yml` parsing and agent proxy host normalization.
 - `src/catalog.mjs` and `src/codex.mjs`: Codex-specific discovery, ephemeral catalog assembly, and launch arguments.
 - `src/claude.mjs`: Claude Code launch arguments, inline settings, and child environment cleanup.
 - `src/sessions.mjs`: Multi-agent session discovery and shared history parsing.
@@ -32,9 +33,16 @@
 - Use `node:*` built-ins and existing dependencies before adding packages.
 - Keep repository-owned defaults in source modules, not new environment variables.
 
+## Runtime Configuration
+
+- `config.yml` supports only `host`; reject unknown keys and values containing a scheme, port, or path.
+- Keep `ai-proxy.zz.gg` as the source-owned default when `config.yml` is absent.
+- Apply the configured host only to agent APIs and health checks. Keep login, refresh, model catalog requests, and JWT identity validation on the credential service so existing credentials remain valid.
+
 ## Ownership Boundaries
 
 - Keep OAuth protocol and credential-file changes in `src/login.mjs` and `src/credentials.mjs`.
+- Keep runtime host parsing and validation in `src/config.mjs`.
 - Keep catalog validation, bundled-model reads, and temporary-file lifecycle in `src/catalog.mjs`.
 - Keep Codex process arguments and child environment cleanup in `src/codex.mjs`.
 - Keep menu rendering and keyboard handling in `src/tui/menu.mjs`; keep translations in `src/tui/locales/*.json`.
