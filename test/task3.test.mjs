@@ -388,15 +388,10 @@ test("session resume은 선택한 agent의 정확한 id와 저장된 디렉터�
     claudeRunner: async (args, options) => { calls.push({ agent: "claude", args, options }); return 12; },
   };
 
-  assert.equal(await cli.resumeSession({ agent: "codex", id: "codex-id", cwd: "/repo/codex" }, "/config", {
-    ...runners,
-    provider: "openai",
-  }), 11);
-  assert.equal(await cli.resumeSession({ agent: "codex", id: "codex-default", cwd: "/repo/codex-default" }, "/config", runners), 11);
+  assert.equal(await cli.resumeSession({ agent: "codex", id: "codex-id", cwd: "/repo/codex" }, "/config", runners), 11);
   assert.equal(await cli.resumeSession({ agent: "claude", id: "claude-id", cwd: "/repo/claude" }, "/config", runners), 12);
   assert.deepEqual(calls, [
-    { agent: "codex", args: ["resume", "codex-id"], options: { configDir: "/config", cwd: "/repo/codex", provider: "openai" } },
-    { agent: "codex", args: ["resume", "codex-default"], options: { configDir: "/config", cwd: "/repo/codex-default" } },
+    { agent: "codex", args: ["resume", "codex-id"], options: { configDir: "/config", cwd: "/repo/codex" } },
     { agent: "claude", args: ["--resume", "claude-id"], options: { configDir: "/config", cwd: "/repo/claude" } },
   ]);
 });
