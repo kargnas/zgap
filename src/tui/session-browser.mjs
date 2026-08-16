@@ -15,8 +15,10 @@ import { loadMenuTranslator } from "./menu.mjs";
 
 const AGENTS = ["all", "codex", "claude"];
 const COMPACT_WIDTH = 60;
-const PREVIEW_RAIL_WIDTH = 22;
 const EXACT_TIME_AFTER_MS = 3 * 60 * 60_000;
+// Digit keys 1-9 select provider tabs, so at most eight provider tabs follow the All tab.
+const MAX_PROVIDER_TABS = 8;
+const CONVERTED_MARK_MS = 3_000;
 const ORBIT_SPINNER = {
   frames: ["● · · ·", "· ● · ·", "· · ● ·", "· · · ●", "· · ● ·", "· ● · ·"],
   interval: 90,
@@ -106,7 +108,7 @@ function providerColor(provider) {
   return PROVIDER_COLORS[hash % PROVIDER_COLORS.length];
 }
 
-export function resumeProviders(sessions) {
+function knownCodexProviders(sessions) {
   const discovered = [...new Set(
     sessions
       .filter((session) => session.agent === "codex")
@@ -130,7 +132,7 @@ function chunk(text, color, background, isBold = false) {
   return value;
 }
 
-function rowText(session, detailsState, selected, language, width, compact, currentTime, t, activeMarker = ACTIVE_SESSION_SPINNER.frames[0]) {
+function rowText(session, detailsState, selected, language, width, compact, currentTime, t, activeMarker, checkState) {
   const agent = displayText(session.agent).toUpperCase();
   const provider = truncateText(displayText(session.provider), compact ? 12 : 24);
   const sourceWidth = Bun.stringWidth(agent) + (provider ? Bun.stringWidth(` · ${provider}`) : 0);
@@ -159,7 +161,9 @@ function rowText(session, detailsState, selected, language, width, compact, curr
     ? truncateText(displayText(path.basename(session.cwd) || session.cwd), locationLimit)
     : "";
   const metaParts = [location && { text: location, color: COLORS.meta }, ...details].filter(Boolean);
-  const titleLimit = Math.max(4, rowWidth - sourceWidth - 6);
+  const checkbox = checkState === "converted" ? "[✓] " : checkState === "checked" ? "[x] " : checkState === "unchecked" ? "[ ] " : "    ";
+  const checkboxColor = checkState === "converted" || checkState === "checked" ? COLORS.green : COLORS.meta;
+  const titleLimit = Math.max(4, rowWidth - sourceWidth - 10);
   const title = truncateText(displayText(session.title), titleLimit);
   const background = selected ? COLORS.amberBackground : undefined;
   const providerChunk = provider
@@ -168,7 +172,7 @@ function rowText(session, detailsState, selected, language, width, compact, curr
         chunk(provider, providerColor(provider), background),
       ]
     : [];
-  const firstLineWidth = 4 + sourceWidth + 2 + Bun.stringWidth(title);
+  const firstLineWidth = 8 + sourceWidth + 2 + Bun.stringWidth(title);
   const metaLineWidth = Bun.stringWidth(metaPrefix)
     + metaParts.reduce((total, part) => total + Bun.stringWidth(part.text), 0)
     + Math.max(0, metaParts.length - 1) * 3;
@@ -176,6 +180,7 @@ function rowText(session, detailsState, selected, language, width, compact, curr
     chunk(selected ? "›" : " ", COLORS.amber, background),
     chunk(" ", COLORS.text, background),
     chunk(session.active ? `${activeMarker} ` : "  ", session.active ? COLORS.green : COLORS.meta, background),
+    chunk(checkbox, checkboxColor, background),
     chunk(agent, agentColor(agent), background, true),
     ...providerChunk,
     chunk("  ", COLORS.text, background),
@@ -197,61 +202,21 @@ function joinStyledText(values, separator = "\n") {
   ]));
 }
 
-function providerMenuText(providers, selectedIndex, activeProvider, width) {
+function convertMenuChunks(targets, selectedIndex, width, viewportStart, visibleRows) {
   const maxWidth = Math.max(4, width - 8);
-  return new StyledText(providers.flatMap((provider, index) => {
-    const selected = index === selectedIndex;
-    const active = provider === activeProvider;
-    const label = provider === "all" ? "All" : displayText(provider);
-    const background = selected ? COLORS.amberBackground : undefined;
-    return [
-      ...(index > 0 ? [chunk("\n", COLORS.text)] : []),
-      chunk(selected ? "› " : "  ", COLORS.amber, background),
-      chunk(active ? "● " : "  ", active ? COLORS.amber : COLORS.meta, background),
-      chunk(truncateText(label, maxWidth), provider === "all" ? COLORS.text : providerColor(provider), background, selected),
-    ];
-  }));
-}
-
-function providerConvertText(providers, selectedIndex, count, width, t) {
-  const menu = providerMenuText(providers, selectedIndex, "", width);
-  return new StyledText([
-    chunk(t("sessionsProviderConvertCount", { count }), COLORS.amber, undefined, true),
-    chunk("\n\n", COLORS.text),
-    ...menu.chunks,
-  ]);
-}
-
-function previewProviderText(providers, selectedIndex, activeProvider, width, t, viewportStart = 0, visibleRows = providers.length) {
-  const maxWidth = Math.max(4, width - 4);
-  const lines = [chunk(t("sessionsPreviewProviderTitle"), COLORS.text, undefined, true)];
-  const end = Math.min(providers.length, viewportStart + visibleRows);
+  const chunks = [];
+  const end = Math.min(targets.length, viewportStart + visibleRows);
   for (let index = viewportStart; index < end; index += 1) {
-    const provider = providers[index];
+    const target = targets[index];
     const selected = index === selectedIndex;
-    const saved = provider === activeProvider;
     const background = selected ? COLORS.amberBackground : undefined;
-    const suffix = saved ? ` · ${t("sessionsPreviewProviderSaved")}` : "";
-    lines.push(
-      chunk("\n", COLORS.text, background),
+    chunks.push(
+      ...(chunks.length ? [chunk("\n", COLORS.text)] : []),
       chunk(selected ? "› " : "  ", COLORS.amber, background),
-      chunk(truncateText(displayText(provider), Math.max(1, maxWidth - Bun.stringWidth(suffix))), providerColor(provider), background, selected),
-      chunk(suffix, saved ? COLORS.green : COLORS.text, background),
+      chunk(truncateText(displayText(target), maxWidth), providerColor(target), background, selected),
     );
   }
-  return new StyledText(lines);
-}
-
-function previewProviderCompactText(providers, selectedIndex, activeProvider, width, t) {
-  const provider = providers[selectedIndex] ?? "zgap";
-  const saved = activeProvider ? ` · ${t("sessionsPreviewProviderSaved")}: ${displayText(activeProvider)}` : "";
-  return new StyledText([
-    chunk(truncateText(t("sessionsPreviewProviderCompact", {
-      current: selectedIndex + 1,
-      count: providers.length,
-      provider: displayText(provider),
-    }) + saved, Math.max(4, width)), COLORS.text, "#071018", true),
-  ]);
+  return chunks;
 }
 
 function wrapPreviewText(value, maxWidth, maxLines) {
@@ -369,9 +334,12 @@ export async function runSessionBrowser({
   let spinnerTimer = null;
   let spinnerMode = null;
   let noticeTimer = null;
+  let convertMarkTimer = null;
   let activeResumeKey = null;
   let activeResumeTimer = null;
   const abortController = new AbortController();
+  const clearTimer = (timer) => (clock.clearTimeout ?? globalThis.clearTimeout)(timer);
+  const startTimer = (callback, milliseconds) => (clock.setTimeout ?? globalThis.setTimeout)(callback, milliseconds);
   const cleanup = () => {
     if (cleaned) return;
     cleaned = true;
@@ -379,9 +347,11 @@ export async function runSessionBrowser({
     if (spinnerTimer !== null) clock.clearInterval(spinnerTimer);
     spinnerTimer = null;
     spinnerMode = null;
-    if (noticeTimer !== null) (clock.clearTimeout ?? globalThis.clearTimeout)(noticeTimer);
+    if (noticeTimer !== null) clearTimer(noticeTimer);
     noticeTimer = null;
-    if (activeResumeTimer !== null) (clock.clearTimeout ?? globalThis.clearTimeout)(activeResumeTimer);
+    if (convertMarkTimer !== null) clearTimer(convertMarkTimer);
+    convertMarkTimer = null;
+    if (activeResumeTimer !== null) clearTimer(activeResumeTimer);
     activeResumeTimer = null;
     activeResumeKey = null;
     if (renderer && keyHandler) renderer.keyInput.off("keypress", keyHandler);
@@ -421,30 +391,25 @@ export async function runSessionBrowser({
     let error = null;
     let scope = "repo";
     let agent = "all";
-    let provider = "all";
+    let tabProvider = "all";
     let selectedIndex = 0;
     let selectedKey = null;
     let viewportStart = 0;
     let showHelp = false;
-    let showProviderMenu = false;
     let showPreview = false;
     let previewLoading = false;
     let previewError = null;
     let previewGeneration = 0;
-    let previewProviders = [];
-    let previewProviderIndex = 0;
-    let previewProviderViewportStart = 0;
-    let previewBodyCompact = null;
-    let providerMenuIndex = 0;
-    let providerViewportStart = 0;
-    let showProviderConvert = false;
-    let providerConvertSource = "";
-    let providerConvertTargets = [];
-    let providerConvertIndex = 0;
-    let providerConvertViewportStart = 0;
-    let providerConvertSessions = [];
-    let providerConvertLoading = false;
-    let providerConvertError = null;
+    let showConvert = false;
+    let convertTargets = [];
+    let convertIndex = 0;
+    let convertViewport = 0;
+    let convertSessions = [];
+    let convertReturnSession = null;
+    let convertLoading = false;
+    let convertError = null;
+    const checked = new Set();
+    let recentlyConverted = new Set();
     let notice = "";
 
     const root = new BoxRenderable(renderer, {
@@ -473,6 +438,12 @@ export async function runSessionBrowser({
       flexGrow: 1,
       selectable: true,
     });
+    const previewContent = new TextRenderable(renderer, {
+      content: "",
+      flexGrow: 1,
+      visible: false,
+      selectable: true,
+    });
     const hint = new TextRenderable(renderer, {
       content: "",
       fg: "#64748B",
@@ -480,52 +451,29 @@ export async function runSessionBrowser({
       flexShrink: 0,
       selectable: true,
     });
-    const previewBody = new BoxRenderable(renderer, {
-      width: "100%",
-      flexGrow: 1,
-      flexDirection: "row",
-      visible: false,
-    });
-    const previewContent = new TextRenderable(renderer, {
-      content: "",
-      flexGrow: 1,
-      selectable: true,
-    });
-    const previewRail = new TextRenderable(renderer, {
-      content: "",
-      width: PREVIEW_RAIL_WIDTH,
-      flexShrink: 0,
-      bg: "#071018",
-      selectable: true,
-    });
-    previewBody.add(previewContent);
-    previewBody.add(previewRail);
     root.add(title);
     root.add(filters);
     root.add(list);
-    root.add(previewBody);
+    root.add(previewContent);
     root.add(hint);
     renderer.root.add(root);
 
     const visibleRows = () => Math.max(1, Math.floor((renderer.height - 6) / 2));
-    const setPreviewOrder = (compact) => {
-      if (previewBodyCompact === compact) return;
-      previewBody.remove(previewContent);
-      previewBody.remove(previewRail);
-      if (compact) {
-        previewBody.add(previewRail);
-        previewBody.add(previewContent);
-      } else {
-        previewBody.add(previewContent);
-        previewBody.add(previewRail);
+    const providerTabs = () => {
+      const counts = new Map();
+      for (const session of sessionFilter(sessions, { scope, roots })) {
+        if (session.agent !== "codex" || !session.provider) continue;
+        counts.set(session.provider, (counts.get(session.provider) ?? 0) + 1);
       }
-      previewBodyCompact = compact;
+      const ranked = [...counts.entries()]
+        .sort((first, second) => second[1] - first[1] || first[0].localeCompare(second[0]))
+        .slice(0, MAX_PROVIDER_TABS);
+      return [{ provider: "all", count: 0 }, ...ranked.map(([provider, count]) => ({ provider, count }))];
     };
-    const availableProviders = () => [
-      "all",
-      ...new Set(sessions.map((session) => session.provider).filter(Boolean).sort()),
-    ];
-    const filteredSessions = () => sessionFilter(sessions, { scope, roots, agent, provider });
+    const checkStateFor = (session) => (session.agent === "codex" && session.provider
+      ? recentlyConverted.has(session.id) ? "converted" : checked.has(session.id) ? "checked" : "unchecked"
+      : null);
+    const filteredSessions = () => sessionFilter(sessions, { scope, roots, agent, provider: tabProvider });
     const keepSelection = (values) => {
       if (selectedKey) {
         const restored = values.findIndex((session) => sessionKey(session) === selectedKey);
@@ -540,8 +488,8 @@ export async function runSessionBrowser({
     };
     const render = () => {
       const compact = renderer.width <= COMPACT_WIDTH;
-      const loading = state === "initializing" || state === "loading" || previewLoading || providerConvertLoading;
-      const mainListVisible = !showProviderConvert && !showProviderMenu && !showPreview && !showHelp;
+      const loading = state === "initializing" || state === "loading" || previewLoading || convertLoading;
+      const mainListVisible = !showConvert && !showPreview && !showHelp;
       const activeSessions = state === "ready" && mainListVisible ? filteredSessions() : [];
       const nextSpinnerMode = loading
         ? "loading"
@@ -561,62 +509,54 @@ export async function runSessionBrowser({
           if (!cleaned) render();
         }, spinner.interval);
       }
+      const tabs = providerTabs();
+      if (!tabs.some((tab) => tab.provider === tabProvider)) tabProvider = "all";
       filters.content = new StyledText([
         chunk(`[s ${scope}]`, COLORS.amber, undefined, true),
         chunk(" ", COLORS.chip),
         chunk(`[a ${agent}]`, COLORS.chip),
-        chunk(" ", COLORS.chip),
-        chunk(`[p ${truncateText(displayText(provider), compact ? 12 : 24)}]`, COLORS.chip),
+        ...tabs.flatMap((tab, index) => {
+          const active = tab.provider === tabProvider;
+          if (compact && !active) return [];
+          const label = tab.provider === "all" ? t("sessionsAll") : truncateText(displayText(tab.provider), 12);
+          const text = `[${index + 1}]${label}${tab.provider === "all" || compact ? "" : ` ${tab.count}`}`;
+          return [
+            chunk(" ", COLORS.chip),
+            chunk(text, active ? COLORS.amber : COLORS.chip, undefined, active),
+          ];
+        }),
       ]);
-      hint.content = notice || (compact ? t("sessionsCompactHint") : t("sessionsHint"));
-      if (showProviderConvert) {
-        providerConvertIndex = Math.max(0, Math.min(providerConvertIndex, providerConvertTargets.length - 1));
-        const providerConvertVisibleRows = Math.max(1, renderer.height - 6);
-        if (providerConvertIndex < providerConvertViewportStart) providerConvertViewportStart = providerConvertIndex;
-        if (providerConvertIndex >= providerConvertViewportStart + providerConvertVisibleRows) {
-          providerConvertViewportStart = providerConvertIndex - providerConvertVisibleRows + 1;
-        }
-        providerConvertViewportStart = Math.max(0, Math.min(
-          providerConvertViewportStart,
-          Math.max(0, providerConvertTargets.length - providerConvertVisibleRows),
-        ));
-        title.content = t("sessionsProviderConvertTitle", { source: displayText(providerConvertSource) });
+      hint.content = notice || (checked.size > 0
+        ? t("sessionsSelectionHint", { count: checked.size })
+        : compact ? t("sessionsCompactHint") : t("sessionsHint"));
+      if (showConvert) {
+        convertIndex = Math.max(0, Math.min(convertIndex, convertTargets.length - 1));
+        const convertVisibleRows = Math.max(1, renderer.height - 8);
+        if (convertIndex < convertViewport) convertViewport = convertIndex;
+        if (convertIndex >= convertViewport + convertVisibleRows) convertViewport = convertIndex - convertVisibleRows + 1;
+        convertViewport = Math.max(0, Math.min(convertViewport, Math.max(0, convertTargets.length - convertVisibleRows)));
+        const target = convertTargets[convertIndex];
+        const changeCount = target ? convertSessions.filter((session) => session.provider !== target).length : 0;
+        title.content = t("sessionsConvertTitle");
         title.visible = true;
         filters.content = "";
         filters.visible = false;
-        previewBody.visible = false;
+        previewContent.visible = false;
         list.visible = true;
         hint.maxHeight = 3;
-        hint.content = providerConvertLoading
-          ? `${ORBIT_SPINNER.frames[spinnerIndex]} ${t("sessionsProviderConverting", { count: providerConvertSessions.length })}`
-          : providerConvertError
-            ? `${t("sessionsProviderConvertFailed")}: ${providerConvertError.message}`
+        hint.content = convertLoading
+          ? `${ORBIT_SPINNER.frames[spinnerIndex]} ${t("sessionsProviderConverting", { count: changeCount })}`
+          : convertError
+            ? `${t("sessionsProviderConvertFailed")}: ${convertError.message}`
             : t("sessionsProviderConvertHint");
-        list.content = providerConvertText(
-          providerConvertTargets.slice(providerConvertViewportStart, providerConvertViewportStart + providerConvertVisibleRows),
-          providerConvertIndex - providerConvertViewportStart,
-          providerConvertSessions.length,
-          renderer.width,
-          t,
-        );
-        list.fg = providerConvertError ? "#F87171" : COLORS.text;
-        renderer.requestRender();
-        return;
-      }
-      if (showProviderMenu) {
-        const providers = availableProviders();
-        providerMenuIndex = Math.max(0, Math.min(providerMenuIndex, providers.length - 1));
-        const providerVisibleRows = Math.max(1, renderer.height - 4);
-        if (providerMenuIndex < providerViewportStart) providerViewportStart = providerMenuIndex;
-        if (providerMenuIndex >= providerViewportStart + providerVisibleRows) providerViewportStart = providerMenuIndex - providerVisibleRows + 1;
-        providerViewportStart = Math.max(0, Math.min(providerViewportStart, Math.max(0, providers.length - providerVisibleRows)));
-        title.content = t("sessionsProviderMenuTitle");
-        title.visible = true;
-        filters.content = "";
-        filters.visible = false;
-        hint.content = t("sessionsProviderMenuHint");
-        list.content = providerMenuText(providers.slice(providerViewportStart, providerViewportStart + providerVisibleRows), providerMenuIndex - providerViewportStart, provider, renderer.width);
-        list.fg = COLORS.text;
+        list.content = new StyledText([
+          chunk(changeCount === convertSessions.length
+            ? t("sessionsProviderConvertCount", { count: changeCount })
+            : t("sessionsProviderConvertPartial", { count: changeCount, total: convertSessions.length }), COLORS.amber, undefined, true),
+          chunk("\n\n", COLORS.text),
+          ...convertMenuChunks(convertTargets, convertIndex, renderer.width, convertViewport, convertVisibleRows),
+        ]);
+        list.fg = convertError ? "#F87171" : COLORS.text;
         renderer.requestRender();
         return;
       }
@@ -626,49 +566,26 @@ export async function runSessionBrowser({
         const previewSession = session && detailCache.get(session)?.preview
           ? { ...session, preview: detailCache.get(session).preview }
           : session;
-        const codexPreview = session?.agent === "codex";
-        setPreviewOrder(compact);
-        previewBody.visible = true;
-        previewBody.flexDirection = compact ? "column" : "row";
         previewContent.visible = true;
-        previewRail.visible = codexPreview;
-        previewRail.width = compact ? "100%" : PREVIEW_RAIL_WIDTH;
-        previewRail.height = compact ? 1 : "100%";
         title.content = t("sessionsPreviewTitle");
         title.visible = true;
         filters.content = "";
         filters.visible = false;
         hint.maxHeight = compact ? 1 : 3;
-        hint.content = notice || (codexPreview ? t("sessionsPreviewCodexHint") : t("sessionsPreviewHint"));
+        hint.content = notice || t("sessionsPreviewHint");
         list.visible = false;
-        const previewProviderVisibleRows = Math.max(1, renderer.height - 6);
-        if (codexPreview && !compact) {
-          if (previewProviderIndex < previewProviderViewportStart) previewProviderViewportStart = previewProviderIndex;
-          if (previewProviderIndex >= previewProviderViewportStart + previewProviderVisibleRows) {
-            previewProviderViewportStart = previewProviderIndex - previewProviderVisibleRows + 1;
-          }
-          previewProviderViewportStart = Math.max(0, Math.min(
-            previewProviderViewportStart,
-            Math.max(0, previewProviders.length - previewProviderVisibleRows),
-          ));
-        }
-        previewRail.content = codexPreview
-          ? compact
-            ? previewProviderCompactText(previewProviders, previewProviderIndex, session.provider, renderer.width, t)
-            : previewProviderText(previewProviders, previewProviderIndex, session.provider, PREVIEW_RAIL_WIDTH, t, previewProviderViewportStart, previewProviderVisibleRows)
-          : "";
         previewContent.content = previewLoading
           ? `${ORBIT_SPINNER.frames[spinnerIndex]} ${t("sessionsPreviewLoading")}`
           : previewError
             ? `${t("sessionsPreviewLoadFailed")}: ${previewError.message}`
             : previewSession
-              ? previewText(previewSession, compact ? renderer.width : renderer.width - PREVIEW_RAIL_WIDTH, renderer.height, t, { compact })
+              ? previewText(previewSession, renderer.width, renderer.height, t, { compact })
               : "";
         previewContent.fg = previewError ? "#F87171" : previewLoading ? COLORS.chip : COLORS.text;
         renderer.requestRender();
         return;
       }
-      previewBody.visible = false;
+      previewContent.visible = false;
       list.visible = true;
       hint.maxHeight = 3;
       if (showHelp) {
@@ -699,7 +616,8 @@ export async function runSessionBrowser({
           return;
         }
         // Partial results render as the normal list; the hint keeps the spinner so the scan visibly continues.
-        hint.content = notice || `${ORBIT_SPINNER.frames[spinnerIndex]} ${t("sessionsLoading")}`;
+        // A live check count outranks the spinner, since the list itself already shows loading is unfinished.
+        if (checked.size === 0) hint.content = notice || `${ORBIT_SPINNER.frames[spinnerIndex]} ${t("sessionsLoading")}`;
       }
       if (state === "error") {
         list.content = error?.message ? `${t("sessionsLoadFailed")}: ${error.message}` : t("sessionsLoadFailed");
@@ -720,7 +638,7 @@ export async function runSessionBrowser({
       const count = visibleRows();
       const visibleSessions = values.slice(viewportStart, viewportStart + count);
       list.content = joinStyledText(visibleSessions
-        .map((session, index) => rowText(session, detailCache.get(session), viewportStart + index === selectedIndex, language, renderer.width, compact, now(), t, spinnerMode === "active" ? ACTIVE_SESSION_SPINNER.frames[spinnerIndex] : ACTIVE_SESSION_SPINNER.frames[0])));
+        .map((session, index) => rowText(session, detailCache.get(session), viewportStart + index === selectedIndex, language, renderer.width, compact, now(), t, spinnerMode === "active" ? ACTIVE_SESSION_SPINNER.frames[spinnerIndex] : ACTIVE_SESSION_SPINNER.frames[0], checkStateFor(session))));
       list.fg = "#E2E8F0";
       renderer.requestRender();
       for (const session of visibleSessions) {
@@ -742,36 +660,36 @@ export async function runSessionBrowser({
 
     const clearNotice = () => {
       notice = "";
-      if (noticeTimer !== null) (clock.clearTimeout ?? globalThis.clearTimeout)(noticeTimer);
+      if (noticeTimer !== null) clearTimer(noticeTimer);
       noticeTimer = null;
     };
-    const showNotice = (message) => {
+    const showNotice = (message, durationMs = 3_000) => {
       clearNotice();
       notice = message;
       render();
-      noticeTimer = (clock.setTimeout ?? globalThis.setTimeout)(() => {
+      noticeTimer = startTimer(() => {
         noticeTimer = null;
         notice = "";
         if (!cleaned) render();
-      }, 1_000);
+      }, durationMs);
     };
     const clearActiveResume = () => {
-      if (activeResumeTimer !== null) (clock.clearTimeout ?? globalThis.clearTimeout)(activeResumeTimer);
+      if (activeResumeTimer !== null) clearTimer(activeResumeTimer);
       activeResumeTimer = null;
       activeResumeKey = null;
     };
-    const resume = (session, selection) => {
-      const key = `${sessionKey(session)}:${selection?.provider ?? ""}`;
+    const resume = (session) => {
+      const key = sessionKey(session);
       if (session.active && activeResumeKey !== key) {
         clearActiveResume();
         activeResumeKey = key;
-        activeResumeTimer = (clock.setTimeout ?? globalThis.setTimeout)(clearActiveResume, 1_000);
-        showNotice(t("sessionsActiveResumeConfirm"));
+        activeResumeTimer = startTimer(clearActiveResume, 1_000);
+        showNotice(t("sessionsActiveResumeConfirm"), 1_000);
         return;
       }
       clearActiveResume();
       cleanup();
-      Promise.resolve().then(() => onSelect(session, selection)).then(resolveResult, rejectResult);
+      Promise.resolve().then(() => onSelect(session)).then(resolveResult, rejectResult);
     };
     const select = (index) => {
       const values = filteredSessions();
@@ -802,11 +720,6 @@ export async function runSessionBrowser({
         sessions = Array.isArray(loaded) ? loaded : [];
         sessionCache.set(requestedScope, sessions);
         state = "ready";
-        const providers = availableProviders();
-        if (!providers.includes(provider)) {
-          provider = "all";
-          providerMenuIndex = 0;
-        }
         render();
       } catch (loadError) {
         if (cleaned || currentGeneration !== generation) return;
@@ -841,25 +754,25 @@ export async function runSessionBrowser({
         if (lastCtrlC !== null && timestamp - lastCtrlC <= 1_000) finish(130);
         else {
           lastCtrlC = timestamp;
-          showNotice(t("sessionsCtrlCExitPrompt"));
+          showNotice(t("sessionsCtrlCExitPrompt"), 1_000);
         }
         return;
       }
-      if (event.name === "escape") {
-        if (showProviderConvert) {
-          if (providerConvertLoading) return;
-          showProviderConvert = false;
-          providerConvertError = null;
+      if (event.name === "escape" || event.name === "backspace") {
+        if (showConvert) {
+          if (convertLoading) return;
+          showConvert = false;
+          convertError = null;
           render();
         } else if (showPreview) {
           previewGeneration += 1;
           showPreview = false;
           render();
-        } else if (showProviderMenu) {
-          showProviderMenu = false;
-          render();
         } else if (showHelp) {
           showHelp = false;
+          render();
+        } else if (checked.size > 0) {
+          checked.clear();
           render();
         } else finish(0);
         return;
@@ -870,139 +783,76 @@ export async function runSessionBrowser({
         render();
         return;
       }
-      if (event.name === "backspace") {
-        if (showProviderConvert) {
-          if (providerConvertLoading) return;
-          showProviderConvert = false;
-          providerConvertError = null;
-          render();
-          return;
-        }
-        if (showPreview) {
-          previewGeneration += 1;
-          showPreview = false;
-          render();
-          return;
-        }
-        if (showProviderMenu) {
-          showProviderMenu = false;
-          render();
-          return;
-        }
-        if (showHelp) {
-          showHelp = false;
-          render();
-          return;
-        }
-        finish(0);
-        return;
-      }
-      if (showProviderConvert) {
-        if (providerConvertLoading) return;
+      if (showConvert) {
+        if (convertLoading) return;
         if (["up", "k"].includes(event.name)) {
-          providerConvertIndex = Math.max(0, providerConvertIndex - 1);
+          convertIndex = Math.max(0, convertIndex - 1);
           render();
         } else if (["down", "j"].includes(event.name)) {
-          providerConvertIndex = Math.min(providerConvertTargets.length - 1, providerConvertIndex + 1);
+          convertIndex = Math.min(convertTargets.length - 1, convertIndex + 1);
           render();
         } else if (event.name === "home") {
-          providerConvertIndex = 0;
+          convertIndex = 0;
           render();
         } else if (event.name === "end") {
-          providerConvertIndex = providerConvertTargets.length - 1;
+          convertIndex = convertTargets.length - 1;
           render();
         } else if (event.name === "return") {
-          const targetProvider = providerConvertTargets[providerConvertIndex];
-          if (!targetProvider || providerConvertSessions.length === 0) return;
-          const convertedSessions = [...providerConvertSessions];
-          providerConvertLoading = true;
-          providerConvertError = null;
+          const target = convertTargets[convertIndex];
+          if (!target) return;
+          const toConvert = convertSessions.filter((session) => session.provider !== target);
+          if (toConvert.length === 0) return;
+          convertLoading = true;
+          convertError = null;
           render();
           Promise.resolve()
-            .then(() => providerConverter(convertedSessions, targetProvider))
+            .then(() => providerConverter(toConvert, target))
             .then((convertedCount) => {
               if (cleaned) return;
-              if (convertedCount !== convertedSessions.length) {
-                throw new Error(`Converted ${convertedCount} of ${convertedSessions.length} sessions`);
+              if (convertedCount !== toConvert.length) {
+                throw new Error(`Converted ${convertedCount} of ${toConvert.length} sessions`);
               }
-              for (const session of convertedSessions) session.provider = targetProvider;
-              provider = targetProvider;
-              showProviderConvert = false;
-              showProviderMenu = false;
-              providerConvertLoading = false;
-              providerConvertError = null;
-              providerViewportStart = 0;
-              selectedIndex = 0;
-              viewportStart = 0;
-              selectedKey = null;
-              showNotice(t("sessionsProviderConverted", { count: convertedCount, provider: displayText(targetProvider) }));
+              for (const session of toConvert) session.provider = target;
+              // Other scopes cache pre-conversion snapshots, so drop them to force a reload.
+              for (const cachedScope of [...sessionCache.keys()]) {
+                if (cachedScope !== scope) sessionCache.delete(cachedScope);
+              }
+              checked.clear();
+              recentlyConverted = new Set(toConvert.map((session) => session.id));
+              if (convertMarkTimer !== null) clearTimer(convertMarkTimer);
+              convertMarkTimer = startTimer(() => {
+                convertMarkTimer = null;
+                recentlyConverted = new Set();
+                if (!cleaned) render();
+              }, CONVERTED_MARK_MS);
+              tabProvider = "all";
+              showConvert = false;
+              convertLoading = false;
+              convertError = null;
+              // Sessions mutated above, so recompute the key now to land the cursor back on the same row.
+              selectedKey = convertReturnSession ? sessionKey(convertReturnSession) : null;
+              convertReturnSession = null;
+              showNotice(t("sessionsProviderConverted", { count: toConvert.length, provider: displayText(target) }));
             })
-            .catch((convertError) => {
+            .catch((conversionError) => {
               if (cleaned) return;
-              providerConvertLoading = false;
-              providerConvertError = convertError;
+              convertLoading = false;
+              convertError = conversionError;
               render();
             });
         }
         return;
       }
       if (showPreview) {
-        if (event.name === "space") {
+        if (event.name === "tab") {
           previewGeneration += 1;
           showPreview = false;
           render();
+          return;
         }
-        const session = filteredSessions()[selectedIndex];
-        if (session?.agent === "codex") {
-          if (["up", "k"].includes(event.name)) previewProviderIndex = Math.max(0, previewProviderIndex - 1);
-          else if (["down", "j"].includes(event.name)) previewProviderIndex = Math.min(previewProviders.length - 1, previewProviderIndex + 1);
-          else if (event.name === "home") previewProviderIndex = 0;
-          else if (event.name === "end") previewProviderIndex = previewProviders.length - 1;
-          else if (event.name === "return") {
-            resume(session, { provider: previewProviders[previewProviderIndex] ?? "zgap" });
-            return;
-          }
-          render();
-        }
-        return;
-      }
-      if (showProviderMenu) {
-        const providers = availableProviders();
-        if (event.name === "p") {
-          showProviderMenu = false;
-          render();
-        } else if (["up", "k"].includes(event.name)) {
-          providerMenuIndex = Math.max(0, providerMenuIndex - 1);
-          render();
-        } else if (["down", "j"].includes(event.name)) {
-          providerMenuIndex = Math.min(providers.length - 1, providerMenuIndex + 1);
-          render();
-        } else if (event.name === "home") {
-          providerMenuIndex = 0;
-          render();
-        } else if (event.name === "end") {
-          providerMenuIndex = providers.length - 1;
-          render();
-        } else if (event.name === "c") {
-          const sourceProvider = providers[providerMenuIndex];
-          if (!sourceProvider || sourceProvider === "all") return;
-          providerConvertSessions = sessionFilter(sessions, { scope, roots, agent, provider: sourceProvider });
-          if (providerConvertSessions.length === 0) return;
-          providerConvertSource = sourceProvider;
-          providerConvertTargets = resumeProviders(sessions).filter((candidate) => candidate !== sourceProvider);
-          providerConvertIndex = 0;
-          providerConvertViewportStart = 0;
-          providerConvertError = null;
-          showProviderConvert = true;
-          render();
-        } else if (event.name === "return") {
-          provider = providers[providerMenuIndex] ?? "all";
-          showProviderMenu = false;
-          providerViewportStart = 0;
-          selectedIndex = 0;
-          viewportStart = 0;
-          selectedKey = null;
-          render();
+        if (event.name === "return") {
+          const session = filteredSessions()[selectedIndex];
+          if (session) resume(session);
         }
         return;
       }
@@ -1014,6 +864,8 @@ export async function runSessionBrowser({
       }
       if (event.name === "s") {
         scope = scope === "repo" ? "all" : "repo";
+        // Checked ids belong to the previous scope snapshot, so a scope change resets the batch.
+        checked.clear();
         selectedIndex = 0;
         viewportStart = 0;
         selectedKey = null;
@@ -1030,22 +882,50 @@ export async function runSessionBrowser({
         render();
         return;
       }
-      if (event.name === "p") {
-        const providers = availableProviders();
-        providerMenuIndex = Math.max(0, providers.indexOf(provider));
-        showProviderMenu = true;
+      if (/^[1-9]$/.test(event.name)) {
+        const tab = providerTabs()[Number(event.name) - 1];
+        if (!tab || tab.provider === tabProvider) return;
+        tabProvider = tab.provider;
+        selectedIndex = 0;
+        viewportStart = 0;
+        selectedKey = null;
         render();
         return;
       }
       if (event.name === "space") {
+        const session = filteredSessions()[selectedIndex];
+        if (!session) return;
+        if (checkStateFor(session) === null) {
+          showNotice(t("sessionsNotConvertible"));
+          return;
+        }
+        if (!checked.delete(session.id)) checked.add(session.id);
+        render();
+        return;
+      }
+      if (event.name === "c") {
+        const chosen = sessions.filter((session) => session.agent === "codex" && session.provider && checked.has(session.id));
+        if (chosen.length === 0) {
+          showNotice(t("sessionsNoSelection"));
+          return;
+        }
+        convertSessions = chosen;
+        // Keep the row object, not its key: conversion rewrites provider and sessionKey embeds it.
+        convertReturnSession = filteredSessions()[selectedIndex] ?? null;
+        convertTargets = knownCodexProviders(sessions).filter((target) => chosen.some((session) => session.provider !== target));
+        convertIndex = 0;
+        convertViewport = 0;
+        convertError = null;
+        showConvert = true;
+        render();
+        return;
+      }
+      if (event.name === "tab") {
         const values = filteredSessions();
         const session = values[selectedIndex];
         if (!session) return;
         showPreview = true;
         previewError = null;
-        previewProviders = session.agent === "codex" ? resumeProviders(sessions) : [];
-        previewProviderIndex = Math.max(0, previewProviders.indexOf(session.provider ?? "zgap"));
-        previewProviderViewportStart = 0;
         if (Array.isArray(detailCache.get(session)?.preview?.turns)
           || Array.isArray(session.preview?.turns) && session.preview.turns.length > 0
           || !session.previewLocator) {

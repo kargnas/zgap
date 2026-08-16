@@ -357,13 +357,13 @@ test("Codex provider conversion updates only selected SQLite rows", async (t) =>
   const db = new Database(databasePath);
   db.run("CREATE TABLE threads (id TEXT PRIMARY KEY, model_provider TEXT)");
   db.run("INSERT INTO threads VALUES (?, ?)", ["one", "zgap"]);
-  db.run("INSERT INTO threads VALUES (?, ?)", ["two", "zgap"]);
+  db.run("INSERT INTO threads VALUES (?, ?)", ["two", "agp"]);
   db.run("INSERT INTO threads VALUES (?, ?)", ["other", "openai"]);
   db.close();
 
   const count = await sessions.convertCodexSessionProviders([
     { agent: "codex", id: "one", provider: "zgap" },
-    { agent: "codex", id: "two", provider: "zgap" },
+    { agent: "codex", id: "two", provider: "agp" },
   ], "openai", { codexHome: home });
 
   const verified = new Database(databasePath, { readonly: true });
@@ -374,6 +374,16 @@ test("Codex provider conversion updates only selected SQLite rows", async (t) =>
     { id: "other", model_provider: "openai" },
     { id: "two", model_provider: "openai" },
   ]);
+});
+
+test("Codex provider conversion rejects sessions already on the target provider", async (t) => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "zgap-codex-provider-target-"));
+  t.after(() => rm(home, { recursive: true, force: true }));
+
+  await assert.rejects(() => sessions.convertCodexSessionProviders([
+    { agent: "codex", id: "one", provider: "zgap" },
+    { agent: "codex", id: "two", provider: "openai" },
+  ], "openai", { codexHome: home }), /Target provider must differ from each session's saved provider/);
 });
 
 test("Codex provider conversion rolls back every row when one session is stale", async (t) => {

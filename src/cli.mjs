@@ -19,7 +19,6 @@ const BACK_TO_START_MENU = Symbol("back-to-start-menu");
 
 export async function resumeSession(session, configDir, {
   origin,
-  provider,
   codexRunner = runCodex,
   claudeRunner = runClaude,
 } = {}) {
@@ -31,7 +30,6 @@ export async function resumeSession(session, configDir, {
   if (session?.agent === "codex") {
     const options = { configDir, cwd: session.cwd };
     if (origin) options.origin = origin;
-    if (provider) options.provider = provider;
     return codexRunner(["resume", session.id], options);
   }
   if (session?.agent === "claude") {
@@ -86,9 +84,9 @@ export async function main({
   if (command === "sessions") {
     return sessionBrowser({
       cwd,
-      onSelect: async (session, selection) => {
+      onSelect: async (session) => {
         const { origin } = await configReader(configDir);
-        return resumeSession(session, configDir, { ...selection, origin });
+        return resumeSession(session, configDir, { origin });
       },
     });
   }
@@ -125,9 +123,9 @@ export async function main({
             let selected = false;
             const browserResult = await sessionBrowser({
               cwd,
-              onSelect: (session, selection) => {
+              onSelect: (session) => {
                 selected = true;
-                return resumeSession(session, configDir, { ...selection, origin: proxyConfig.origin });
+                return resumeSession(session, configDir, { origin: proxyConfig.origin });
               },
             });
             return selected || browserResult !== 0 ? browserResult : BACK_TO_START_MENU;

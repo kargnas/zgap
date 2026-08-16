@@ -384,10 +384,8 @@ test("session resume은 선택한 agent의 정확한 id와 저장된 디렉터�
   assert.equal(typeof cli.resumeSession, "function");
   const root = await tempDir(t);
   const codexCwd = path.join(root, "codex");
-  const codexDefaultCwd = path.join(root, "codex-default");
   const claudeCwd = path.join(root, "claude");
   await mkdir(codexCwd, { recursive: true });
-  await mkdir(codexDefaultCwd, { recursive: true });
   await mkdir(claudeCwd, { recursive: true });
   const calls = [];
   const runners = {
@@ -395,15 +393,10 @@ test("session resume은 선택한 agent의 정확한 id와 저장된 디렉터�
     claudeRunner: async (args, options) => { calls.push({ agent: "claude", args, options }); return 12; },
   };
 
-  assert.equal(await cli.resumeSession({ agent: "codex", id: "codex-id", cwd: codexCwd }, "/config", {
-    ...runners,
-    provider: "openai",
-  }), 11);
-  assert.equal(await cli.resumeSession({ agent: "codex", id: "codex-default", cwd: codexDefaultCwd }, "/config", runners), 11);
+  assert.equal(await cli.resumeSession({ agent: "codex", id: "codex-id", cwd: codexCwd }, "/config", runners), 11);
   assert.equal(await cli.resumeSession({ agent: "claude", id: "claude-id", cwd: claudeCwd }, "/config", runners), 12);
   assert.deepEqual(calls, [
-    { agent: "codex", args: ["resume", "codex-id"], options: { configDir: "/config", cwd: codexCwd, provider: "openai" } },
-    { agent: "codex", args: ["resume", "codex-default"], options: { configDir: "/config", cwd: codexDefaultCwd } },
+    { agent: "codex", args: ["resume", "codex-id"], options: { configDir: "/config", cwd: codexCwd } },
     { agent: "claude", args: ["--resume", "claude-id"], options: { configDir: "/config", cwd: claudeCwd } },
   ]);
 });

@@ -27,9 +27,7 @@ export async function runCodex(args, {
   configDir = defaultConfigDir(),
   cwd = process.cwd(),
   origin = ORIGIN,
-  provider = "zgap",
 } = {}) {
-  const useZgap = provider === "zgap";
   let receivedSignal;
   let child;
   let ephemeral;
@@ -53,32 +51,26 @@ export async function runCodex(args, {
     if (receivedSignal) throw new Error(`runCodex interrupted by ${receivedSignal}`);
   };
   const env = { ...process.env };
-  if (useZgap) {
-    delete env.CODEX_HOME;
-    delete env.OPENAI_BASE_URL;
-    delete env.OPENAI_API_KEY;
-    delete env.ZGAP_API_KEY;
-  }
+  delete env.CODEX_HOME;
+  delete env.OPENAI_BASE_URL;
+  delete env.OPENAI_API_KEY;
+  delete env.ZGAP_API_KEY;
 
   try {
     const codexPath = await resolveCodexExecutable({ env, cwd });
     abortIfSignaled();
-    if (useZgap) {
-      ephemeral = await createEphemeralCatalog({ configDir, codexPath, env });
-      abortIfSignaled();
-    }
+    ephemeral = await createEphemeralCatalog({ configDir, codexPath, env });
+    abortIfSignaled();
     return await new Promise((resolve, reject) => {
-      const launchArgs = useZgap
-        ? [
-            "-c",
-            providerConfig(credentialsPath(configDir), origin),
-            "-c",
-            'model_provider="zgap"',
-            "-c",
-            `model_catalog_json=${JSON.stringify(ephemeral.target)}`,
-            ...args,
-          ]
-        : ["-c", `model_provider=${JSON.stringify(provider)}`, ...args];
+      const launchArgs = [
+        "-c",
+        providerConfig(credentialsPath(configDir), origin),
+        "-c",
+        'model_provider="zgap"',
+        "-c",
+        `model_catalog_json=${JSON.stringify(ephemeral.target)}`,
+        ...args,
+      ];
       child = spawn(codexPath, launchArgs, { cwd, env, stdio: "inherit" });
       child.once("error", (error) => reject(error.code === "ENOENT"
         ? new Error("Codex CLI is not installed or not in PATH.")
