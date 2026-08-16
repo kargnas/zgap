@@ -410,6 +410,9 @@ export async function runSessionBrowser({
     let convertError = null;
     const checked = new Set();
     let recentlyConverted = new Set();
+    // A scan still in flight returns records read before the conversion, so the new provider is
+    // replayed onto every later batch until a refresh reads it back from disk.
+    const convertedProviders = new Map();
     let notice = "";
 
     const root = new BoxRenderable(renderer, {
@@ -697,6 +700,14 @@ export async function runSessionBrowser({
       selectedKey = values[selectedIndex] ? sessionKey(values[selectedIndex]) : null;
       render();
     };
+    const applyConverted = (values) => {
+      if (convertedProviders.size === 0) return values;
+      for (const session of values) {
+        const provider = convertedProviders.get(session.id);
+        if (provider && session.agent === "codex") session.provider = provider;
+      }
+      return values;
+    };
     const load = async (requestedScope = scope, { refresh = false } = {}) => {
       const currentGeneration = ++generation;
       if (!refresh && sessionCache.has(requestedScope)) {
@@ -712,12 +723,12 @@ export async function runSessionBrowser({
       try {
         const onUpdate = (partial) => {
           if (cleaned || currentGeneration !== generation || !Array.isArray(partial)) return;
-          sessions = partial;
+          sessions = applyConverted(partial);
           render();
         };
         const loaded = await sessionLoader({ cwd, roots, scope: requestedScope, signal: abortController.signal, onUpdate });
         if (cleaned || currentGeneration !== generation) return;
-        sessions = Array.isArray(loaded) ? loaded : [];
+        sessions = applyConverted(Array.isArray(loaded) ? loaded : []);
         sessionCache.set(requestedScope, sessions);
         state = "ready";
         render();
@@ -812,7 +823,10 @@ export async function runSessionBrowser({
               if (convertedCount !== toConvert.length) {
                 throw new Error(`Converted ${convertedCount} of ${toConvert.length} sessions`);
               }
-              for (const session of toConvert) session.provider = target;
+              for (const session of toConvert) {
+                session.provider = target;
+                convertedProviders.set(session.id, target);
+              }
               // Other scopes cache pre-conversion snapshots, so drop them to force a reload.
               for (const cachedScope of [...sessionCache.keys()]) {
                 if (cachedScope !== scope) sessionCache.delete(cachedScope);
@@ -859,6 +873,8 @@ export async function runSessionBrowser({
       if (showHelp) return;
       if (event.name === "r") {
         sessionCache.delete(scope);
+        // A refresh rereads the database, which now owns the converted providers.
+        convertedProviders.clear();
         void load(scope, { refresh: true });
         return;
       }

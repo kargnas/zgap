@@ -187,6 +187,44 @@ test("로딩 중 체크하면 선택 안내가 스피너보다 우선한다", as
   assert.equal(await result, 0);
 });
 
+test("로딩이 끝나도 변환된 provider가 되돌아가지 않는다", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
+  const setup = await createTestRenderer({ width: 90, height: 16 });
+  t.after(() => setup.renderer.destroy());
+  const loading = deferred();
+
+  const result = runSessionBrowser({
+    rendererFactory: async () => setup,
+    discoverScope: async () => ({ roots: ["/repo"] }),
+    sessionLoader: async ({ onUpdate }) => {
+      onUpdate([{ ...sessions[0], cwd: "/repo" }]);
+      return loading.promise;
+    },
+    providerConverter: async (selected) => selected.length,
+  });
+  await flush(setup);
+
+  setup.mockInput.pressKey(" ");
+  setup.mockInput.pressKey("c");
+  await waitForFrame(setup, (frame) => frame.includes("CONVERT PROVIDER"));
+  setup.mockInput.pressEnter();
+  await waitForFrame(setup, (frame) => frame.includes("converted to openai"));
+  assert.match(setup.captureCharFrame(), /CODEX · openai/);
+
+  // The scan was already reading rows before the conversion, so its result still says zgap.
+  loading.resolve([{ ...sessions[0], cwd: "/repo" }]);
+  await flush(setup);
+  const frame = setup.captureCharFrame();
+  assert.match(frame, /CODEX · openai/);
+  assert.doesNotMatch(frame, /CODEX · zgap/);
+
+  setup.mockInput.pressBackspace();
+  await flush(setup);
+  await setup.mockInput.pressBackspace();
+  assert.equal(await result, 0);
+});
+
 test("session browser는 scope, agent, 숫자 provider tab을 적용한다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
