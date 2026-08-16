@@ -1,9 +1,5 @@
 import assert from "node:assert/strict";
-import { test as nodeTest } from "node:test";
-
-const test = (name, options, fn) => typeof options === "function"
-  ? nodeTest(name, { concurrency: false }, options)
-  : nodeTest(name, { ...options, concurrency: false }, fn);
+import { test } from "./harness.mjs";
 
 async function flush(setup) {
   await new Promise((resolve) => setTimeout(resolve, 25));
@@ -121,6 +117,72 @@ test("session browser는 loading spinner를 움직이고 완료 후 timer를 정
   assert.equal(cleared, 1);
   assert.match(setup.captureCharFrame(), /No sessions in current repo/);
 
+  await setup.mockInput.pressBackspace();
+  assert.equal(await result, 0);
+});
+
+test("session browser는 로딩 중 부분 결과를 즉시 렌더링하고 이동을 허용한다", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
+  const setup = await createTestRenderer({ width: 100, height: 20 });
+  t.after(() => setup.renderer.destroy());
+  const loading = deferred();
+  let selectedTitle = null;
+
+  const result = runSessionBrowser({
+    rendererFactory: async () => setup,
+    cwd: "/repo/worktrees/feature",
+    discoverScope: async () => ({ roots: ["/repo", "/repo/worktrees/feature"] }),
+    sessionLoader: async ({ onUpdate }) => {
+      onUpdate([sessions[0]]);
+      return loading.promise;
+    },
+    onSelect: async (session) => {
+      selectedTitle = session.title;
+      return 0;
+    },
+  });
+
+  await flush(setup);
+  let frame = setup.captureCharFrame();
+  assert.match(frame, /Add session switcher/);
+  assert.match(frame, /Loading sessions/);
+
+  setup.mockInput.pressKey("down");
+  await flush(setup);
+  await setup.mockInput.pressEnter();
+  assert.equal(await result, 0);
+  assert.equal(selectedTitle, "Add session switcher");
+});
+
+test("로딩 중 체크하면 선택 안내가 스피너보다 우선한다", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
+  const setup = await createTestRenderer({ width: 100, height: 20 });
+  t.after(() => setup.renderer.destroy());
+  const loading = deferred();
+
+  const result = runSessionBrowser({
+    rendererFactory: async () => setup,
+    discoverScope: async () => ({ roots: ["/repo"] }),
+    sessionLoader: async ({ onUpdate }) => {
+      onUpdate([{ ...sessions[0], cwd: "/repo" }]);
+      return loading.promise;
+    },
+  });
+  await flush(setup);
+  assert.match(setup.captureCharFrame(), /Loading sessions/);
+
+  setup.mockInput.pressKey(" ");
+  await flush(setup);
+  const frame = setup.captureCharFrame();
+  assert.match(frame, /\[x\] CODEX/);
+  assert.match(frame, /1 selected · c convert/);
+  assert.doesNotMatch(frame, /Loading sessions/);
+
+  // First Backspace clears the batch, second one exits.
+  setup.mockInput.pressBackspace();
+  await flush(setup);
   await setup.mockInput.pressBackspace();
   assert.equal(await result, 0);
 });
@@ -955,6 +1017,9 @@ test("session browser는 한글 제목을 행 너비 안에서 줄인다", async
     rendererFactory: async () => setup,
     now: () => now,
     discoverScope: async () => ({ roots: ["/repo"] }),
+    // Pinned clock: the fixture's updatedAt is absolute, so a real Date.now() would flip the
+    // meta line to an exact timestamp after 3 hours and push the location label out of width 40.
+    now: () => sessions[0].updatedAt + 5 * 60_000,
     sessionLoader: async () => [{
       ...sessions[0],
       cwd: "/repo",

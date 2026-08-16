@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { test } from "node:test";
+import { test } from "./harness.mjs";
 
 const sessions = await import("../src/sessions.mjs");
 
@@ -109,6 +109,28 @@ test("No prompt title은 첫 사용자 명령으로 대체한다", async () => {
   assert.equal(result[0]?.title, "actual first command");
 });
 
+test("listSessions는 소스가 끝날 때마다 onUpdate로 부분 결과를 전달한다", async () => {
+  const updates = [];
+  let releaseClaude;
+  const claudeGate = new Promise((resolve) => { releaseClaude = resolve; });
+  const result = await sessions.listSessions({
+    cwd: "/repo",
+    all: true,
+    readCodex: async () => [{ id: "c1", model_provider: "agp", cwd: "/repo", title: "codex", updated_at: 10 }],
+    readClaude: async () => {
+      await claudeGate;
+      return [{ sessionId: "a1", projectPath: "/repo", firstPrompt: "claude", modified: 20 }];
+    },
+    onUpdate: (partial) => {
+      updates.push(partial.map(({ id }) => id));
+      releaseClaude();
+    },
+  });
+  assert.deepEqual(updates[0], ["c1"]);
+  assert.deepEqual(result.map(({ id }) => id), ["a1", "c1"]);
+  assert.deepEqual(updates.at(-1), ["a1", "c1"]);
+});
+
 test("malformed records are isolated and repository containment is segment-safe", async () => {
   const values = await sessions.listSessions({
     cwd: "/repo",
@@ -135,7 +157,8 @@ test("Codex fallback recursively aggregates one nested JSONL session", async (t)
   assert.deepEqual(session, {
     agent: "codex", provider: "agp", id: "nested", cwd: "/repo", title: "first command",
     preview: { turns: [] }, previewLocator: { type: "jsonl", path: path.join(nested, "one.jsonl") },
-    updatedAt: Date.parse("2026-08-14T00:00:00Z"),
+    // The fixture file was written moments ago, so the recent-write heuristic marks it active.
+    updatedAt: Date.parse("2026-08-14T00:00:00Z"), active: true,
   });
   assert.deepEqual(await sessions.loadSessionPreview(session), {
     turns: [{ user: "second command", assistant: null }],
@@ -157,7 +180,8 @@ test("Claude JSONL ai-title wins over first user prompt and excludes subagents",
   assert.deepEqual(session, {
     agent: "claude", provider: null, id: "main", cwd: "/repo", title: "AI title", preview: {
       turns: [],
-    }, previewLocator: { type: "jsonl", path: path.join(project, "main.jsonl") }, updatedAt: Date.parse("2026-08-14T00:00:00Z"),
+      // The fixture file was written moments ago, so the recent-write heuristic marks it active.
+    }, previewLocator: { type: "jsonl", path: path.join(project, "main.jsonl") }, updatedAt: Date.parse("2026-08-14T00:00:00Z"), active: true,
   });
   assert.equal(result.some(({ title }) => title === "hidden"), false);
 });
@@ -203,8 +227,46 @@ test("repo scope reads Claude project directory encoded from a related worktree 
     cwd: root,
     title: "scoped prompt",
     preview: { turns: [] }, previewLocator: { type: "jsonl", path: path.join(project, "one.jsonl") },
-    updatedAt: Date.parse("2026-08-14T00:00:01Z"),
+    // The fixture file was written moments ago, so the recent-write heuristic marks it active.
+    updatedAt: Date.parse("2026-08-14T00:00:01Z"), active: true,
   }]);
+});
+
+test("repo scope encodes every non-alphanumeric path character like Claude Code", async (t) => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "zgap-claude-encode-"));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  // Claude Code turns `_`, `.`, and other symbols into "-" in project directory names.
+  const root = "/Users/example/projects/_video/nell.mv";
+  const project = path.join(home, "projects", "-Users-example-projects--video-nell-mv");
+  await mkdir(project, { recursive: true });
+  await writeFile(path.join(project, "one.jsonl"), JSON.stringify(
+    { type: "user", sessionId: "one", cwd: root, message: { role: "user", content: "underscore repo prompt" }, timestamp: "2026-08-14T00:00:01Z" },
+  ));
+
+  const result = await sessions.listSessions({
+    cwd: root,
+    codexHome: "/missing",
+    claudeHome: home,
+    repositoryRoots: [root],
+  });
+
+  assert.equal(result.length, 1);
+  assert.equal(result[0].title, "underscore repo prompt");
+});
+
+test("Claude titles skip injected slash-command and teammate messages", async (t) => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "zgap-claude-injected-"));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const project = path.join(home, "projects", "-repo");
+  await mkdir(project, { recursive: true });
+  await writeFile(path.join(project, "one.jsonl"), [
+    JSON.stringify({ type: "user", sessionId: "one", cwd: "/repo", message: { role: "user", content: "<command-message>run-thing</command-message>\n<command-name>/run-thing</command-name>" } }),
+    JSON.stringify({ type: "user", sessionId: "one", cwd: "/repo", message: { role: "user", content: "<teammate-message teammate_id=\"lead\">do the thing</teammate-message>" } }),
+    JSON.stringify({ type: "user", sessionId: "one", cwd: "/repo", message: { role: "user", content: "typed by a human" } }),
+  ].join("\n"));
+
+  const result = await sessions.listSessions({ codexHome: "/missing", claudeHome: home, all: true });
+  assert.equal(result.find(({ id }) => id === "one")?.title, "typed by a human");
 });
 
 test("JSONL preview keeps completed user/assistant turns and drops an unanswered tail", async (t) => {

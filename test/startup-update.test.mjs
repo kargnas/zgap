@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "./harness.mjs";
 
 test("인자 없는 CLI는 자동 업데이트 확인을 기다리지 않고 시작 메뉴에 전달한다", async () => {
   const { main } = await import("../src/cli.mjs");

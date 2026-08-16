@@ -139,12 +139,12 @@ export async function runStartMenu({
       resolveResult = resolve;
       rejectResult = reject;
     });
-    const finish = async (action, fallbackCode = 0) => {
+    const finish = async (action) => {
       if (settled) return;
       settled = true;
       cleanup();
       try {
-        resolveResult(await action(), fallbackCode);
+        resolveResult(await action());
       } catch (error) {
         rejectResult(error);
       }
@@ -394,7 +394,7 @@ export async function runStartMenu({
       const timestamp = now();
       if (event.ctrl && event.name === "c") {
         if (lastCtrlC !== null && timestamp - lastCtrlC <= 1_000) {
-          void finish(async () => 130, 130);
+          void finish(async () => 130);
         } else {
           lastCtrlC = timestamp;
         }
@@ -402,7 +402,7 @@ export async function runStartMenu({
       }
       if (event.name === "escape") {
         if (lastEscape !== null && timestamp - lastEscape <= 1_000) {
-          void finish(async () => 130, 130);
+          void finish(async () => 130);
         } else {
           lastEscape = timestamp;
         }

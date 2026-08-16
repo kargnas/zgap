@@ -8,6 +8,9 @@ import path from "node:path";
 
 const execFileAsync = promisify(execFile);
 const MAX_SCAN_BYTES = 2 * 1024 * 1024;
+// Claude Code appends to its JSONL on every turn, so a write in the last minute means a
+// process is (or was seconds ago) driving the session.
+const ACTIVE_WRITE_WINDOW_MS = 60_000;
 const TITLE_LIMIT = 120;
 const ANSI_SEQUENCE = /(?:\u001B\][^\u0007\u001B\u009C]*(?:\u0007|\u001B\\|\u009C))|\u001B\\|[\u001B\u009B][[\]()#;?]*(?:\d{1,4}(?:[;:]\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]/g;
 
@@ -68,11 +71,14 @@ function conversationMessage(event) {
   return null;
 }
 
+// Agent harnesses prepend synthetic user messages (slash-command echoes, injected
+// instructions, ambient UI context); matching them keeps titles and previews on the
+// conversation the user actually typed. Tags observed across Claude Code and Codex logs.
+const INJECTED_TAG_RE = /^\s*<(?:command-name|command-message|local-command-caveat|local-command-stdout|local-command-stderr|teammate-message|chat-history-summary|ide_opened_file|system-reminder|codex_internal_context|codex_delegation|skill|recommended_plugins|environment_context|user_instructions|in-app-browser-context)[\s>]/;
+
 function isInjectedUserContext(value) {
   const text = String(value ?? "").trimStart();
-  return text.startsWith("# AGENTS.md instructions for ")
-    || text.startsWith("<codex_internal_context")
-    || text.startsWith("<skill>");
+  return text.startsWith("# AGENTS.md instructions for ") || INJECTED_TAG_RE.test(text);
 }
 
 async function readConversationPreview(pathname) {
@@ -85,7 +91,7 @@ async function readConversationPreview(pathname) {
     const message = conversationMessage(event);
     if (!message || !["user", "assistant"].includes(message.role)) continue;
     const text = formatSessionTitle(message.text);
-    if (!text || message.role === "user" && isClaudeCommandMetadata(text)) continue;
+    if (!text) continue;
     if (message.role === "user" && isInjectedUserContext(text)) {
       if (pending?.assistant) {
         turns.push(pending);
@@ -104,10 +110,6 @@ async function readConversationPreview(pathname) {
   return normalizePreview({ turns });
 }
 
-function isClaudeCommandMetadata(value) {
-  return /^\s*<(?:command-name|local-command-caveat|local-command-stdout)>/.test(value);
-}
-
 function normalizeRecord(record, agent) {
   if (!record || typeof record !== "object") return null;
   const id = record.id ?? record.sessionId;
@@ -116,7 +118,10 @@ function normalizeRecord(record, agent) {
   const rawFirstPrompt = record.first_user_message ?? record.firstPrompt;
   const firstPrompt = isInjectedUserContext(rawFirstPrompt) ? "" : rawFirstPrompt;
   const promptTitle = formatSessionTitle(firstPrompt) === "No prompt" ? "" : formatSessionTitle(firstPrompt);
-  const savedTitle = formatSessionTitle(record.aiTitle ?? record.ai_title ?? record.title);
+  // `summary` is the AI-generated title in Claude's sessions-index.json entries. Codex
+  // copies the first user message into its title column, so injected context is filtered here too.
+  const rawSavedTitle = record.aiTitle ?? record.ai_title ?? record.title ?? record.summary;
+  const savedTitle = isInjectedUserContext(rawSavedTitle) ? "" : formatSessionTitle(rawSavedTitle);
   const title = (savedTitle === "No prompt" ? "" : savedTitle) || promptTitle || formatSessionTitle(id);
   const normalized = {
     agent,
@@ -216,13 +221,18 @@ async function readBoundedJsonl(pathname, agent) {
       }
       if (event?.type === "user" && event.message?.role === "user") {
         const prompt = contentText(event.message.content);
-        if (!isClaudeCommandMetadata(prompt)) result.firstPrompt ||= prompt;
+        if (!isInjectedUserContext(prompt)) result.firstPrompt ||= prompt;
       }
-      if (event?.isSidechain || event?.sessionId && event?.isSidechain) result.isSidechain = true;
+      if (event?.isSidechain) result.isSidechain = true;
       result.updatedAt = Math.max(result.updatedAt ?? 0, asNumber(event.timestamp ?? payload.timestamp ?? event.modified));
     }
     if (result.isSidechain || pathname.includes(`${path.sep}subagents${path.sep}`)) return null;
-    return normalizeRecord(result, agent);
+    const normalized = normalizeRecord(result, agent);
+    // Claude Code closes its log between appends, so lsof never sees it; a write within the
+    // last minute is the reliable in-use signal for JSONL-scanned sessions.
+    // ponytail: a >1min silent tool run reads as idle; process-table matching if that matters.
+    if (normalized && fileStat.mtimeMs > Date.now() - ACTIVE_WRITE_WINDOW_MS) normalized.active = true;
+    return normalized;
   } catch {
     return null;
   }
@@ -251,7 +261,10 @@ async function readCodexDefault(codexHome) {
     try {
       const rows = db.query("SELECT id, model_provider, cwd, title, first_user_message, preview, rollout_path, updated_at, updated_at_ms FROM threads WHERE (TRIM(COALESCE(title, '')) <> '' AND TRIM(title) <> 'No prompt') OR TRIM(COALESCE(first_user_message, '')) <> '' OR TRIM(COALESCE(preview, '')) <> '' ORDER BY updated_at_ms DESC, updated_at DESC").all();
       for (const row of rows) {
-        row.updated_at = row.updated_at_ms || row.updated_at;
+        // updated_at is unix seconds while updated_at_ms is milliseconds; scale the
+        // fallback so rows predating the _ms column don't sort as 1970.
+        row.updated_at = row.updated_at_ms
+          || (typeof row.updated_at === "number" && row.updated_at < 1e12 ? row.updated_at * 1000 : row.updated_at);
         row.previewPath = row.rollout_path;
       }
       return rows;
@@ -315,13 +328,16 @@ export async function convertCodexSessionProviders(selectedSessions, targetProvi
   }
 }
 
-async function readCodexFallback(codexHome) {
+async function readCodexFallback(codexHome, onRecords) {
   const paths = [];
   for (const directory of [path.join(codexHome, "sessions"), path.join(codexHome, "archived_sessions")]) paths.push(...await walkJsonl(directory));
   const output = [];
   for (const pathname of paths) {
     const record = await readBoundedJsonl(pathname, "codex");
-    if (record) output.push(record);
+    if (record) {
+      output.push(record);
+      onRecords?.(output);
+    }
   }
   return output;
 }
@@ -353,10 +369,13 @@ function hasConversationPreview(preview) {
 }
 
 function claudeProjectPrefixes(roots) {
-  return roots.map((root) => path.resolve(root).replaceAll(path.sep, "-"));
+  // Claude Code encodes every non-alphanumeric character (., _, spaces, Hangul, /) as "-"
+  // when naming project directories; mapping only path separators missed every repository
+  // whose path contains any other symbol.
+  return roots.map((root) => path.resolve(root).replace(/[^a-zA-Z0-9]/g, "-"));
 }
 
-async function readClaudeDefault(claudeHome, roots = []) {
+async function readClaudeDefault(claudeHome, roots = [], onRecords) {
   const projectsDir = path.join(claudeHome, "projects");
   let projects;
   try { projects = await readdir(projectsDir, { withFileTypes: true }); } catch { return []; }
@@ -373,6 +392,7 @@ async function readClaudeDefault(claudeHome, roots = []) {
           if (normalized) byId.set(normalized.id, normalized);
         }
       }
+      onRecords?.([...byId.values()]);
     } catch { /* JSONL remains authoritative when the index is absent or malformed. */ }
     for (const pathname of await walkJsonl(directory, { skipSubagents: true })) {
       const record = await readBoundedJsonl(pathname, "claude");
@@ -384,8 +404,10 @@ async function readClaudeDefault(claudeHome, roots = []) {
         title: record.title !== record.id ? record.title : previous.title,
         preview: hasConversationPreview(record.preview) ? record.preview : previous.preview,
         ...(record.previewLocator ? { previewLocator: record.previewLocator } : {}),
+        ...(record.active ? { active: true } : {}),
         updatedAt: Math.max(previous.updatedAt, record.updatedAt),
       } : record);
+      onRecords?.([...byId.values()]);
     }
   }
   return [...byId.values()];
@@ -404,28 +426,71 @@ export async function listSessions(options = {}) {
   const roots = allScope ? [] : await discoverRepositoryScope(cwd, options);
   const codexHome = options.codexHome ?? process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex");
   const claudeHome = options.claudeHome ?? path.join(os.homedir(), ".claude");
-  let codexRecords;
-  try { codexRecords = options.readCodex ? await options.readCodex() : await readCodexDefault(codexHome); } catch { codexRecords = []; }
-  if (!options.readCodex && codexRecords.length === 0) codexRecords = await readCodexFallback(codexHome);
-  let claudeRecords;
-  try { claudeRecords = options.readClaude ? await options.readClaude() : await readClaudeDefault(claudeHome, allScope ? [] : roots); } catch { claudeRecords = []; }
-  const normalizeAny = (record, agent) => record?.agent === agent && typeof record.provider !== "undefined" ? record : normalizeRecord(record, agent);
-  const values = [...codexRecords.map((record) => normalizeAny(record, "codex")).filter(Boolean), ...claudeRecords.map((record) => normalizeAny(record, "claude")).filter(Boolean)];
-  const visible = values.filter((session) => allScope || roots.some((root) => contains(root, session.cwd)));
-  let activePaths;
-  try {
-    activePaths = options.readActiveSessionPaths
-      ? await options.readActiveSessionPaths()
-      : options.readCodex || options.readClaude || options.codexHome || options.claudeHome
-        ? new Set()
-        : await readActiveSessionPaths();
-  } catch {
-    activePaths = new Set();
-  }
-  const normalizedActivePaths = new Set([...activePaths].map((pathname) => path.resolve(pathname)));
-  for (const session of visible) {
-    const pathname = session.previewLocator?.type === "jsonl" ? session.previewLocator.path : "";
-    if (pathname && normalizedActivePaths.has(path.resolve(pathname))) session.active = true;
-  }
-  return visible.sort((a, b) => b.updatedAt - a.updatedAt || a.id.localeCompare(b.id));
+  let codexRecords = [];
+  let claudeRecords = [];
+  let activePaths = new Set();
+  // Partial emits reuse normalized objects so the TUI's per-session detail cache stays warm across updates.
+  const normalizedCache = new WeakMap();
+  const normalizeAny = (record, agent) => {
+    if (!record || typeof record !== "object") return null;
+    if (record.agent === agent && typeof record.provider !== "undefined") return record;
+    if (!normalizedCache.has(record)) normalizedCache.set(record, normalizeRecord(record, agent));
+    return normalizedCache.get(record);
+  };
+  const assemble = () => {
+    const values = [...codexRecords.map((record) => normalizeAny(record, "codex")).filter(Boolean), ...claudeRecords.map((record) => normalizeAny(record, "claude")).filter(Boolean)];
+    const visible = values.filter((session) => allScope || roots.some((root) => contains(root, session.cwd)));
+    const normalizedActivePaths = new Set([...activePaths].map((pathname) => path.resolve(pathname)));
+    for (const session of visible) {
+      const pathname = session.previewLocator?.type === "jsonl" ? session.previewLocator.path : "";
+      if (pathname && normalizedActivePaths.has(path.resolve(pathname))) session.active = true;
+    }
+    return visible.sort((a, b) => b.updatedAt - a.updatedAt || a.id.localeCompare(b.id));
+  };
+  // Empty partials carry no information the loading state doesn't already show, so only non-empty lists are emitted.
+  const emitNow = () => {
+    if (!options.onUpdate) return;
+    const assembled = assemble();
+    if (assembled.length > 0) options.onUpdate(assembled);
+  };
+  let lastEmit = 0;
+  // ponytail: time-throttled per-record emits; each source-completion emitNow and the final return carry the trailing records.
+  const emitThrottled = () => {
+    if (!options.onUpdate) return;
+    const timestamp = Date.now();
+    if (timestamp - lastEmit < 80) return;
+    lastEmit = timestamp;
+    emitNow();
+  };
+  // The three sources are independent IO; running them in parallel keeps a slow lsof or JSONL walk from blocking the list.
+  await Promise.all([
+    (async () => {
+      try { codexRecords = options.readCodex ? await options.readCodex() : await readCodexDefault(codexHome); } catch { codexRecords = []; }
+      if (!options.readCodex && codexRecords.length === 0) {
+        codexRecords = await readCodexFallback(codexHome, (records) => { codexRecords = records; emitThrottled(); });
+      }
+      emitNow();
+    })(),
+    (async () => {
+      try {
+        claudeRecords = options.readClaude
+          ? await options.readClaude()
+          : await readClaudeDefault(claudeHome, allScope ? [] : roots, (records) => { claudeRecords = records; emitThrottled(); });
+      } catch { claudeRecords = []; }
+      emitNow();
+    })(),
+    (async () => {
+      try {
+        activePaths = options.readActiveSessionPaths
+          ? await options.readActiveSessionPaths()
+          : options.readCodex || options.readClaude || options.codexHome || options.claudeHome
+            ? new Set()
+            : await readActiveSessionPaths();
+      } catch {
+        activePaths = new Set();
+      }
+      emitNow();
+    })(),
+  ]);
+  return assemble();
 }

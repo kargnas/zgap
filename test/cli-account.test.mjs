@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "./harness.mjs";
 
 test("인자 없는 로그인 CLI는 JWT의 이메일을 메뉴에 전달한다", async () => {
   const { main } = await import("../src/cli.mjs");
