@@ -404,6 +404,7 @@ export async function runSessionBrowser({
     let convertIndex = 0;
     let convertViewport = 0;
     let convertSessions = [];
+    let convertReturnSession = null;
     let convertLoading = false;
     let convertError = null;
     const checked = new Set();
@@ -815,9 +816,9 @@ export async function runSessionBrowser({
               showConvert = false;
               convertLoading = false;
               convertError = null;
-              selectedIndex = 0;
-              viewportStart = 0;
-              selectedKey = null;
+              // Sessions mutated above, so recompute the key now to land the cursor back on the same row.
+              selectedKey = convertReturnSession ? sessionKey(convertReturnSession) : null;
+              convertReturnSession = null;
               showNotice(t("sessionsProviderConverted", { count: toConvert.length, provider: displayText(target) }));
             })
             .catch((conversionError) => {
@@ -895,6 +896,8 @@ export async function runSessionBrowser({
           return;
         }
         convertSessions = chosen;
+        // Keep the row object, not its key: conversion rewrites provider and sessionKey embeds it.
+        convertReturnSession = filteredSessions()[selectedIndex] ?? null;
         convertTargets = knownCodexProviders(sessions).filter((target) => chosen.some((session) => session.provider !== target));
         convertIndex = 0;
         convertViewport = 0;

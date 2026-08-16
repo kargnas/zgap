@@ -441,6 +441,50 @@ test("혼합 provider 체크는 target과 같은 세션을 제외한 개수로 �
   assert.equal(await result, 0);
 });
 
+test("변환 후 커서는 변환 직전에 있던 행에 남는다", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
+  const setup = await createTestRenderer({ width: 72, height: 14 });
+  t.after(() => setup.renderer.destroy());
+  const sourceSessions = [
+    { ...sessions[0], cwd: "/repo" },
+    { ...sessions[0], id: "codex-zgap-two", cwd: "/repo", title: "Second zgap session" },
+    { ...sessions[2], cwd: "/repo" },
+  ];
+
+  const result = runSessionBrowser({
+    rendererFactory: async () => setup,
+    discoverScope: async () => ({ roots: ["/repo"] }),
+    sessionLoader: async () => sourceSessions,
+    providerConverter: async (selected) => selected.length,
+  });
+  await flush(setup);
+
+  // Check the first row, then park the cursor on the Claude row that conversion never touches.
+  setup.mockInput.pressKey(" ");
+  setup.mockInput.pressArrow("down");
+  setup.mockInput.pressArrow("down");
+  await flush(setup);
+  assert.match(setup.captureCharFrame(), /› {7}CLAUDE {2}Review parser/);
+
+  setup.mockInput.pressKey("c");
+  await waitForFrame(setup, (frame) => frame.includes("CONVERT PROVIDER"));
+  setup.mockInput.pressEnter();
+  await waitForFrame(setup, (frame) => frame.includes("1 session converted to openai"));
+  assert.match(setup.captureCharFrame(), /› {7}CLAUDE {2}Review parser/);
+
+  // Cursor on a converted row: its key changes with the provider, so it must be recomputed.
+  setup.mockInput.pressArrow("up");
+  setup.mockInput.pressKey(" ");
+  setup.mockInput.pressKey("c");
+  await waitForFrame(setup, (frame) => frame.includes("CONVERT PROVIDER"));
+  setup.mockInput.pressEnter();
+  await waitForFrame(setup, (frame) => /› {3}\[✓\] CODEX · openai {2}Second zgap/.test(frame));
+
+  await setup.mockInput.pressBackspace();
+  assert.equal(await result, 0);
+});
+
 test("변환 후 다른 scope 캐시를 비워 stale provider 목록을 막는다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
