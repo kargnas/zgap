@@ -12,11 +12,11 @@ import { fileURLToPath } from "node:url";
 const repoDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const cliPath = path.join(repoDir, "bin", "zgap.mjs");
 const nodePath = execFileSync("which", ["node"], { encoding: "utf8" }).trim();
-function jwt(email, id) {
+function jwt(email, id, origin = "https://ai-proxy.zz.gg") {
   const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
   return [
     encode({ alg: "EdDSA", typ: "JWT" }),
-    encode({ iss: "https://ai-proxy.zz.gg", aud: ["https://ai-proxy.zz.gg"], sub: "1", sid: "2", email, email_verified: true, iat: 1_700_000_000, exp: 1_800_000_000, proxy_products: [{ id, origin: "https://ai-proxy.zz.gg" }] }),
+    encode({ iss: origin, aud: [origin], sub: "1", sid: "2", email, email_verified: true, iat: 1_700_000_000, exp: 1_800_000_000, proxy_products: [{ id, origin }] }),
     "sig",
   ].join(".");
 }
@@ -44,14 +44,41 @@ test("JWT access token profile은 계약 필드만 표시용으로 해석한다"
   const aliasHeader = `${canonicalHeader.slice(0, -1)}${canonicalHeader.endsWith("A") ? "B" : "A"}`;
   assert.equal(decodeAccessTokenProfile(`${aliasHeader}.${encode(payload)}.a`), null);
   assert.equal(decodeAccessTokenProfile(`${encode({ alg: "EdDSA", typ: "JWT" })}.${encode(payload)}.a`), null);
+  assert.equal(decodeAccessTokenProfile(ACCESS_NEW, "https://proxy.example.test"), null);
+  const configuredOrigin = "https://proxy.example.test";
+  const configuredToken = jwt("host@example.com", "codex", configuredOrigin);
+  assert.deepEqual(decodeAccessTokenProfile(configuredToken, configuredOrigin), {
+    email: "host@example.com",
+    emailVerified: true,
+    proxyProducts: [{ id: "codex", origin: configuredOrigin }],
+  });
 });
 
-test("credential origin은 고정 ai-proxy origin만 허용한다", async (t) => {
+test("credential origin은 JWT issuer와 같은 https origin만 허용한다", async (t) => {
   const root = await tempDir(t);
   const credentialPath = path.join(root, "credentials.json");
   await writeFile(credentialPath, JSON.stringify({ access_expires_at: "2099-01-02T00:00:00.000Z", access_token: ACCESS_NEW, device_id: "d".repeat(43), origin: "https://attacker.example", refresh_expires_at: "2099-01-05T00:00:00.000Z", refresh_token: REFRESH_OLD }));
   const { readCredentialFile } = await import("../src/credentials.mjs");
   await assert.rejects(() => readCredentialFile(credentialPath), /Invalid zgap credentials/);
+});
+
+test("설정 origin과 같은 JWT credential은 허용한다", async (t) => {
+  const root = await tempDir(t);
+  const origin = "https://proxy.example.test";
+  const accessToken = jwt("new@example.com", "claude", origin);
+  const credentialPath = path.join(root, "credentials.json");
+  await writeFile(credentialPath, JSON.stringify({
+    access_expires_at: "2099-01-02T00:00:00.000Z",
+    access_token: accessToken,
+    device_id: "d".repeat(43),
+    origin,
+    refresh_expires_at: "2099-01-05T00:00:00.000Z",
+    refresh_token: REFRESH_OLD,
+  }));
+  const { readCredentialFile } = await import("../src/credentials.mjs");
+  const credential = await readCredentialFile(credentialPath);
+  assert.equal(credential.origin, origin);
+  assert.equal(credential.access_token, accessToken);
 });
 
 async function tempDir(t) {
@@ -70,16 +97,18 @@ async function runCli(args, env) {
   return { code, signal, stdout, stderr };
 }
 
-async function installGatewayFetchRedirect(t, port) {
+async function installGatewayFetchRedirect(t, port, origins = ["https://ai-proxy.zz.gg"]) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "zgap-fetch-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const modulePath = path.join(directory, "redirect-fetch.mjs");
   const gateway = JSON.stringify(`http://127.0.0.1:${port}`);
+  const allowedOrigins = JSON.stringify(origins);
   await writeFile(modulePath, `const gateway = ${gateway};
+const allowedOrigins = new Set(${allowedOrigins});
 const originalFetch = globalThis.fetch;
 globalThis.fetch = (input, options) => {
   const originalUrl = new URL(input?.url ?? input);
-  if (originalUrl.origin !== "https://ai-proxy.zz.gg" || originalUrl.pathname !== "/v1/models") {
+  if (!allowedOrigins.has(originalUrl.origin) || originalUrl.pathname !== "/v1/models") {
     return originalFetch(input, options);
   }
   const redirectedUrl = new URL(gateway);
@@ -92,7 +121,7 @@ globalThis.fetch = (input, options) => {
   return modulePath;
 }
 
-async function runCatalogFailureScenario(t, { serverBody, bundledOutput, expectedError }) {
+async function runCatalogFailureScenario(t, { serverBody, expectedError }) {
   const root = await tempDir(t);
   const home = path.join(root, "home");
   const configRoot = path.join(root, "config");
@@ -122,7 +151,6 @@ async function runCatalogFailureScenario(t, { serverBody, bundledOutput, expecte
 import { writeFileSync } from "node:fs";
 const args = process.argv.slice(2);
 if (args[0] === "--version") process.stdout.write("codex-cli 1.0.0\\n");
-else if (args.join(" ") === "debug models --bundled") process.stdout.write(${JSON.stringify(bundledOutput)});
 else writeFileSync(${JSON.stringify(marker)}, "ran");
 `);
   await chmod(fakeCodex, 0o755);
@@ -174,32 +202,9 @@ test("Codex version은 전체 출력이 codex-cli 형식일 때만 허용한다"
   await assert.rejects(() => readCodexVersion(fakeCodex), /invalid response/);
 });
 
-test("malformed zgap policy는 Codex 실행 전에 중단한다", async (t) => {
+test("서버 catalog의 중복 slug는 Codex 실행 전에 중단한다", async (t) => {
   await runCatalogFailureScenario(t, {
-    serverBody: { models: [{ slug: "openai/gpt-5.6-luna" }] },
-    bundledOutput: JSON.stringify({ models: [{ slug: "openai/gpt-5.6-luna" }] }),
-    expectedError: /invalid zgap_client_policy/,
-  });
-});
-
-test("malformed bundled catalog는 Codex 실행 전에 중단한다", async (t) => {
-  await runCatalogFailureScenario(t, {
-    serverBody: {
-      models: [{ slug: "openai/gpt-5.6-luna" }],
-      zgap_client_policy: { openai_models: { mode: "replace_with_local_bundle" } },
-    },
-    bundledOutput: "not-json",
-    expectedError: /Bundled model catalog returned an invalid response/,
-  });
-});
-
-test("최종 catalog의 중복 slug는 Codex 실행 전에 중단한다", async (t) => {
-  await runCatalogFailureScenario(t, {
-    serverBody: {
-      models: [{ slug: "anthropic/claude", provider: "anthropic" }],
-      zgap_client_policy: { openai_models: { mode: "replace_with_local_bundle" } },
-    },
-    bundledOutput: JSON.stringify({ models: [{ slug: "anthropic/claude" }] }),
+    serverBody: { models: [{ slug: "anthropic/claude" }, { slug: "anthropic/claude" }] },
     expectedError: /duplicate slug: anthropic\/claude/,
   });
 });
@@ -304,6 +309,104 @@ test("login은 디바이스 승인 대기와 slow_down을 폴링하고 token pai
   assert.equal((await stat(credentialPath)).mode & 0o777, 0o600);
 
   assert.equal(await readFile(path.join(codexHome, "config.toml"), "utf8"), originalCodexConfig);
+});
+
+test("login은 설정 origin으로 인증하고 그 origin을 credential에 저장한다", async (t) => {
+  const root = await tempDir(t);
+  const configDir = path.join(root, "config", "zgap");
+  const origin = "https://proxy.example.test";
+  const accessToken = jwt("new@example.com", "claude", origin);
+  const requests = [];
+  let openUrl;
+  const responses = [
+    new Response(JSON.stringify({
+      device_code: "device-code",
+      user_code: "ABCD-EFGH",
+      verification_uri: `${origin}/console/cli-auth`,
+      verification_uri_complete: `${origin}/console/cli-auth?device_code=device-code&user_code=ABCD-EFGH`,
+      expires_in: 600,
+      interval: 1,
+    }), { status: 200 }),
+    new Response(JSON.stringify({
+      access_token: accessToken,
+      expires_in: 86_400,
+      refresh_expires_in: 345_600,
+      refresh_token: REFRESH_NEW,
+      token_type: "Bearer",
+    }), { status: 200 }),
+  ];
+
+  const { login } = await import("../src/login.mjs");
+  await login({
+    configDir,
+    origin,
+    now: () => Date.parse("2026-08-11T00:00:00.000Z"),
+    timeoutMs: 60_000,
+    log() {},
+    fetchImpl: async (url, options) => {
+      requests.push({ url: url.toString(), body: JSON.parse(options.body) });
+      return responses.shift();
+    },
+    sleep: async () => {},
+    async openBrowser(url) {
+      openUrl = url;
+    },
+  });
+
+  assert.equal(requests[0].url, `${origin}/cli/oauth/device_authorization`);
+  assert.equal(requests[1].url, `${origin}/cli/oauth/token`);
+  assert.equal(openUrl, `${origin}/console/cli-auth?device_code=device-code&user_code=ABCD-EFGH`);
+  assert.deepEqual(JSON.parse(await readFile(path.join(configDir, "credentials.json"), "utf8")), {
+    access_expires_at: "2026-08-12T00:00:00.000Z",
+    access_token: accessToken,
+    device_id: requests[0].body.device_id,
+    origin,
+    refresh_expires_at: "2026-08-15T00:00:00.000Z",
+    refresh_token: REFRESH_NEW,
+  });
+});
+
+test("login은 origin 인자 없이 config.yml host로 인증한다", async (t) => {
+  const root = await tempDir(t);
+  const configDir = path.join(root, "config", "zgap");
+  await mkdir(configDir, { recursive: true });
+  await writeFile(path.join(configDir, "config.yml"), "host: proxy.example.test\n");
+  const origin = "https://proxy.example.test";
+  const accessToken = jwt("new@example.com", "claude", origin);
+  const requests = [];
+
+  const { login } = await import("../src/login.mjs");
+  await login({
+    configDir,
+    now: () => Date.parse("2026-08-11T00:00:00.000Z"),
+    timeoutMs: 60_000,
+    log() {},
+    fetchImpl: async (url, options) => {
+      requests.push({ url: url.toString(), body: JSON.parse(options.body) });
+      if (String(url).endsWith("device_authorization")) {
+        return new Response(JSON.stringify({
+          device_code: "device-code",
+          user_code: "ABCD-EFGH",
+          verification_uri: `${origin}/console/cli-auth`,
+          verification_uri_complete: `${origin}/console/cli-auth?device_code=device-code&user_code=ABCD-EFGH`,
+          expires_in: 600,
+          interval: 1,
+        }), { status: 200 });
+      }
+      return new Response(JSON.stringify({
+        access_token: accessToken,
+        expires_in: 86_400,
+        refresh_expires_in: 345_600,
+        refresh_token: REFRESH_NEW,
+        token_type: "Bearer",
+      }), { status: 200 });
+    },
+    sleep: async () => {},
+    openBrowser: async () => {},
+  });
+
+  assert.equal(requests[0].url, `${origin}/cli/oauth/device_authorization`);
+  assert.equal(JSON.parse(await readFile(path.join(configDir, "credentials.json"), "utf8")).origin, origin);
 });
 
 test("login은 잘못된 device authorization 응답을 저장하지 않는다", async (t) => {
@@ -438,26 +541,26 @@ test("codex는 기본 Codex home을 유지하고 refresh 가능한 auth command�
   await mkdir(configDir, { recursive: true });
   await mkdir(fakeBin, { recursive: true });
   let modelRequest;
+  const origin = "https://proxy.example.test";
+  const accessToken = jwt("old@example.com", "codex", origin);
   const gateway = createServer(async (request, response) => {
     modelRequest = { authorization: request.headers.authorization, url: request.url };
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({
       models: [
-        { slug: "openai/gpt-5.6-luna", provider: "openai" },
-        { slug: "anthropic/claude", provider: "anthropic" },
+        { slug: "openai/gpt-5.6-luna" },
+        { slug: "anthropic/claude" },
       ],
-      zgap_client_policy: { openai_models: { mode: "replace_with_local_bundle" } },
     }));
   });
   gateway.listen(0, "127.0.0.1");
   await once(gateway, "listening");
   t.after(() => gateway.close());
-  const origin = "https://ai-proxy.zz.gg";
-  const fetchRedirectModule = await installGatewayFetchRedirect(t, gateway.address().port);
+  const fetchRedirectModule = await installGatewayFetchRedirect(t, gateway.address().port, [origin]);
   await writeFile(path.join(configDir, "config.yml"), "host: proxy.example.test\n");
   await writeFile(path.join(configDir, "credentials.json"), JSON.stringify({
     access_expires_at: "2099-01-02T00:00:00.000Z",
-    access_token: ACCESS_OLD,
+    access_token: accessToken,
     device_id: "d".repeat(43),
     origin,
     refresh_expires_at: "2099-01-05T00:00:00.000Z",
@@ -469,7 +572,6 @@ test("codex는 기본 Codex home을 유지하고 refresh 가능한 auth command�
 import { readFileSync, statSync } from "node:fs";
 const args = process.argv.slice(2);
 if (args[0] === "--version") process.stdout.write("codex-cli 9.8.7\\n");
-else if (args.join(" ") === "debug models --bundled") process.stdout.write(JSON.stringify({ models: [{ slug: "openai/gpt-5.6-luna", title: "Bundled" }] }));
 else {
   const catalogPath = args.find((arg) => arg.startsWith("model_catalog_json="))?.slice("model_catalog_json=".length);
   process.stdout.write(JSON.stringify({
@@ -502,7 +604,7 @@ else {
   assert.equal(invocation.zgapApiKey, null);
   assert.deepEqual(invocation.argv.slice(-2), ["exec", "hello"]);
   assert.deepEqual(modelRequest, {
-    authorization: `Bearer ${ACCESS_OLD}`,
+    authorization: `Bearer ${accessToken}`,
     url: "/v1/models?client_version=9.8.7",
   });
 
@@ -512,14 +614,14 @@ else {
   assert.match(joined, /auth=\{command=/);
   assert.match(joined, /auth-token/);
   assert.match(joined, new RegExp(credentialPathPattern(path.join(configDir, "credentials.json"))));
-  assert.equal(joined.includes(ACCESS_OLD), false);
+  assert.equal(joined.includes(accessToken), false);
   assert.equal(joined.includes(REFRESH_OLD), false);
   assert.equal(invocation.argv.includes("--profile"), false);
   const modelCatalog = joined.match(/model_catalog_json=("[^"]+")/)?.[1];
   assert.ok(modelCatalog);
   assert.match(JSON.parse(modelCatalog), new RegExp(`${path.sep}zgap-[^${path.sep}]+${path.sep}catalog\\.json$`));
   assert.deepEqual(invocation.catalog.models, [
-    { slug: "openai/gpt-5.6-luna", title: "Bundled" },
+    { slug: "openai/gpt-5.6-luna" },
     { slug: "anthropic/claude" },
   ]);
   assert.equal(invocation.catalogMode, 0o600);
@@ -541,8 +643,7 @@ test("SIGTERM은 Codex 자식에 전달한 뒤 catalog를 정리하고 wrapper�
   const gateway = createServer((_request, response) => {
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({
-      models: [{ slug: "openai/gpt-5.6-luna", provider: "openai" }],
-      zgap_client_policy: { openai_models: { mode: "replace_with_local_bundle" } },
+      models: [{ slug: "openai/gpt-5.6-luna" }],
     }));
   });
   gateway.listen(0, "127.0.0.1");
@@ -562,7 +663,6 @@ test("SIGTERM은 Codex 자식에 전달한 뒤 catalog를 정리하고 wrapper�
 import { readFileSync, writeFileSync } from "node:fs";
 const args = process.argv.slice(2);
 if (args[0] === "--version") process.stdout.write("codex-cli 1.0.0\\n");
-else if (args.join(" ") === "debug models --bundled") process.stdout.write(JSON.stringify({ models: [{ slug: "openai/gpt-5.6-luna" }] }));
 else {
   const catalogPath = JSON.parse(args.find((arg) => arg.startsWith("model_catalog_json=")).slice("model_catalog_json=".length));
   writeFileSync(process.env.FAKE_CODEX_SIGNAL_MARKER, JSON.stringify({ pid: process.pid, catalogPath, catalog: readFileSync(catalogPath, "utf8") }));
@@ -633,8 +733,7 @@ test("codex는 설정 파일의 model_catalog_json보다 실행 인자 catalog�
     modelRequests += 1;
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({
-      models: [{ slug: "openai/gpt-5.6-luna", provider: "openai" }],
-      zgap_client_policy: { openai_models: { mode: "replace_with_local_bundle" } },
+      models: [{ slug: "openai/gpt-5.6-luna" }],
     }));
   });
   gateway.listen(0, "127.0.0.1");
@@ -656,7 +755,6 @@ test("codex는 설정 파일의 model_catalog_json보다 실행 인자 catalog�
 import { writeFileSync } from "node:fs";
 const args = process.argv.slice(2);
 if (args[0] === "--version") process.stdout.write("codex-cli 1.0.0\\n");
-else if (args.join(" ") === "debug models --bundled") process.stdout.write(JSON.stringify({ models: [{ slug: "openai/gpt-5.6-luna" }] }));
 else writeFileSync(process.env.FAKE_CODEX_MARKER, "ran");
 `);
   await chmod(fakeCodex, 0o755);
@@ -801,8 +899,9 @@ test("auth-token은 만료 임박 access를 한 번만 refresh하고 rotation �
     refresh_token: REFRESH_OLD,
   }), { mode: 0o600 });
   let refreshCalls = 0;
-  const fetchImpl = async (_url, options) => {
+  const fetchImpl = async (url, options) => {
     refreshCalls += 1;
+    assert.equal(url.toString(), "https://ai-proxy.zz.gg/cli/oauth/token");
     assert.deepEqual(JSON.parse(options.body), {
       client_id: "zgap",
       grant_type: "refresh_token",
@@ -830,7 +929,45 @@ test("auth-token은 만료 임박 access를 한 번만 refresh하고 rotation �
   assert.equal(saved.access_token, ACCESS_NEW);
   assert.equal(saved.refresh_token, REFRESH_NEW);
   assert.equal(saved.device_id, "d".repeat(43));
+  assert.equal(saved.origin, "https://ai-proxy.zz.gg");
   assert.equal((await stat(credentialPath)).mode & 0o777, 0o600);
+});
+
+test("auth-token은 credential origin으로 refresh한다", async (t) => {
+  const root = await tempDir(t);
+  const origin = "https://proxy.example.test";
+  const accessOld = jwt("old@example.com", "codex", origin);
+  const accessNew = jwt("new@example.com", "claude", origin);
+  const credentialPath = path.join(root, "credentials.json");
+  await writeFile(credentialPath, JSON.stringify({
+    access_expires_at: "2026-08-11T03:59:00.000Z",
+    access_token: accessOld,
+    device_id: "d".repeat(43),
+    origin,
+    refresh_expires_at: "2026-08-14T00:00:00.000Z",
+    refresh_token: REFRESH_OLD,
+  }), { mode: 0o600 });
+  const refreshUrls = [];
+  const { resolveAccessToken } = await import("../src/credentials.mjs");
+
+  const token = await resolveAccessToken({
+    credentialFile: credentialPath,
+    now: () => Date.parse("2026-08-11T00:00:00.000Z"),
+    fetchImpl: async (url) => {
+      refreshUrls.push(url.toString());
+      return new Response(JSON.stringify({
+        access_token: accessNew,
+        expires_in: 86_400,
+        refresh_expires_in: 345_600,
+        refresh_token: REFRESH_NEW,
+        token_type: "Bearer",
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    },
+  });
+
+  assert.equal(token, accessNew);
+  assert.deepEqual(refreshUrls, [`${origin}/cli/oauth/token`]);
+  assert.equal(JSON.parse(await readFile(credentialPath, "utf8")).origin, origin);
 });
 
 test("auth-token은 15분 넘게 남은 access를 network와 5xx refresh 실패 중에도 사용한다", async (t) => {

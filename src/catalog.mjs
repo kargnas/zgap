@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { credentialsPath, readCredentialFile, resolveAccessToken } from "./credentials.mjs";
+import { credentialsPath, resolveAccessToken } from "./credentials.mjs";
 import { REQUEST_TIMEOUT_MS } from "./constants.mjs";
 
 async function executable(pathname) {
@@ -46,20 +46,6 @@ export async function readCodexVersion(codexPath, env = process.env) {
   return match[1];
 }
 
-export async function readBundledModels(codexPath, env = process.env) {
-  const output = await runCapture(codexPath, ["debug", "models", "--bundled"], env);
-  let parsed;
-  try {
-    parsed = JSON.parse(output);
-  } catch {
-    throw new Error("Bundled model catalog returned an invalid response.");
-  }
-  if (!Array.isArray(parsed?.models) || parsed.models.length === 0) {
-    throw new Error("Bundled model catalog returned an invalid response.");
-  }
-  return parsed.models;
-}
-
 function validateModels(models, label) {
   const slugs = new Set();
   for (const model of models) {
@@ -71,24 +57,10 @@ function validateModels(models, label) {
   }
 }
 
-function combineModels(serverModels, bundledModels) {
-  const fallbackModels = serverModels
-    .filter((model) => model?.provider !== "openai")
-    .map((model) => {
-      if (!model || typeof model !== "object") return model;
-      const { provider: _provider, ...withoutProvider } = model;
-      return withoutProvider;
-    });
-  const models = [...bundledModels, ...fallbackModels];
-  validateModels(models, "Model catalog");
-  return { models };
-}
-
-export async function fetchModelCatalog(configDir, clientVersion) {
+export async function fetchModelCatalog(configDir, clientVersion, origin) {
   const credentialFile = credentialsPath(configDir);
-  const credential = await readCredentialFile(credentialFile);
   const accessToken = await resolveAccessToken({ credentialFile });
-  const url = new URL("/v1/models", credential.origin);
+  const url = new URL("/v1/models", origin);
   url.searchParams.set("client_version", clientVersion);
   const response = await fetch(url, {
     headers: { authorization: `Bearer ${accessToken}` },
@@ -99,18 +71,13 @@ export async function fetchModelCatalog(configDir, clientVersion) {
   if (!Array.isArray(catalog?.models) || catalog.models.length === 0) {
     throw new Error("Model catalog returned an invalid response.");
   }
-  if (catalog.zgap_client_policy?.openai_models?.mode !== "replace_with_local_bundle") {
-    throw new Error("Model catalog returned an invalid zgap_client_policy.");
-  }
-  return catalog;
+  validateModels(catalog.models, "Model catalog");
+  return { models: catalog.models };
 }
 
-export async function createEphemeralCatalog({ configDir, codexPath, env = process.env }) {
+export async function createEphemeralCatalog({ configDir, codexPath, env = process.env, origin }) {
   const clientVersion = await readCodexVersion(codexPath, env);
-  const serverCatalog = await fetchModelCatalog(configDir, clientVersion);
-  const bundledModels = await readBundledModels(codexPath, env);
-  validateModels(bundledModels, "Bundled model catalog");
-  const catalog = combineModels(serverCatalog.models, bundledModels);
+  const catalog = await fetchModelCatalog(configDir, clientVersion, origin);
   const directory = await mkdtemp(path.join(os.tmpdir(), "zgap-"));
   try {
     await chmod(directory, 0o700);

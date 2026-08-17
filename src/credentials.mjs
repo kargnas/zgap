@@ -45,7 +45,7 @@ function validHttpsOrigin(value) {
   } catch { return false; }
 }
 
-export function decodeAccessTokenProfile(token) {
+export function decodeAccessTokenProfile(token, expectedOrigin = ORIGIN) {
   if (typeof token !== "string" || token.length > MAX_ACCESS_TOKEN_SIZE) return null;
   const segments = token.split(".");
   if (segments.length !== 3 || segments.some((segment) => !validEncodedSegment(segment))) return null;
@@ -53,8 +53,8 @@ export function decodeAccessTokenProfile(token) {
   if (
     !header || typeof header !== "object" || Array.isArray(header) || header.alg !== "EdDSA" || header.typ !== "JWT"
     || !payload || typeof payload !== "object" || Array.isArray(payload)
-    || payload.iss !== "https://ai-proxy.zz.gg"
-    || !Array.isArray(payload.aud) || !payload.aud.includes(ORIGIN)
+    || payload.iss !== expectedOrigin
+    || !Array.isArray(payload.aud) || !payload.aud.includes(expectedOrigin)
     || typeof payload.sub !== "string" || !/^\d+$/.test(payload.sub)
     || typeof payload.sid !== "string" || !/^\d+$/.test(payload.sid)
     || !safeClaim(payload.email, 320) || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payload.email)
@@ -103,14 +103,15 @@ function normalizeCredential(parsed) {
     origin = null;
   }
   if (
-    !decodeAccessTokenProfile(parsed.access_token)
+    !validHttpsOrigin(origin)
+    || origin !== parsed.origin
+    || !decodeAccessTokenProfile(parsed.access_token, origin)
     || typeof parsed.refresh_token !== "string"
     || !REFRESH_TOKEN_RE.test(parsed.refresh_token)
     || typeof parsed.device_id !== "string"
     || !DEVICE_ID_RE.test(parsed.device_id)
     || !Number.isFinite(accessExpiresAt)
     || !Number.isFinite(refreshExpiresAt)
-    || origin !== parsed.origin || origin !== ORIGIN
   ) return null;
   return { ...parsed, accessExpiresAt, refreshExpiresAt };
 }
@@ -276,7 +277,7 @@ export async function resolveAccessToken({
     }
     if (
       body?.token_type !== "Bearer"
-      || !decodeAccessTokenProfile(body.access_token)
+      || !decodeAccessTokenProfile(body.access_token, credential.origin)
       || typeof body.refresh_token !== "string"
       || !REFRESH_TOKEN_RE.test(body.refresh_token)
       || !Number.isFinite(body.expires_in)

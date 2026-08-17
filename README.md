@@ -34,7 +34,7 @@ The agent proxy defaults to `ai-proxy.zz.gg`. To use another hostname, create `~
 host: proxy.example.com
 ```
 
-Use a hostname without `https://`, a port, or a path. This changes Codex, Claude Code, and health-check traffic while keeping login, token refresh, and the model catalog on the credential service.
+Use a hostname without `https://`, a port, or a path. Login, token refresh, the model catalog, Codex, Claude Code, and health checks all use this host.
 
 ## Development
 

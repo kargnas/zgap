@@ -42,7 +42,7 @@ export async function resumeSession(session, configDir, {
 
 function printHelp() {
   console.log(`Usage:
-  zgap login             Sign in to the credential service
+  zgap login             Sign in to the configured proxy
   zgap logout            Sign out on this device
   zgap codex [args...]   Run Codex through the configured proxy
   zgap claude [args...]  Run Claude through the configured proxy
@@ -65,7 +65,8 @@ export async function main({
 } = {}) {
   const [command, ...args] = argv;
   if (command === "login") {
-    await login();
+    const { origin } = await configReader(configDir);
+    await login({ configDir, origin });
     return 0;
   }
   if (command === "logout") {
@@ -104,7 +105,7 @@ export async function main({
       if (credentialState === "signed-in") {
         try {
           const credential = await credentialReader(credentialFile);
-          accountProfile = decodeAccessTokenProfile(credential.access_token);
+          accountProfile = decodeAccessTokenProfile(credential.access_token, credential.origin);
         } catch {
           accountProfile = null;
         }
@@ -116,7 +117,7 @@ export async function main({
         origin: proxyConfig.origin,
         updateChecker,
         actions: {
-          login,
+          login: () => login({ configDir, origin: proxyConfig.origin }),
           codex: () => runCodex([], { configDir, origin: proxyConfig.origin }),
           claude: () => runClaude([], { configDir, origin: proxyConfig.origin }),
           sessions: async () => {

@@ -59,7 +59,7 @@ export async function runCodex(args, {
   try {
     const codexPath = await resolveCodexExecutable({ env, cwd });
     abortIfSignaled();
-    ephemeral = await createEphemeralCatalog({ configDir, codexPath, env });
+    ephemeral = await createEphemeralCatalog({ configDir, codexPath, env, origin });
     abortIfSignaled();
     return await new Promise((resolve, reject) => {
       const launchArgs = [

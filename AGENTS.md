@@ -37,13 +37,13 @@
 
 - `config.yml` supports only `host`; reject unknown keys and values containing a scheme, port, or path.
 - Keep `ai-proxy.zz.gg` as the source-owned default when `config.yml` is absent.
-- Apply the configured host only to agent APIs and health checks. Keep login, refresh, model catalog requests, and JWT identity validation on the credential service so existing credentials remain valid.
+- Apply the configured host to login, refresh, JWT identity validation, the model catalog, agent APIs, and health checks.
 
 ## Ownership Boundaries
 
 - Keep OAuth protocol and credential-file changes in `src/login.mjs` and `src/credentials.mjs`.
 - Keep runtime host parsing and validation in `src/config.mjs`.
-- Keep catalog validation, bundled-model reads, and temporary-file lifecycle in `src/catalog.mjs`.
+- Keep catalog validation and temporary-file lifecycle in `src/catalog.mjs`.
 - Keep Codex process arguments and child environment cleanup in `src/codex.mjs`.
 - Keep menu rendering and keyboard handling in `src/tui/menu.mjs`; keep translations in `src/tui/locales/*.json`.
 

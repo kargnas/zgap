@@ -4,9 +4,9 @@ import {
   CLIENT_ID,
   REFRESH_TOKEN_RE,
   LOGIN_TIMEOUT_MS,
-  ORIGIN,
   REQUEST_TIMEOUT_MS,
 } from "./constants.mjs";
+import { readProxyConfig } from "./config.mjs";
 import { credentialsPath, decodeAccessTokenProfile, defaultConfigDir, deviceIdFor, writePrivateJson } from "./credentials.mjs";
 import { readSystemInfo } from "./system-info.mjs";
 
@@ -20,6 +20,7 @@ function defaultOpenBrowser(url) {
 
 export async function login({
   configDir = defaultConfigDir(),
+  origin,
   now = Date.now,
   requestTimeoutMs = REQUEST_TIMEOUT_MS,
   timeoutMs = LOGIN_TIMEOUT_MS,
@@ -28,6 +29,8 @@ export async function login({
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   log = console.log,
 } = {}) {
+  // config.yml is the only host for OAuth, stored credentials, and later refresh.
+  const resolvedOrigin = origin ?? (await readProxyConfig(configDir)).origin;
   const deviceId = await deviceIdFor(configDir);
   const systemInfo = await readSystemInfo();
   const verifier = randomBytes(32).toString("base64url");
@@ -55,7 +58,7 @@ export async function login({
     const remaining = deadline - Date.now();
     if (remaining <= 0) throw new Error("Login timed out.");
     try {
-      return await fetchImpl(new URL(path, ORIGIN), {
+      return await fetchImpl(new URL(path, resolvedOrigin), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
@@ -93,11 +96,11 @@ export async function login({
       || authorization.expires_in <= 0
       || (authorization.interval !== undefined
         && (!Number.isFinite(authorization.interval) || authorization.interval <= 0))
-      || verificationUrl?.origin !== ORIGIN
+      || verificationUrl?.origin !== resolvedOrigin
       || verificationUrl.pathname !== "/console/cli-auth"
       || verificationUrl.search
       || verificationUrl.hash
-      || completeUrl?.origin !== ORIGIN
+      || completeUrl?.origin !== resolvedOrigin
       || completeUrl.pathname !== "/console/cli-auth"
       || completeUrl.searchParams.get("device_code") !== authorization.device_code
       || completeUrl.searchParams.get("user_code") !== authorization.user_code
@@ -126,7 +129,7 @@ export async function login({
       if (tokenResponse.ok) {
         if (
           body?.token_type !== "Bearer"
-          || !decodeAccessTokenProfile(body.access_token)
+          || !decodeAccessTokenProfile(body.access_token, resolvedOrigin)
           || typeof body.refresh_token !== "string"
           || !REFRESH_TOKEN_RE.test(body.refresh_token)
           || !Number.isFinite(body.expires_in)
@@ -151,7 +154,7 @@ export async function login({
       access_expires_at: new Date(current + token.expires_in * 1000).toISOString(),
       access_token: token.access_token,
       device_id: deviceId,
-      origin: ORIGIN,
+      origin: resolvedOrigin,
       refresh_expires_at: new Date(current + token.refresh_expires_in * 1000).toISOString(),
       refresh_token: token.refresh_token,
     });

@@ -25,7 +25,7 @@ test("인자 없는 로그인 CLI는 JWT의 이메일을 메뉴에 전달한다"
     argv: [],
     configDir: "/tmp/zgap-config",
     credentialStateReader: async () => "signed-in",
-    credentialReader: async () => ({ access_token: token }),
+    credentialReader: async () => ({ access_token: token, origin: "https://ai-proxy.zz.gg" }),
     updateChecker: async () => ({ state: "skipped" }),
     startMenu: async (options) => { menuOptions = options; return 0; },
   });
