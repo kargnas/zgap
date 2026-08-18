@@ -6,6 +6,7 @@
   - Login protocol
   - Identity, Usage Information
   - LLM protocols (like openai-compat, anthropic-compat and etc)
+- NEVER do hard-coding model ID. Model ID changes everymonth, so need to be very flexibile and the server should handle it rather than client(`zgap`) handles it.
 
 ## Project Map
 
