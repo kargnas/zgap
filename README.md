@@ -5,7 +5,7 @@
 ## Quick Start
 
 ```sh
-$ curl -fsSL https://raw.githubusercontent.com/kargnas/zgap/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/kargnas/zgap/main/install.sh | bash
 ```
 
 The installer adds `zgap` through Bun and installs Bun first when needed.
@@ -13,8 +13,8 @@ The installer adds `zgap` through Bun and installs Bun first when needed.
 Sign in, then open the agent menu:
 
 ```sh
-$ zgap login
-$ zgap
+zgap login
+zgap
 ```
 
 Codex and Claude Code are currently supported. Existing local configuration and session history remain in their normal locations.
