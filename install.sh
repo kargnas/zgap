@@ -31,7 +31,9 @@ if ! command -v bun >/dev/null 2>&1; then
 fi
 
 command -v bun >/dev/null 2>&1
-bun add -g github:kargnas/zgap#main --force --no-cache
+# Pin the registry: some machines set the default registry to npm.pkg.github.com
+# for private GitHub Packages, which 404s public tarballs like path-to-regexp.
+bun add -g github:kargnas/zgap#main --force --no-cache --registry https://registry.npmjs.org
 # `bun add` keeps the lockfile's previously pinned commit even with --force --no-cache,
 # so reruns of this installer need `bun update` to re-resolve #main to the latest commit.
-bun update -g zgap --force --no-cache
+bun update -g zgap --force --no-cache --registry https://registry.npmjs.org
