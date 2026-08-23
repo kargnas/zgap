@@ -963,6 +963,7 @@ process.exitCode = 5;
   });
   assert.equal(invocation.argv[0], "-e");
   assert.equal(invocation.argv[2], "--config");
+  assert.deepEqual(invocation.argv.slice(4, 6), ["--model", "zgap/anthropic/claude-sonnet-5"]);
   assert.deepEqual(invocation.argv.slice(-2), ["--print", "hello"]);
   const extensionPath = invocation.argv[1];
   assert.match(extensionPath, new RegExp(`${path.sep}zgap-[^${path.sep}]+${path.sep}extension\\.mjs$`));
@@ -971,7 +972,16 @@ process.exitCode = 5;
   assert.equal(invocation.extensionDirectoryMode, 0o700);
   await assert.rejects(access(extensionPath), { code: "ENOENT" });
   // priority 1이 hide 모델(priority 0)을 제외한 최소값이므로 서버 순위가 기본 모델을 결정한다.
-  assert.equal(invocation.overlay, 'modelRoles:\n  default: "zgap/anthropic/claude-sonnet-5"\n');
+  assert.equal(invocation.overlay, [
+    "modelRoles:",
+    ...["default", "smol", "slow", "vision", "plan", "designer", "commit", "tiny", "task", "advisor"]
+      .map((role) => `  ${role}: "zgap/anthropic/claude-sonnet-5"`),
+    "retry:",
+    "  fallbackChains:",
+    "    default: []",
+    '    "zgap/*": []',
+    "",
+  ].join("\n"));
 
   assert.match(invocation.extension, /registerProvider\("zgap"/);
   assert.match(invocation.extension, /https:\/\/proxy\.example\.test\/v1\/responses\?omp_endpoint=\/codex\/responses/);
@@ -1025,6 +1035,16 @@ process.exitCode = 5;
   assert.equal(yoloInvocation.argv.includes("--auto-approve"), true);
   assert.deepEqual(yoloInvocation.argv.slice(-2), ["--print", "hello"]);
 
+  const explicitModeResult = await runCli(["omp", "--approval-mode", "always-ask", "--print", "hello"], {
+    HOME: home,
+    XDG_CONFIG_HOME: configRoot,
+    PATH: `${fakeBin}${path.delimiter}${process.env.PATH}`,
+    NODE_OPTIONS: `--import=${fetchRedirectModule}`,
+  });
+  assert.equal(explicitModeResult.code, 5, explicitModeResult.stderr);
+  const explicitModeInvocation = JSON.parse(explicitModeResult.stdout);
+  assert.equal(explicitModeInvocation.argv.includes("--auto-approve"), false);
+
   await writeFile(path.join(configDir, "preferences.json"), '{"dangerousMode":false}\n');
   const safeResult = await runCli(["omp", "--print", "hello"], {
     HOME: home,
@@ -1052,6 +1072,19 @@ test("omp catalog 변환은 hide 모델 제외 후 남는 모델이 없으면 �
     { slug: "second", context_window: 1000 },
   ] });
   assert.equal(fallback.defaultSlug, "first");
+});
+
+test("omp Windows auth helper는 경로를 PowerShell encoded command로 전달한다", async () => {
+  const { authTokenCommand } = await import("../src/omp.mjs");
+  const credentialFile = "C:\\Users\\O'Neil\\%TOKEN%\\credentials.json";
+  const command = authTokenCommand(credentialFile, "win32");
+  const encoded = command.split(" ").at(-1);
+  const script = Buffer.from(encoded, "base64").toString("utf16le");
+
+  assert.match(command, /^!powershell\.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand /);
+  assert.match(script, / 'auth-token' /);
+  assert.match(script, /'C:\\Users\\O''Neil\\%TOKEN%\\credentials\.json'/);
+  assert.match(script, /\nexit \$LASTEXITCODE$/);
 });
 
 test("omp는 로그인 전이면 실행하지 않고 login 안내를 반환한다", async (t) => {

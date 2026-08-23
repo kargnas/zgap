@@ -1,4 +1,5 @@
 import { spawn, execFile } from "node:child_process";
+import { Buffer } from "node:buffer";
 import { access, chmod, mkdtemp, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { constants as fsConstants, realpathSync } from "node:fs";
 import os from "node:os";
@@ -14,6 +15,7 @@ const FORWARDED_SIGNALS = process.platform === "win32"
   : ["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT"];
 // OMP's ThinkingLevel enum; the proxy also advertises "ultra", which OMP does not accept.
 const OMP_EFFORTS = new Set(["minimal", "low", "medium", "high", "xhigh", "max"]);
+const OMP_MODEL_ROLES = ["default", "smol", "slow", "vision", "plan", "designer", "commit", "tiny", "task", "advisor"];
 
 async function executable(pathname) {
   try {
@@ -91,8 +93,15 @@ function shellQuote(value) {
 
 // OMP treats a "!command" apiKey as a shell command and re-runs it on auth retries, so
 // the zgap helper keeps serving fresh tokens across credential rotation.
-function authTokenCommand(credentialFile) {
-  return `!${[process.execPath, CLI_FILE, "auth-token", credentialFile].map(shellQuote).join(" ")}`;
+export function authTokenCommand(credentialFile, platform = process.platform) {
+  const args = [process.execPath, CLI_FILE, "auth-token", credentialFile];
+  if (platform === "win32") {
+    // EncodedCommand avoids cmd.exe expanding metacharacters from user-controlled paths.
+    const quote = (value) => `'${value.replaceAll("'", "''")}'`;
+    const script = `& ${args.map(quote).join(" ")}\nexit $LASTEXITCODE`;
+    return `!powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ${Buffer.from(script, "utf16le").toString("base64")}`;
+  }
+  return `!${args.map(shellQuote).join(" ")}`;
 }
 
 function extensionSource(origin, credentialFile, models) {
@@ -119,18 +128,27 @@ export async function createEphemeralExtension({ configDir, ompPath, env = proce
   const clientVersion = await readOmpVersion(ompPath, env);
   const catalog = await fetchModelCatalog(configDir, clientVersion, origin);
   const { models, defaultSlug } = catalogToOmpModels(catalog);
+  const defaultModel = `zgap/${defaultSlug}`;
   const directory = await mkdtemp(path.join(os.tmpdir(), "zgap-"));
   try {
     await chmod(directory, 0o700);
     const target = path.join(directory, "extension.mjs");
     await writeFile(target, extensionSource(origin, credentialsPath(configDir), models), { mode: 0o600 });
     await chmod(target, 0o600);
-    // Without this overlay a bare `zgap omp` would start on the user's own default model
-    // role and bypass the proxy; an explicit --model or a user --config still wins.
+    // OMP roles may point at the user's providers, so every built-in role uses the
+    // server-ranked proxy model for this process; later user arguments still win explicitly.
     const overlay = path.join(directory, "overlay.yml");
-    await writeFile(overlay, `modelRoles:\n  default: ${JSON.stringify(`zgap/${defaultSlug}`)}\n`, { mode: 0o600 });
+    await writeFile(overlay, [
+      "modelRoles:",
+      ...OMP_MODEL_ROLES.map((role) => `  ${role}: ${JSON.stringify(defaultModel)}`),
+      "retry:",
+      "  fallbackChains:",
+      "    default: []",
+      '    "zgap/*": []',
+      "",
+    ].join("\n"), { mode: 0o600 });
     await chmod(overlay, 0o600);
-    return { directory, target, overlay };
+    return { directory, target, overlay, defaultModel };
   } catch (error) {
     await rm(directory, { recursive: true, force: true });
     throw error;
@@ -192,8 +210,10 @@ export async function runOmp(args, {
       child = spawn(ompPath, [
         "-e", ephemeral.target,
         "--config", ephemeral.overlay,
+        // OMP restores a resumed session's prior model unless the CLI supplies one.
+        "--model", ephemeral.defaultModel,
         // YOLO mode skips OMP's tool-approval prompts, matching the Codex/Claude runners.
-        ...(dangerousMode && !args.includes("--auto-approve") && !args.some((arg) => arg.startsWith("--approval-mode="))
+        ...(dangerousMode && !args.includes("--auto-approve") && !args.includes("--approval-mode") && !args.some((arg) => arg.startsWith("--approval-mode="))
           ? ["--auto-approve"]
           : []),
         ...args,
