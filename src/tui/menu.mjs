@@ -260,7 +260,11 @@ export async function runStartMenu({
       alignItems: "stretch",
       gap: content.actions.length > 2 ? 0 : (content.actions.length > 1 ? 1 : 0),
     });
-    const actionCards = content.actions.map((item) => {
+    const actionGrid = content.actions.length >= 4;
+    // Compact single-row cards drop the Enter suffix so all agent labels fit narrow terminals.
+    const fullLabels = content.actions.map((item) => `${item.label}  ↵`);
+    const compactLabels = content.actions.map((item) => item.label);
+    const actionCards = content.actions.map((item, index) => {
       const card = new BoxRenderable(renderer, {
         width: "100%",
         height: 4,
@@ -272,7 +276,7 @@ export async function runStartMenu({
         paddingX: 1,
       });
       const label = new TextRenderable(renderer, {
-        content: `${item.label}  ↵`,
+        content: fullLabels[index],
         fg: "#F8FAFC",
         attributes: TextAttributes.BOLD,
         selectable: true,
@@ -329,15 +333,20 @@ export async function runStartMenu({
       centerArea.alignItems = compact ? "stretch" : "center";
       modeArea.height = compact ? 1 : 2;
       modeHint.visible = !compact;
-      actionRow.flexDirection = compact && content.actions.length > 1 ? "row" : "column";
-      actionRow.width = compact ? "100%" : "70%";
-      actionRow.height = compact ? 3 : (content.actions.length > 1 ? (content.actions.length * 4 + (content.actions.length > 2 ? 0 : 1)) : 4);
-      actionRow.gap = compact ? 0 : (content.actions.length > 2 ? 0 : (content.actions.length > 1 ? 1 : 0));
-      actionCards.forEach(({ card, description }) => {
-        card.width = compact && content.actions.length > 1 ? `${100 / content.actions.length}%` : "100%";
+      // With 4+ agent cards the stacked column no longer fits a 24-row terminal
+      // next to the mode rail, so non-compact layouts wrap cards in two columns too.
+      const grid = compact ? content.actions.length > 1 : actionGrid;
+      actionRow.flexDirection = grid ? "row" : "column";
+      actionRow.flexWrap = grid ? "wrap" : "nowrap";
+      actionRow.width = compact ? "100%" : (actionGrid ? "88%" : "70%");
+      actionRow.height = compact ? 3 : (actionGrid ? 8 : (content.actions.length > 1 ? (content.actions.length * 4 + (content.actions.length > 2 ? 0 : 1)) : 4));
+      actionRow.gap = compact ? 0 : (actionGrid ? 1 : (content.actions.length > 2 ? 0 : (content.actions.length > 1 ? 1 : 0)));
+      actionCards.forEach(({ card, label, description }, index) => {
+        card.width = grid ? (compact ? `${Math.floor(100 / content.actions.length)}%` : "48%") : "100%";
         card.height = compact ? 3 : 4;
         card.paddingX = compact ? 0 : 1;
         description.visible = !compact;
+        label.content = compact ? compactLabels[index] : fullLabels[index];
       });
       bottomBar.justifyContent = compact ? "flex-start" : "space-between";
       ready.visible = !compact;

@@ -306,7 +306,7 @@ test("Corner Map은 100x24의 네 모서리와 중앙을 사용한다", async (t
   assert.ok(title.x <= 3 && title.y <= 3, `title at ${title.x},${title.y}`);
   assert.ok(status.x >= 80 && status.y <= 3, `status at ${status.x},${status.y}`);
   assert.ok(proxy.x >= 75 && proxy.y <= 4, `proxy at ${proxy.x},${proxy.y}`);
-  assert.ok(action.x <= 20 && action.y >= 5 && action.y <= 14, `action at ${action.x},${action.y}`);
+  assert.ok(action.x <= 20 && action.y >= 5 && action.y <= 18, `action at ${action.x},${action.y}`);
   assert.ok(hint.x >= 30 && hint.y >= 21, `hint at ${hint.x},${hint.y}`);
 
   await setup.mockInput.pressCtrlC();
@@ -649,12 +649,14 @@ test("로그인 상태에서는 CODEX, Claude, Sessions를 선택할 수 있다"
   const claudeLabel = findText(setup.renderer.root, "Claude  ↵");
   const ompLabel = findText(setup.renderer.root, "OMP  ↵");
   const sessionsLabel = findText(setup.renderer.root, "Sessions  ↵");
-  assert.equal(codexLabel.x, claudeLabel.x);
-  assert.equal(claudeLabel.x, ompLabel.x);
-  assert.equal(ompLabel.x, sessionsLabel.x);
-  assert.ok(claudeLabel.y > codexLabel.y, `Claude action must be below Codex: ${claudeLabel.y} <= ${codexLabel.y}`);
-  assert.ok(ompLabel.y > claudeLabel.y, `OMP action must be below Claude: ${ompLabel.y} <= ${claudeLabel.y}`);
-  assert.ok(sessionsLabel.y > ompLabel.y, `Sessions action must be below OMP: ${sessionsLabel.y} <= ${ompLabel.y}`);
+  // Four agent cards wrap into a 2x2 grid: row order is Codex/Claude then OMP/Sessions.
+  assert.equal(codexLabel.y, claudeLabel.y);
+  assert.equal(ompLabel.y, sessionsLabel.y);
+  assert.equal(codexLabel.x, ompLabel.x);
+  assert.equal(claudeLabel.x, sessionsLabel.x);
+  assert.ok(claudeLabel.x > codexLabel.x, `Claude action must be right of Codex: ${claudeLabel.x} <= ${codexLabel.x}`);
+  assert.ok(ompLabel.y > codexLabel.y, `OMP action must be below Codex: ${ompLabel.y} <= ${codexLabel.y}`);
+  assert.ok(sessionsLabel.y > claudeLabel.y, `Sessions action must be below Claude: ${sessionsLabel.y} <= ${claudeLabel.y}`);
   assert.notEqual(codexLabel.fg.toString(), claudeLabel.fg.toString());
 
   await setup.mockInput.pressArrow("down");
@@ -818,7 +820,7 @@ test("Corner Map의 action text는 mouse drag로 선택할 수 있다", async (t
     actions: { login: async () => 0, codex: async () => 0 },
   });
   await flushMenu(setup);
-  const actionLabel = findText(setup.renderer.root, "CODEX  ↵");
+  const actionLabel = findText(setup.renderer.root, "CODEX");
   await setup.mockMouse.drag(actionLabel.x, actionLabel.y, actionLabel.x + 10, actionLabel.y);
 
   assert.match(setup.renderer.getSelection()?.getSelectedText() ?? "", /CODEX/);
