@@ -1,4 +1,5 @@
 import { execFile, spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { access, realpath, stat } from "node:fs/promises";
 import { constants as fsConstants, realpathSync } from "node:fs";
 import path from "node:path";
@@ -15,6 +16,13 @@ const OMP_VALUE_FLAGS = new Set([
   "--trusted-extension", "--plugin-dir", "--skills", "--approval-mode", "--profile", "--alias",
 ]);
 const OMP_OPTIONAL_VALUE_FLAGS = new Set(["--resume", "-r", "--session"]);
+const OMP_MANAGEMENT_COMMANDS = new Set([
+  "auth-broker", "auth-gateway", "agents", "bench", "browser-relay", "cleanse", "commit",
+  "completions", "__complete", "compress", "config", "dry-balance", "gc", "grep", "gallery",
+  "grievances", "images", "img", "install", "join", "models", "plugin", "ps", "say", "share",
+  "setup", "shell", "read", "render", "ssh", "stats", "update", "usage", "tiny-models", "token",
+  "ttsr", "worktree", "wt", "search", "q", "help",
+]);
 const FORWARDED_SIGNALS = process.platform === "win32"
   ? ["SIGINT", "SIGTERM"]
   : ["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT"];
@@ -69,11 +77,11 @@ function assertSupportedOmpVersion(version) {
   throw new Error(`OMP 18.0.3 or newer is required; found ${version}.`);
 }
 
-function invokesDisabledUsage(args) {
+function firstResidualPositional(args) {
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
-    if (arg === "--") return false;
-    if (!arg.startsWith("-")) return arg === "usage";
+    if (arg === "--") return undefined;
+    if (!arg.startsWith("-")) return arg;
     if (arg.startsWith("--") && arg.includes("=")) continue;
     if (OMP_VALUE_FLAGS.has(arg)) {
       index += 1;
@@ -82,7 +90,7 @@ function invokesDisabledUsage(args) {
     const next = args[index + 1];
     if (OMP_OPTIONAL_VALUE_FLAGS.has(arg) && next?.length > 0 && !next.startsWith("-")) index += 1;
   }
-  return false;
+  return undefined;
 }
 
 export async function runOmp(args, {
@@ -90,7 +98,11 @@ export async function runOmp(args, {
   cwd = process.cwd(),
   dangerousMode = false,
 } = {}) {
-  if (invokesDisabledUsage(args)) throw new Error("OMP usage is disabled while using zgap.");
+  const command = firstResidualPositional(args);
+  if (command === "usage") throw new Error("OMP usage is disabled while using zgap.");
+  if (OMP_MANAGEMENT_COMMANDS.has(command)) {
+    throw new Error(`OMP command "${command}" is unavailable through zgap; run \`omp ${command}\` directly.`);
+  }
   let receivedSignal;
   let child;
   let handlersRemoved = false;
@@ -121,9 +133,12 @@ export async function runOmp(args, {
     abortIfSignaled();
     assertSupportedOmpVersion(await readOmpVersion(ompPath, env));
     abortIfSignaled();
+    const requiredFlagName = `zgap-provider-override-required-${randomBytes(16).toString("hex")}`;
     return await new Promise((resolve, reject) => {
       child = spawn(ompPath, [
-        "--trusted-extension", OMP_EXTENSION_FILE,
+        "-e", OMP_EXTENSION_FILE,
+        // This random flag exists only if this exact extension loaded; otherwise OMP's second parse rejects it.
+        `--${requiredFlagName}=true`,
         ...(dangerousMode && !args.includes("--auto-approve") && !args.includes("--approval-mode") && !args.some((arg) => arg.startsWith("--approval-mode="))
           ? ["--auto-approve"]
           : []),

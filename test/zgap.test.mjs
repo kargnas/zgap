@@ -919,9 +919,14 @@ process.exitCode = 5;
   const result = await runCli(["omp", "--print", "hello"], cliEnv);
   assert.equal(result.code, 5, result.stderr);
   const invocation = JSON.parse(result.stdout);
-  assert.equal(invocation.argv[0], "--trusted-extension");
-  assert.equal(invocation.argv.filter((arg) => arg === "--trusted-extension").length, 1);
-  assert.equal(invocation.argv.includes("-e"), false);
+  assert.equal(invocation.argv[0], "-e");
+  assert.equal(invocation.argv.filter((arg) => arg === "-e").length, 1);
+  assert.equal(invocation.argv.includes("--trusted-extension"), false);
+  assert.equal(invocation.argv.includes("--zgap-provider-override-required"), false);
+  assert.equal(
+    invocation.argv.filter((arg) => /^--zgap-provider-override-required-[0-9a-f]{32}=true$/.test(arg)).length,
+    1,
+  );
   assert.equal(invocation.argv.includes("--config"), false);
   assert.equal(invocation.argv.includes("--model"), false);
   assert.equal(invocation.argv.includes("--auto-approve"), true);
@@ -951,14 +956,37 @@ process.exitCode = 5;
   await writeFile(path.join(configDir, "preferences.json"), '{"dangerousMode":false}\n');
   const safeResult = await runCli(["omp", "--print", "hello"], cliEnv);
   assert.equal(safeResult.code, 5, safeResult.stderr);
-  assert.equal(JSON.parse(safeResult.stdout).argv.includes("--auto-approve"), false);
+  const safeInvocation = JSON.parse(safeResult.stdout);
+  assert.equal(safeInvocation.argv.includes("--auto-approve"), false);
+  assert.equal(
+    safeInvocation.argv.filter((arg) => /^--zgap-provider-override-required-[0-9a-f]{32}=true$/.test(arg)).length,
+    1,
+  );
+  assert.deepEqual(safeInvocation.argv.slice(-2), ["--print", "hello"]);
+
+  const managementMarker = path.join(root, "management-ran");
+  await writeFile(fakeOmp, `#!/usr/bin/env node
+if (process.argv[2] === "--version") { process.stdout.write("omp/18.0.3\\n"); process.exit(0); }
+import("node:fs").then(({ writeFileSync }) => writeFileSync(${JSON.stringify(managementMarker)}, "ran"));
+`);
+  const managementResult = await runCli(["omp", "models", "--json"], cliEnv);
+  assert.equal(managementResult.code, 1);
+  assert.match(managementResult.stderr, /management command|models/i);
+  assert.match(managementResult.stderr, /run `omp(?: models)?` directly/i);
+  await assert.rejects(access(managementMarker), { code: "ENOENT" });
 });
 
 test("OMP extension은 기존 OpenAI와 Anthropic provider를 proxy로 재등록한다", async () => {
   const { authTokenCommand, registerProxyProviders } = await import("../src/omp-provider-extension.mjs");
+  const flags = [];
   const registrations = [];
+  const handlers = new Map();
+  const terminations = [];
+  const selectedModels = [];
+  const sessionOperations = [];
   const origin = "https://proxy.example.test";
   const credentialFile = "/tmp/zgap credentials.json";
+  const requiredFlagName = "zgap-provider-override-required-test";
   const env = {
     CLAUDE_CODE_USE_FOUNDRY: "1",
     FOUNDRY_BASE_URL: "https://foundry.example",
@@ -966,11 +994,35 @@ test("OMP extension은 기존 OpenAI와 Anthropic provider를 proxy로 재등록
     PRESERVED: "yes",
   };
   await registerProxyProviders({
+    registerFlag(name, options) {
+      flags.push({ name, options });
+    },
     registerProvider(name, config) {
       registrations.push({ name, config });
     },
-  }, { origin, credentialFile, platform: "linux", env });
+    async setModel(model) {
+      sessionOperations.push("setModel");
+      selectedModels.push(model);
+      return true;
+    },
+    on(event, handler) {
+      handlers.set(event, handler);
+    },
+  }, {
+    origin,
+    credentialFile,
+    platform: "linux",
+    env,
+    requiredFlagName,
+    terminate(message) {
+      terminations.push(message);
+    },
+  });
 
+  assert.deepEqual(flags.map(({ name, options }) => ({ name, type: options.type })), [
+    { name: requiredFlagName, type: "boolean" },
+  ]);
+  assert.deepEqual([...handlers.keys()].sort(), ["before_agent_start", "before_provider_request", "session_start"]);
   assert.deepEqual(registrations.map(({ name }) => name), ["openai-codex", "anthropic"]);
   const openai = registrations[0].config;
   const anthropic = registrations[1].config;
@@ -983,20 +1035,417 @@ test("OMP extension은 기존 OpenAI와 Anthropic provider를 proxy로 재등록
   assert.equal(anthropic.apiKey, expectedKey);
   assert.equal(anthropic.authHeader, true);
   assert.equal(anthropic.headers["X-Api-Key"], expectedKey);
+  assert.equal(openai.headers["X-Zgap-Provider-Override"], requiredFlagName);
+  assert.equal(anthropic.headers["X-Zgap-Provider-Override"], requiredFlagName);
   assert.deepEqual(env, {
     ANTHROPIC_CUSTOM_HEADERS: "x-tenant: keep",
     PRESERVED: "yes",
   });
 
-  for (const { name, config } of registrations) {
-    assert.equal(Object.hasOwn(config, "models"), false);
-    assert.equal(config.usage.id, name);
-    assert.equal(config.usage.supports({ provider: name, credential: { type: "oauth", accessToken: "unused" } }), false);
-    assert.equal(config.usage.supports({ provider: name, credential: { type: "api_key", apiKey: "unused" } }), false);
-    assert.equal(await config.usage.fetchUsage(
-      { provider: name, credential: { type: "api_key", apiKey: "unused" } },
-      { fetch: async () => { throw new Error("official usage endpoint must not be called"); } },
-    ), null);
+  const assertDisabledUsage = async (actualRegistrations) => {
+    for (const { name, config } of actualRegistrations) {
+      assert.equal(Object.hasOwn(config, "models"), false);
+      assert.equal(config.usage.id, name);
+      assert.equal(config.usage.supports({ provider: name, credential: { type: "oauth", accessToken: "unused" } }), false);
+      assert.equal(config.usage.supports({ provider: name, credential: { type: "api_key", apiKey: "unused" } }), false);
+      assert.equal(await config.usage.fetchUsage(
+        { provider: name, credential: { type: "api_key", apiKey: "unused" } },
+        { fetch: async () => { throw new Error("official usage endpoint must not be called"); } },
+      ), null);
+    }
+  };
+  await assertDisabledUsage(registrations);
+
+  const reasserted = [];
+  const currentModel = {
+    id: "gpt-5.6-luna",
+    provider: "openai-codex",
+    api: "openai-codex-responses",
+    baseUrl: "https://api.openai.com/v1",
+  };
+  const refreshedModel = {
+    ...currentModel,
+    baseUrl: openai.baseUrl,
+  };
+  const canonicalTargetModels = [
+    refreshedModel,
+    {
+      id: "claude-sonnet-5",
+      provider: "anthropic",
+      api: "anthropic-messages",
+      baseUrl: anthropic.baseUrl,
+    },
+  ];
+  let officialUsageCalls = 0;
+  const sessionAuthStorage = {
+    async fetchUsageReports() {
+      officialUsageCalls += 1;
+      throw new Error("official usage endpoint must not be called");
+    },
+  };
+  const sessionRegistrySafety = {
+    authStorage: sessionAuthStorage,
+    getProviderBaseUrl(provider) {
+      if (provider === "openai-codex") return openai.baseUrl;
+      if (provider === "anthropic") return anthropic.baseUrl;
+      return undefined;
+    },
+    getProviderHeaders(provider) {
+      if (provider === "openai-codex") {
+        return { "X-Zgap-Provider-Override": requiredFlagName };
+      }
+      if (provider === "anthropic") {
+        return {
+          "X-Zgap-Provider-Override": requiredFlagName,
+          "X-Api-Key": "proxy-token",
+        };
+      }
+      return undefined;
+    },
+    hasCommandBackedApiKey(provider) {
+      if (provider === "openai-codex") return openai.apiKey === expectedKey;
+      if (provider === "anthropic") return anthropic.apiKey === expectedKey;
+      return false;
+    },
+  };
+  await handlers.get("session_start")(
+    { type: "session_start" },
+    {
+      model: currentModel,
+      modelRegistry: {
+        ...sessionRegistrySafety,
+        registerProvider(name, config) {
+          sessionOperations.push(`register:${name}`);
+          reasserted.push({ name, config });
+        },
+        find(provider, id) {
+          assert.equal(provider, currentModel.provider);
+          assert.equal(id, currentModel.id);
+          return refreshedModel;
+        },
+        getAll() {
+          return canonicalTargetModels;
+        },
+      },
+    },
+  );
+  assert.deepEqual(sessionOperations, ["register:openai-codex", "register:anthropic", "setModel"]);
+  assert.deepEqual(selectedModels, [refreshedModel]);
+  assert.deepEqual(terminations, []);
+  assert.deepEqual(await sessionAuthStorage.fetchUsageReports(), []);
+  assert.equal(officialUsageCalls, 0);
+  assert.deepEqual(reasserted.map(({ name }) => name), ["openai-codex", "anthropic"]);
+  assert.equal(reasserted[0].config.baseUrl, openai.baseUrl);
+  assert.equal(reasserted[0].config.apiKey, expectedKey);
+  assert.equal(reasserted[1].config.baseUrl, anthropic.baseUrl);
+  assert.equal(reasserted[1].config.apiKey, expectedKey);
+  assert.equal(reasserted[1].config.authHeader, true);
+  assert.equal(reasserted[1].config.headers["X-Api-Key"], expectedKey);
+  assert.equal(reasserted[0].config.headers["X-Zgap-Provider-Override"], requiredFlagName);
+  assert.equal(reasserted[1].config.headers["X-Zgap-Provider-Override"], requiredFlagName);
+  await assertDisabledUsage(reasserted);
+
+  const secondHandlers = new Map();
+  const secondTerminations = [];
+  await registerProxyProviders({
+    registerFlag() {},
+    registerProvider() {},
+    async setModel() {
+      return true;
+    },
+    on(event, handler) {
+      secondHandlers.set(event, handler);
+    },
+  }, {
+    origin,
+    credentialFile,
+    platform: "linux",
+    env: {},
+    requiredFlagName,
+    terminate(message) {
+      secondTerminations.push(message);
+    },
+  });
+  const sealedUsageBlocker = sessionAuthStorage.fetchUsageReports;
+  await assert.doesNotReject(async () => {
+    await secondHandlers.get("session_start")(
+      { type: "session_start" },
+      {
+        model: currentModel,
+        modelRegistry: {
+          ...sessionRegistrySafety,
+          registerProvider() {},
+          find() {
+            return refreshedModel;
+          },
+          getAll() {
+            return canonicalTargetModels;
+          },
+        },
+      },
+    );
+  });
+  assert.deepEqual(secondTerminations, []);
+  assert.equal(sessionAuthStorage.fetchUsageReports, sealedUsageBlocker);
+  assert.deepEqual(await sessionAuthStorage.fetchUsageReports(), []);
+
+  const nonTargetModel = {
+    id: "other-model",
+    provider: "openrouter",
+    api: "openai-responses",
+    baseUrl: "https://openrouter.ai/api/v1",
+  };
+  const unsafeFallbackModel = {
+    id: "unsafe-claude",
+    provider: "anthropic",
+    api: "anthropic-messages",
+    baseUrl: anthropic.baseUrl,
+    transport: "pi-native",
+  };
+  await handlers.get("session_start")(
+    { type: "session_start" },
+    {
+      model: nonTargetModel,
+      modelRegistry: {
+        ...sessionRegistrySafety,
+        registerProvider() {},
+        getAll() {
+          return [nonTargetModel, canonicalTargetModels[1]];
+        },
+      },
+    },
+  );
+  assert.deepEqual(terminations, []);
+  assert.deepEqual(selectedModels, [refreshedModel]);
+  assert.equal(sessionOperations.filter((operation) => operation === "setModel").length, 1);
+
+  await handlers.get("session_start")(
+    { type: "session_start" },
+    {
+      model: nonTargetModel,
+      modelRegistry: {
+        ...sessionRegistrySafety,
+        registerProvider() {},
+        getAll() {
+          return [nonTargetModel, unsafeFallbackModel];
+        },
+      },
+    },
+  );
+  assert.equal(terminations.length, 1);
+  assert.equal(terminations[0].includes(expectedKey), false);
+  assert.equal(terminations[0].includes(credentialFile), false);
+  assert.deepEqual(selectedModels, [refreshedModel]);
+  assert.equal(sessionOperations.filter((operation) => operation === "setModel").length, 1);
+  terminations.length = 0;
+
+  const providerConfigs = new Map(registrations.map(({ name, config }) => [name, config]));
+  const requestHeaders = new Map([
+    ["openai-codex", {
+      Authorization: "Bearer proxy-token",
+    }],
+    ["anthropic", {
+      Authorization: "Bearer proxy-token",
+      "X-Api-Key": "proxy-token",
+    }],
+  ]);
+  const providerHeaders = new Map([
+    ["openai-codex", {
+      "X-Zgap-Provider-Override": requiredFlagName,
+    }],
+    ["anthropic", {
+      "X-Zgap-Provider-Override": requiredFlagName,
+      "X-Api-Key": "proxy-token",
+    }],
+  ]);
+  const guardedRegistry = {
+    getProviderBaseUrl(provider) {
+      return providerConfigs.get(provider)?.baseUrl;
+    },
+    getProviderHeaders(provider) {
+      return providerHeaders.get(provider);
+    },
+    hasCommandBackedApiKey(provider) {
+      return providerConfigs.get(provider)?.apiKey === expectedKey;
+    },
+    async getApiKey() {
+      return "proxy-token";
+    },
+  };
+  const canonicalApis = new Map([
+    ["openai-codex", "openai-codex-responses"],
+    ["anthropic", "anthropic-messages"],
+  ]);
+  const restoreAmbientProviderEnvironment = () => {
+    env.CLAUDE_CODE_USE_FOUNDRY = "1";
+    env.FOUNDRY_BASE_URL = "https://foundry.example";
+    env.CLAUDE_CODE_CLIENT_CERT = "client-cert";
+    env.CLAUDE_CODE_CLIENT_KEY = "client-key";
+    env.ANTHROPIC_CUSTOM_HEADERS = "x-tenant: keep, Authorization: Bearer wrong\nX-Api-Key: wrong";
+  };
+  const assertAmbientProviderEnvironmentNeutralized = () => {
+    for (const name of [
+      "CLAUDE_CODE_USE_FOUNDRY",
+      "FOUNDRY_BASE_URL",
+      "CLAUDE_CODE_CLIENT_CERT",
+      "CLAUDE_CODE_CLIENT_KEY",
+    ]) assert.equal(env[name], undefined, name);
+    assert.equal(env.ANTHROPIC_CUSTOM_HEADERS, "x-tenant: keep");
+    assert.equal(env.PRESERVED, "yes");
+  };
+  const beforeProviderRequest = handlers.get("before_provider_request");
+  for (const provider of ["openai-codex", "anthropic"]) {
+    const config = providerConfigs.get(provider);
+    restoreAmbientProviderEnvironment();
+    await beforeProviderRequest(
+      { type: "before_provider_request", payload: {} },
+      {
+        model: {
+          provider,
+          api: canonicalApis.get(provider),
+          baseUrl: config.baseUrl,
+          headers: requestHeaders.get(provider),
+        },
+        modelRegistry: guardedRegistry,
+      },
+    );
+    assertAmbientProviderEnvironmentNeutralized();
+  }
+  assert.deepEqual(terminations, []);
+
+  await beforeProviderRequest(
+    { type: "before_provider_request", payload: {} },
+    {
+      model: {
+        provider: "anthropic",
+        api: canonicalApis.get("anthropic"),
+        baseUrl: "https://api.anthropic.com",
+        headers: requestHeaders.get("anthropic"),
+      },
+      modelRegistry: guardedRegistry,
+    },
+  );
+  assert.equal(terminations.length, 1);
+  assert.equal(typeof terminations[0], "string");
+  assert.equal(terminations[0].includes(expectedKey), false);
+  assert.equal(terminations[0].includes(credentialFile), false);
+
+  const markerlessRegistry = {
+    ...guardedRegistry,
+    getProviderHeaders(provider) {
+      const headers = providerHeaders.get(provider);
+      return Object.fromEntries(
+        Object.entries(headers ?? {}).filter(([name]) => name !== "X-Zgap-Provider-Override"),
+      );
+    },
+  };
+
+  await beforeProviderRequest(
+    { type: "before_provider_request", payload: {} },
+    {
+      model: {
+        provider: "openai-codex",
+        api: canonicalApis.get("openai-codex"),
+        baseUrl: openai.baseUrl,
+        headers: { Authorization: "Bearer proxy-token" },
+      },
+      modelRegistry: markerlessRegistry,
+    },
+  );
+  assert.equal(terminations.length, 2);
+  assert.equal(terminations[1].includes(expectedKey), false);
+  assert.equal(terminations[1].includes(credentialFile), false);
+
+  await beforeProviderRequest(
+    { type: "before_provider_request", payload: {} },
+    {
+      model: {
+        provider: "openai-codex",
+        api: canonicalApis.get("openai-codex"),
+        baseUrl: openai.baseUrl,
+        headers: { Authorization: "Bearer wrong-token" },
+      },
+      modelRegistry: guardedRegistry,
+    },
+  );
+  assert.equal(terminations.length, 3);
+
+  await beforeProviderRequest(
+    { type: "before_provider_request", payload: {} },
+    {
+      model: {
+        provider: "anthropic",
+        api: canonicalApis.get("anthropic"),
+        baseUrl: anthropic.baseUrl,
+        headers: {
+          Authorization: "Bearer proxy-token",
+          "X-Api-Key": "wrong-token",
+        },
+      },
+      modelRegistry: guardedRegistry,
+    },
+  );
+  assert.equal(terminations.length, 4);
+  for (const message of terminations.slice(2)) {
+    assert.equal(message.includes(expectedKey), false);
+    assert.equal(message.includes(credentialFile), false);
+    assert.equal(message.includes("wrong-token"), false);
+  }
+
+  await beforeProviderRequest(
+    { type: "before_provider_request", payload: {} },
+    {
+      model: { provider: "openrouter", baseUrl: "https://openrouter.ai/api/v1" },
+      modelRegistry: {
+        getProviderBaseUrl: () => "https://openrouter.ai/api/v1",
+        getProviderHeaders: () => ({ Authorization: "Bearer unrelated" }),
+        hasCommandBackedApiKey: () => false,
+      },
+    },
+  );
+  assert.equal(terminations.length, 4);
+
+  const beforeAgentStart = handlers.get("before_agent_start");
+  const safeOpenaiModel = {
+    provider: "openai-codex",
+    api: canonicalApis.get("openai-codex"),
+    baseUrl: openai.baseUrl,
+    headers: requestHeaders.get("openai-codex"),
+  };
+  restoreAmbientProviderEnvironment();
+  await beforeAgentStart(
+    { type: "before_agent_start", prompt: "hello", systemPrompt: [] },
+    { model: safeOpenaiModel, modelRegistry: guardedRegistry },
+  );
+  assertAmbientProviderEnvironmentNeutralized();
+  assert.equal(terminations.length, 4);
+
+  await beforeAgentStart(
+    { type: "before_agent_start", prompt: "hello", systemPrompt: [] },
+    {
+      model: { ...safeOpenaiModel, transport: "pi-native" },
+      modelRegistry: guardedRegistry,
+    },
+  );
+  assert.equal(terminations.length, 5);
+
+  await beforeAgentStart(
+    { type: "before_agent_start", prompt: "hello", systemPrompt: [] },
+    {
+      model: {
+        provider: "anthropic",
+        api: "openai-responses",
+        baseUrl: anthropic.baseUrl,
+        headers: requestHeaders.get("anthropic"),
+      },
+      modelRegistry: guardedRegistry,
+    },
+  );
+  assert.equal(terminations.length, 6);
+  for (const message of terminations.slice(4)) {
+    assert.equal(message.includes(expectedKey), false);
+    assert.equal(message.includes(credentialFile), false);
+    assert.equal(message.includes("proxy-token"), false);
   }
 });
 
