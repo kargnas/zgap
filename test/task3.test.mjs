@@ -913,8 +913,8 @@ printf '%s\\n' "$@" >> ${marker}
   assert.equal(code, 0);
   assert.equal(
     await readFile(marker, "utf8"),
-    "add\n-g\ngithub:kargnas/zgap#main\n--force\n--no-cache\n"
-      + "update\n-g\nzgap\n--force\n--no-cache\n",
+    "add\n-g\ngithub:kargnas/zgap#main\n--force\n--no-cache\n--registry\nhttps://registry.npmjs.org\n"
+      + "update\n-g\nzgap\n--force\n--no-cache\n--registry\nhttps://registry.npmjs.org\n",
   );
   assert.equal((await readdir(root)).includes("zgap"), false);
 });
@@ -941,8 +941,8 @@ chmod +x ${bunInstall}/bin/bun
   assert.equal(await readFile(curlArgs, "utf8"), "-fsSL\nhttps://bun.com/install\n");
   assert.equal(
     await readFile(bunArgs, "utf8"),
-    "add\n-g\ngithub:kargnas/zgap#main\n--force\n--no-cache\n"
-      + "update\n-g\nzgap\n--force\n--no-cache\n",
+    "add\n-g\ngithub:kargnas/zgap#main\n--force\n--no-cache\n--registry\nhttps://registry.npmjs.org\n"
+      + "update\n-g\nzgap\n--force\n--no-cache\n--registry\nhttps://registry.npmjs.org\n",
   );
 });
 
