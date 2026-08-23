@@ -17,12 +17,14 @@ zgap login
 zgap
 ```
 
-Codex, Claude Code, and OMP are currently supported. Existing local configuration and session history remain in their normal locations.
+Codex, Claude Code, and OMP are currently supported. Existing local configuration and session history remain in their normal locations. `zgap omp` loads its provider override only in the launched OMP process: existing `openai-codex` and `anthropic` model requests use the configured proxy, direct official usage checks for those providers are disabled, and a regular `omp` process remains unchanged. The standalone `zgap omp usage` command is rejected.
+
+To keep routing fail-closed, the zgap child uses OMP's trusted-extension mode. Ambient OMP extensions are not loaded in that child; running `omp` directly continues to load them normally.
 
 ```text
 zgap codex [args...]   Run Codex
 zgap claude [args...]  Run Claude Code
-zgap omp [args...]     Run OMP
+zgap omp [args...]     Run OMP with process-local provider overrides
 zgap sessions          Browse agent history
 zgap --help            Show all commands
 ```

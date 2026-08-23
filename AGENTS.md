@@ -17,7 +17,8 @@
 - `src/preferences.mjs`: persistent local launch-mode preferences.
 - `src/catalog.mjs` and `src/codex.mjs`: Codex-specific discovery, ephemeral catalog assembly, and launch arguments.
 - `src/claude.mjs`: Claude Code launch arguments, inline settings, and child environment cleanup.
-- `src/omp.mjs`: OMP launch arguments, ephemeral zgap-provider extension, and child environment cleanup.
+- `src/omp.mjs`: OMP authentication/version gates, process arguments, signal forwarding, and process-local extension loading.
+- `src/omp-provider-extension.mjs`: process-local OpenAI Codex and Anthropic transport/auth overrides and direct usage suppression.
 - `src/sessions.mjs`: Multi-agent session discovery and shared history parsing.
 - `src/tui/`: OpenTUI start screen and locale resources.
 - `test/`: Node test-runner suites executed by Bun.
@@ -49,7 +50,7 @@
 - Keep persistent launch-mode state in `src/preferences.mjs`.
 - Keep catalog validation and temporary-file lifecycle in `src/catalog.mjs`.
 - Keep Codex process arguments and child environment cleanup in `src/codex.mjs`.
-- Keep OMP process arguments, the ephemeral extension lifecycle, and child environment cleanup in `src/omp.mjs`.
+- Keep OMP launch gates, process arguments, and signal cleanup in `src/omp.mjs`; keep provider overrides and their credential/usage boundary in `src/omp-provider-extension.mjs`.
 - Keep menu rendering and keyboard handling in `src/tui/menu.mjs`; keep translations in `src/tui/locales/*.json`.
 
 ## OpenTUI
@@ -68,7 +69,7 @@
 ## Multi-Agent Contract
 
 - Keep `login` credential-only: write the zgap credential path and do not mutate the user's Codex configuration.
-- Keep agent configuration process-local: `zgap codex` injects launch arguments and a temporary catalog, `zgap claude` injects child environment and inline settings, and `zgap omp` injects a temporary `-e` extension that registers the zgap provider.
+- Keep agent configuration process-local: `zgap codex` injects launch arguments and a temporary catalog, `zgap claude` injects child environment and inline settings, and `zgap omp` loads only the shipped provider override through OMP's fail-closed trusted-extension allowlist. Regular OMP configuration, extensions, and history remain untouched.
 - Preserve each supported agent's normal local configuration and history.
 
 ## Self reviewing
