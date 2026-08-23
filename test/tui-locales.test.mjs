@@ -39,8 +39,13 @@ test("영어와 한국어 locale은 같은 메뉴 key를 제공하고 40x10에�
       await flushMenu(setup);
       const frame = setup.captureCharFrame();
       const proxyStatus = locale === "ko" ? "프록시 접속됨" : "Proxy online";
+      const modeHint = locale === "ko" ? "Y 모드" : "Y mode";
+      const sessionsLabel = locale === "ko" ? "세션" : "Sessions";
       assert.match(frame, new RegExp(status), `${locale} ${credentialState} status clipped`);
       assert.match(frame, new RegExp(action), `${locale} ${credentialState} action clipped`);
+      assert.match(frame, new RegExp(sessionsLabel), `${locale} ${credentialState} Sessions action clipped`);
+      assert.match(frame, /SAFE.*YOLO/, `${locale} ${credentialState} mode rail clipped`);
+      assert.match(frame, new RegExp(modeHint), `${locale} ${credentialState} mode hint clipped`);
       if (credentialState === "signed-in") {
         assert.match(frame, /Claude/, `${locale} Claude action clipped`);
         assert.doesNotMatch(frame, /Signed in|로그인됨/, `${locale} legacy status remains`);

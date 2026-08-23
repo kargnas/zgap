@@ -365,6 +365,73 @@ test("인자 없는 CLI는 credential 상태를 시작 메뉴에 전달한다", 
   assert.equal(typeof menuOptions.actions.sessions, "function");
 });
 
+test("시작 메뉴의 dangerous mode 토글은 저장 후 같은 프로세스의 Codex 실행에 적용한다", async () => {
+  const { main } = await import("../src/cli.mjs");
+  const writes = [];
+  let launch;
+
+  const result = await main({
+    argv: [],
+    configDir: "/tmp/zgap-config",
+    credentialStateReader: async () => "signed-out",
+    configReader: async () => ({ host: "ai-proxy.zz.gg", origin: "https://ai-proxy.zz.gg" }),
+    dangerousModeReader: async () => false,
+    dangerousModeWriter: async (enabled) => { writes.push(enabled); },
+    codexRunner: async (args, options) => { launch = { args, options }; return 24; },
+    startMenu: async (options) => {
+      assert.equal(options.dangerousMode, false);
+      await options.onDangerousModeChange(true);
+      return options.actions.codex();
+    },
+  });
+
+  assert.equal(result, 24);
+  assert.deepEqual(writes, [true]);
+  assert.deepEqual(launch, {
+    args: [],
+    options: {
+      configDir: "/tmp/zgap-config",
+      origin: "https://ai-proxy.zz.gg",
+      dangerousMode: true,
+    },
+  });
+});
+
+test("저장된 dangerous mode는 Codex와 Claude 직접 명령에 함께 적용된다", async () => {
+  const { main } = await import("../src/cli.mjs");
+  const launches = [];
+  const shared = {
+    configDir: "/tmp/zgap-config",
+    configReader: async () => ({ host: "ai-proxy.zz.gg", origin: "https://ai-proxy.zz.gg" }),
+    dangerousModeReader: async () => true,
+    codexRunner: async (args, options) => { launches.push({ agent: "codex", args, options }); return 31; },
+    claudeRunner: async (args, options) => { launches.push({ agent: "claude", args, options }); return 32; },
+  };
+
+  assert.equal(await main({ ...shared, argv: ["codex", "exec", "hello"] }), 31);
+  assert.equal(await main({ ...shared, argv: ["claude", "--print", "hello"] }), 32);
+  assert.deepEqual(launches, [
+    {
+      agent: "codex",
+      args: ["exec", "hello"],
+      options: {
+        configDir: "/tmp/zgap-config",
+        origin: "https://ai-proxy.zz.gg",
+        dangerousMode: true,
+      },
+    },
+    {
+      agent: "claude",
+      args: ["--print", "hello"],
+      options: {
+        configDir: "/tmp/zgap-config",
+        origin: "https://ai-proxy.zz.gg",
+        dangerousMode: true,
+      },
+    },
+  ]);
+});
+
 test("sessions direct command는 현재 디렉터리의 browser를 연다", async () => {
   const { main } = await import("../src/cli.mjs");
   let options;
@@ -393,11 +460,11 @@ test("session resume은 선택한 agent의 정확한 id와 저장된 디렉터�
     claudeRunner: async (args, options) => { calls.push({ agent: "claude", args, options }); return 12; },
   };
 
-  assert.equal(await cli.resumeSession({ agent: "codex", id: "codex-id", cwd: codexCwd }, "/config", runners), 11);
-  assert.equal(await cli.resumeSession({ agent: "claude", id: "claude-id", cwd: claudeCwd }, "/config", runners), 12);
+  assert.equal(await cli.resumeSession({ agent: "codex", id: "codex-id", cwd: codexCwd }, "/config", { ...runners, dangerousMode: true }), 11);
+  assert.equal(await cli.resumeSession({ agent: "claude", id: "claude-id", cwd: claudeCwd }, "/config", { ...runners, dangerousMode: true }), 12);
   assert.deepEqual(calls, [
-    { agent: "codex", args: ["resume", "codex-id"], options: { configDir: "/config", cwd: codexCwd } },
-    { agent: "claude", args: ["--resume", "claude-id"], options: { configDir: "/config", cwd: claudeCwd } },
+    { agent: "codex", args: ["resume", "codex-id"], options: { configDir: "/config", cwd: codexCwd, dangerousMode: true } },
+    { agent: "claude", args: ["--resume", "claude-id"], options: { configDir: "/config", cwd: claudeCwd, dangerousMode: true } },
   ]);
 });
 
@@ -488,6 +555,63 @@ test("로그인 상태에서는 Login을 숨기고 CODEX를 실행한다", async
   assert.deepEqual(calls, ["codex"]);
 });
 
+test("중앙 mode rail은 Y로 Codex와 Claude의 dangerous mode를 함께 저장하고 전환한다", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runStartMenu } = await import("../src/tui/menu.mjs");
+  const setup = await createTestRenderer({ width: 100, height: 24 });
+  t.after(() => setup.renderer.destroy());
+  const writes = [];
+  const resultPromise = runStartMenu({
+    rendererFactory: async () => setup,
+    credentialState: "signed-in",
+    dangerousMode: false,
+    onDangerousModeChange: async (enabled) => { writes.push(enabled); },
+    actions: { codex: async () => 0, claude: async () => 0 },
+  });
+
+  await flushMenu(setup);
+  assert.match(setup.captureCharFrame(), /SAFE\s+●━+○\s+YOLO/);
+  assert.match(setup.captureCharFrame(), /Y toggles Codex and Claude together/);
+
+  await setup.mockInput.typeText("y");
+  await flushMenu(setup);
+  assert.deepEqual(writes, [true]);
+  assert.match(setup.captureCharFrame(), /SAFE\s+○━+●\s+YOLO/);
+
+  await setup.mockInput.typeText("y");
+  await flushMenu(setup);
+  assert.deepEqual(writes, [true, false]);
+  assert.match(setup.captureCharFrame(), /SAFE\s+●━+○\s+YOLO/);
+
+  await setup.mockInput.pressCtrlC();
+  await setup.mockInput.pressCtrlC();
+  assert.equal(await resultPromise, 130);
+});
+
+test("dangerous mode 저장 실패는 SAFE 상태와 오류 안내를 유지한다", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runStartMenu } = await import("../src/tui/menu.mjs");
+  const setup = await createTestRenderer({ width: 100, height: 24 });
+  t.after(() => setup.renderer.destroy());
+  const resultPromise = runStartMenu({
+    rendererFactory: async () => setup,
+    credentialState: "signed-in",
+    dangerousMode: false,
+    onDangerousModeChange: async () => { throw new Error("disk full"); },
+    actions: { codex: async () => 0, claude: async () => 0 },
+  });
+
+  await flushMenu(setup);
+  await setup.mockInput.typeText("y");
+  await flushMenu(setup);
+  assert.match(setup.captureCharFrame(), /SAFE\s+●━+○\s+YOLO/);
+  assert.match(setup.captureCharFrame(), /Could not save YOLO mode/);
+
+  await setup.mockInput.pressCtrlC();
+  await setup.mockInput.pressCtrlC();
+  assert.equal(await resultPromise, 130);
+});
+
 test("로그인 상태에서는 CODEX, Claude, Sessions를 선택할 수 있다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runStartMenu } = await import("../src/tui/menu.mjs");
@@ -560,6 +684,7 @@ test("Stacked Command Cards는 상하 박스와 선택 테두리를 유지한다
   assert.match(compact.captureCharFrame(), /CODEX/);
   assert.match(compact.captureCharFrame(), /Claude/);
   assert.match(compact.captureCharFrame(), /Sessions/);
+  assert.match(compact.captureCharFrame(), /SAFE.*YOLO/);
   assert.match(compact.captureCharFrame(), /Esc/);
 
   await wide.mockInput.pressArrow("down");
@@ -710,7 +835,7 @@ test("Corner Map은 40x10으로 줄어도 상태, action, 종료 hint를 유지�
   await flushMenu(setup);
   const boundaryFrame = setup.captureCharFrame();
   assert.doesNotMatch(boundaryFrame, /zgap \/ ready/);
-  assert.match(boundaryFrame, /↑↓ move · ↵ select · Esc Esc quit/);
+  assert.match(boundaryFrame, /Y mode · ↑↓ · ↵ select · Esc Esc quit/);
   setup.resize(40, 10);
   await flushMenu(setup);
   const frame = setup.captureCharFrame();
