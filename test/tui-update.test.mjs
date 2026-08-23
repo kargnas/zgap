@@ -67,6 +67,34 @@ test("한국어 TUI는 업데이트 완료일을 월일 버전으로 표시한�
   assert.equal(await resultPromise, 130);
 });
 
+test("compact TUI는 백그라운드 업데이트가 끝나도 update row를 숨긴다", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runStartMenu } = await import("../src/tui/menu.mjs");
+  const setup = await createTestRenderer({ width: 72, height: 24 });
+  t.after(() => setup.renderer.destroy());
+  let resolveUpdate;
+  const updatePromise = new Promise((resolve) => { resolveUpdate = resolve; });
+  const resultPromise = runStartMenu({
+    rendererFactory: async () => setup,
+    credentialState: "signed-in",
+    updateChecker: () => updatePromise,
+    proxyHealthCheck: async () => ({ state: "online", latencyMs: 1 }),
+    actions: { codex: async () => 0, claude: async () => 0, omp: async () => 0, sessions: async () => 0 },
+  });
+
+  await flushMenu(setup);
+  resolveUpdate({ state: "updated", commitDate: "2026-08-13" });
+  await flushMenu(setup);
+  const frame = setup.captureCharFrame();
+  assert.match(frame, /CODEX/);
+  assert.match(frame, /OMP/);
+  assert.doesNotMatch(frame, /Updated to/);
+
+  await setup.mockInput.pressCtrlC();
+  await setup.mockInput.pressCtrlC();
+  assert.equal(await resultPromise, 130);
+});
+
 test("TUI 종료는 아직 확인 중인 자동 업데이트 요청을 취소한다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runStartMenu } = await import("../src/tui/menu.mjs");

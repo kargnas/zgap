@@ -850,6 +850,16 @@ test("Corner Map은 40x10으로 줄어도 상태, action, 종료 hint를 유지�
   assert.match(wideFrame, /Claude/);
   assert.match(wideFrame, /Sessions/);
   assert.match(wideFrame, /Esc/);
+  setup.resize(72, 24);
+  await flushMenu(setup);
+  const mediumFrame = setup.captureCharFrame();
+  assert.match(mediumFrame, /CODEX/);
+  assert.match(mediumFrame, /OMP/);
+  setup.resize(100, 18);
+  await flushMenu(setup);
+  const shortFrame = setup.captureCharFrame();
+  assert.match(shortFrame, /CODEX/);
+  assert.match(shortFrame, /OMP/);
   setup.resize(60, 10);
   await flushMenu(setup);
   const boundaryFrame = setup.captureCharFrame();
@@ -864,6 +874,7 @@ test("Corner Map은 40x10으로 줄어도 상태, action, 종료 hint를 유지�
   assert.match(frame, /CODEX/);
   assert.match(frame, /Claude/);
   assert.match(frame, /Sessions/);
+  assert.match(frame, /│Sessions\s+│/);
   assert.match(frame, /Esc/);
   assert.deepEqual(Array.from(setup.captureSpans().lines[0].spans[0].bg.buffer), [0, 0, 0, 255]);
   await setup.mockInput.pressCtrlC();

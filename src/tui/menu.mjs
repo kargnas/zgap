@@ -318,7 +318,8 @@ export async function runStartMenu({
     renderer.root.add(root);
 
     const applyResponsiveLayout = (width, height = renderer.height) => {
-      const compact = width <= COMPACT_WIDTH || height <= 12;
+      // Four full cards need 81 columns and 19 rows before labels, descriptions, and the footer stop colliding.
+      const compact = width <= COMPACT_WIDTH || height <= 12 || (actionGrid && (width <= 80 || height <= 18));
       root.paddingTop = compact ? 0 : 1;
       root.paddingBottom = compact ? 0 : 1;
       topBar.flexDirection = compact ? "column" : "row";
@@ -342,7 +343,9 @@ export async function runStartMenu({
       actionRow.height = compact ? 3 : (actionGrid ? 8 : (content.actions.length > 1 ? (content.actions.length * 4 + (content.actions.length > 2 ? 0 : 1)) : 4));
       actionRow.gap = compact ? 0 : (actionGrid ? 1 : (content.actions.length > 2 ? 0 : (content.actions.length > 1 ? 1 : 0)));
       actionCards.forEach(({ card, label, description }, index) => {
-        card.width = grid ? (compact ? `${Math.floor(100 / content.actions.length)}%` : "48%") : "100%";
+        // Intrinsic compact widths keep long labels from overwriting their right border at 40 columns.
+        card.width = grid ? (compact ? "auto" : "48%") : "100%";
+        card.flexGrow = compact ? 1 : 0;
         card.height = compact ? 3 : 4;
         card.paddingX = compact ? 0 : 1;
         description.visible = !compact;
@@ -429,18 +432,18 @@ export async function runStartMenu({
                   timeZone: "UTC",
                 }).format(date),
               });
-              infoArea.visible = renderer.width > COMPACT_WIDTH && renderer.height > 12;
+              applyResponsiveLayout(renderer.width, renderer.height);
               return;
             }
           }
           updateStatus.content = t("updateFailed");
           updateStatus.fg = "#F87171";
-          infoArea.visible = renderer.width > COMPACT_WIDTH && renderer.height > 12;
+          applyResponsiveLayout(renderer.width, renderer.height);
         }).catch(() => {
           if (cleaned) return;
           updateStatus.content = t("updateFailed");
           updateStatus.fg = "#F87171";
-          infoArea.visible = renderer.width > COMPACT_WIDTH && renderer.height > 12;
+          applyResponsiveLayout(renderer.width, renderer.height);
         });
     }
 
