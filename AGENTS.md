@@ -14,6 +14,7 @@
 - `src/cli.mjs`: command dispatch, help, installation detection, and start screen wiring.
 - `src/login.mjs` and `src/credentials.mjs`: browser OAuth and private credential storage.
 - `src/config.mjs`: strict `config.yml` parsing and agent proxy host normalization.
+- `src/preferences.mjs`: persistent local launch-mode preferences.
 - `src/catalog.mjs` and `src/codex.mjs`: Codex-specific discovery, ephemeral catalog assembly, and launch arguments.
 - `src/claude.mjs`: Claude Code launch arguments, inline settings, and child environment cleanup.
 - `src/sessions.mjs`: Multi-agent session discovery and shared history parsing.
@@ -44,6 +45,7 @@
 
 - Keep OAuth protocol and credential-file changes in `src/login.mjs` and `src/credentials.mjs`.
 - Keep runtime host parsing and validation in `src/config.mjs`.
+- Keep persistent launch-mode state in `src/preferences.mjs`.
 - Keep catalog validation and temporary-file lifecycle in `src/catalog.mjs`.
 - Keep Codex process arguments and child environment cleanup in `src/codex.mjs`.
 - Keep menu rendering and keyboard handling in `src/tui/menu.mjs`; keep translations in `src/tui/locales/*.json`.
