@@ -62,6 +62,10 @@
   "sessionsTurnCount_other": "{{count}} turns",
   "sessionsDetailsUnavailable": "n/a",
   "sessionsActiveResumeConfirm": "This session is already running. Press Enter again within 1 second to resume",
+  "dangerousModeSafe": "SAFE",
+  "dangerousModeYolo": "YOLO",
+  "dangerousModeToggleHint": "Y toggles Codex and Claude together",
+  "dangerousModeSaveFailed": "Could not save YOLO mode",
   "hint": "Up/Down move  ·  Enter select  ·  Ctrl+C twice or Esc twice quit",
-  "compactHint": "↑↓ move · ↵ select · Esc Esc quit"
+  "compactHint": "Y mode · ↑↓ · ↵ select · Esc Esc quit"
 }
