@@ -17,7 +17,9 @@
 - `src/preferences.mjs`: persistent local launch-mode preferences.
 - `src/catalog.mjs` and `src/codex.mjs`: Codex-specific discovery, ephemeral catalog assembly, and launch arguments.
 - `src/claude.mjs`: Claude Code launch arguments, inline settings, and child environment cleanup.
-- `src/omp.mjs`: OMP launch arguments, ephemeral zgap-provider extension, and child environment cleanup.
+- `src/omp.mjs`: OMP authentication/version gates, process arguments, signal forwarding, and process-local extension loading.
+- `src/omp-provider-extension.mjs`: process-local OpenAI Codex and Anthropic transport/auth definitions.
+- `src/omp-provider-compat.mjs`: explicitly marked OMP 18.0.3 compatibility workarounds for additive fail-closed loading, provider ownership, and usage suppression.
 - `src/sessions.mjs`: Multi-agent session discovery and shared history parsing.
 - `src/tui/`: OpenTUI start screen and locale resources.
 - `test/`: Node test-runner suites executed by Bun.
@@ -49,7 +51,7 @@
 - Keep persistent launch-mode state in `src/preferences.mjs`.
 - Keep catalog validation and temporary-file lifecycle in `src/catalog.mjs`.
 - Keep Codex process arguments and child environment cleanup in `src/codex.mjs`.
-- Keep OMP process arguments, the ephemeral extension lifecycle, and child environment cleanup in `src/omp.mjs`.
+- Keep OMP launch gates, process arguments, and signal cleanup in `src/omp.mjs`; keep proxy provider definitions and credential commands in `src/omp-provider-extension.mjs`; keep every version-specific workaround in `src/omp-provider-compat.mjs`.
 - Keep menu rendering and keyboard handling in `src/tui/menu.mjs`; keep translations in `src/tui/locales/*.json`.
 
 ## OpenTUI
@@ -68,7 +70,7 @@
 ## Multi-Agent Contract
 
 - Keep `login` credential-only: write the zgap credential path and do not mutate the user's Codex configuration.
-- Keep agent configuration process-local: `zgap codex` injects launch arguments and a temporary catalog, `zgap claude` injects child environment and inline settings, and `zgap omp` injects a temporary `-e` extension that registers the zgap provider.
+- Keep agent configuration process-local: `zgap codex` injects launch arguments and a temporary catalog, `zgap claude` injects child environment and inline settings, and `zgap omp` additively loads the shipped provider override with a required extension-owned CLI flag. Regular OMP configuration, ambient extensions, and history remain active and untouched.
 - Preserve each supported agent's normal local configuration and history.
 
 ## Self reviewing

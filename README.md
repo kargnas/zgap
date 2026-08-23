@@ -17,17 +17,21 @@ zgap login
 zgap
 ```
 
-Codex, Claude Code, and OMP are currently supported. Existing local configuration and session history remain in their normal locations.
+Codex, Claude Code, and OMP are currently supported. Existing local configuration and session history remain in their normal locations. `zgap omp` loads its provider override only in the launched OMP process: existing `openai-codex` and `anthropic` model requests use the configured proxy, direct official usage checks for those providers are disabled, and a regular `omp` process remains unchanged. The standalone `zgap omp usage` command is rejected.
+
+Existing OMP extensions continue to load in the zgap child. A required extension handshake aborts startup before a session can run if the proxy override cannot load.
+
+`zgap omp` supports launch and ACP sessions. Run OMP management commands such as `models`, `config`, and `plugin` with `omp` directly.
 
 ```text
 zgap codex [args...]   Run Codex
 zgap claude [args...]  Run Claude Code
-zgap omp [args...]     Run OMP
+zgap omp [args...]     Run OMP with process-local provider overrides
 zgap sessions          Browse agent history
 zgap --help            Show all commands
 ```
 
-Press Left or Right in the start menu to select SAFE or YOLO mode for Codex, Claude Code, and OMP. The choice is saved locally and applies to new launches, direct commands, and resumed sessions. YOLO mode bypasses Codex approval and sandbox checks, Claude Code permission checks, and OMP tool-approval prompts.
+Use the arrow keys to move between start-menu actions and press Tab to switch between SAFE and YOLO modes for Codex, Claude Code, and OMP. The choice is saved locally and applies to new launches, direct commands, and resumed sessions. YOLO mode bypasses Codex approval and sandbox checks, Claude Code permission checks, and OMP tool-approval prompts.
 
 ## Development
 
