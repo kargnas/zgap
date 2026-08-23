@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "./harness.mjs";
@@ -21,14 +21,24 @@ test("config.yml host는 agent proxy origin으로 정규화된다", async (t) =>
   });
 });
 
-test("config.yml이 없으면 기본 host를 사용한다", async (t) => {
-  const configDir = await tempDir(t);
+test("config.yml이 없으면 주석이 포함된 기본 파일을 생성한다", async (t) => {
+  const root = await tempDir(t);
+  const configDir = path.join(root, "nested", "zgap");
   const { readProxyConfig } = await import("../src/config.mjs");
 
   assert.deepEqual(await readProxyConfig(configDir), {
     host: "ai-proxy.zz.gg",
     origin: "https://ai-proxy.zz.gg",
   });
+  assert.equal(
+    await readFile(path.join(configDir, "config.yml"), "utf8"),
+    [
+      "# Agent proxy hostname used for login and all supported agent requests.",
+      "# Use a hostname only, without https://, a port, or a path.",
+      "host: ai-proxy.zz.gg",
+      "",
+    ].join("\n"),
+  );
 });
 
 test("config.yml은 hostname 외 값과 unknown key를 거부한다", async (t) => {
