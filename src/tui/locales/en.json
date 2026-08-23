@@ -64,8 +64,8 @@
   "sessionsActiveResumeConfirm": "This session is already running. Press Enter again within 1 second to resume",
   "dangerousModeSafe": "SAFE",
   "dangerousModeYolo": "YOLO",
-  "dangerousModeToggleHint": "Y toggles Codex and Claude together",
+  "dangerousModeSelectHint": "Left selects SAFE · Right selects YOLO",
   "dangerousModeSaveFailed": "Could not save YOLO mode",
   "hint": "Up/Down move  ·  Enter select  ·  Ctrl+C twice or Esc twice quit",
-  "compactHint": "Y mode · ↑↓ · ↵ select · Esc Esc quit"
+  "compactHint": "←→ mode · ↑↓ · ↵ select · Esc Esc quit"
 }

@@ -153,7 +153,7 @@ export async function runStartMenu({
     };
     let selectedIndex = 0;
     let dangerousModeEnabled = dangerousMode;
-    let modeTogglePending = false;
+    let modeChangePending = false;
     const runSelectedAction = () => {
       const selected = content.actions[selectedIndex];
       const action = actions[selected.name];
@@ -245,7 +245,7 @@ export async function runStartMenu({
       selectable: true,
     });
     const modeHint = new TextRenderable(renderer, {
-      content: t("dangerousModeToggleHint"),
+      content: t("dangerousModeSelectHint"),
       fg: "#64748B",
       selectable: true,
     });
@@ -360,12 +360,12 @@ export async function runStartMenu({
       const track = dangerousModeEnabled ? "○━━━━━━━━━━━━●" : "●━━━━━━━━━━━━○";
       modeRail.content = `${t("dangerousModeSafe")}  ${track}  ${t("dangerousModeYolo")}`;
       modeRail.fg = dangerousModeEnabled ? "#F87171" : "#86EFAC";
-      modeHint.content = saveFailed ? t("dangerousModeSaveFailed") : t("dangerousModeToggleHint");
+      modeHint.content = saveFailed ? t("dangerousModeSaveFailed") : t("dangerousModeSelectHint");
       modeHint.fg = saveFailed ? "#F87171" : "#64748B";
     };
-    const toggleDangerousMode = async () => {
-      modeTogglePending = true;
-      const enabled = !dangerousModeEnabled;
+    const setDangerousMode = async (enabled) => {
+      if (modeChangePending || enabled === dangerousModeEnabled) return;
+      modeChangePending = true;
       try {
         await onDangerousModeChange(enabled);
         if (cleaned) return;
@@ -374,7 +374,7 @@ export async function runStartMenu({
       } catch {
         if (!cleaned) updateDangerousMode(true);
       } finally {
-        modeTogglePending = false;
+        modeChangePending = false;
       }
     };
     updateSelection();
@@ -455,11 +455,14 @@ export async function runStartMenu({
         }
         return;
       }
-      if (!event.ctrl && !event.meta && event.name === "y") {
-        if (!modeTogglePending) void toggleDangerousMode();
+      if (
+        !event.ctrl && !event.meta && !event.shift
+        && (event.name === "left" || event.name === "right")
+      ) {
+        void setDangerousMode(event.name === "right");
         return;
       }
-      if (modeTogglePending) return;
+      if (modeChangePending) return;
       if (content.actions.length > 1 && (event.name === "up" || event.name === "down")) {
         const delta = event.name === "down" ? 1 : -1;
         selectedIndex = Math.max(0, Math.min(content.actions.length - 1, selectedIndex + delta));
