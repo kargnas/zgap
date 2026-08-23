@@ -558,6 +558,7 @@ test("codex는 기본 Codex home을 유지하고 refresh 가능한 auth command�
   t.after(() => gateway.close());
   const fetchRedirectModule = await installGatewayFetchRedirect(t, gateway.address().port, [origin]);
   await writeFile(path.join(configDir, "config.yml"), "host: proxy.example.test\n");
+  await writeFile(path.join(configDir, "preferences.json"), '{"dangerousMode":true}\n');
   await writeFile(path.join(configDir, "credentials.json"), JSON.stringify({
     access_expires_at: "2099-01-02T00:00:00.000Z",
     access_token: accessToken,
@@ -588,20 +589,22 @@ else {
 `);
   await chmod(fakeCodex, 0o755);
 
-  const result = await runCli(["codex", "exec", "hello"], {
+  const cliEnv = {
     HOME: home,
     XDG_CONFIG_HOME: configRoot,
     PATH: `${fakeBin}${path.delimiter}${process.env.PATH}`,
     CODEX_HOME: path.join(root, "separate-codex-home"),
     OPENAI_BASE_URL: "https://wrong.example",
     NODE_OPTIONS: `--import=${fetchRedirectModule}`,
-  });
+  };
+  const result = await runCli(["codex", "exec", "hello"], cliEnv);
   assert.equal(result.code, 0, result.stderr);
   const invocation = JSON.parse(result.stdout);
   assert.equal(invocation.codexHome, null);
   assert.equal(invocation.openaiBaseUrl, null);
   assert.equal(invocation.openaiApiKey, null);
   assert.equal(invocation.zgapApiKey, null);
+  assert.equal(invocation.argv.includes("--dangerously-bypass-approvals-and-sandbox"), true);
   assert.deepEqual(invocation.argv.slice(-2), ["exec", "hello"]);
   assert.deepEqual(modelRequest, {
     authorization: `Bearer ${accessToken}`,
@@ -629,6 +632,11 @@ else {
   await assert.rejects(access(JSON.parse(modelCatalog)), { code: "ENOENT" });
   await assert.rejects(access(path.join(configDir, "models.json")), { code: "ENOENT" });
   await assert.rejects(access(path.join(home, ".codex")), { code: "ENOENT" });
+
+  await writeFile(path.join(configDir, "preferences.json"), '{"dangerousMode":false}\n');
+  const safeResult = await runCli(["codex", "exec", "hello"], cliEnv);
+  assert.equal(safeResult.code, 0, safeResult.stderr);
+  assert.equal(JSON.parse(safeResult.stdout).argv.includes("--dangerously-bypass-approvals-and-sandbox"), false);
 });
 
 test("SIGTERM은 Codex 자식에 전달한 뒤 catalog를 정리하고 wrapper도 SIGTERM으로 종료한다", async (t) => {
@@ -783,6 +791,7 @@ test("claude는 gateway 환경과 apiKeyHelper 설정만 프로세스에 주입�
   await mkdir(configDir, { recursive: true });
   await mkdir(fakeBin, { recursive: true });
   await writeFile(path.join(configDir, "config.yml"), "host: proxy.example.test\n");
+  await writeFile(path.join(configDir, "preferences.json"), '{"dangerousMode":true}\n');
   await writeFile(path.join(configDir, "credentials.json"), "{}");
   const fakeClaude = path.join(fakeBin, "claude");
   await writeFile(fakeClaude, `#!/usr/bin/env node
@@ -794,9 +803,11 @@ writeFileSync(process.env.FAKE_CLAUDE_MARKER, JSON.stringify({
 process.exitCode = 7;
 `);
   await chmod(fakeClaude, 0o755);
-  const result = await runCli(["claude", "--print", "hello"], { HOME: home, XDG_CONFIG_HOME: configRoot, PATH: `${fakeBin}${path.delimiter}${process.env.PATH}`, FAKE_CLAUDE_MARKER: marker, ANTHROPIC_BASE_URL: "https://wrong.example", ANTHROPIC_API_KEY: "wrong-key", ANTHROPIC_AUTH_TOKEN: "wrong-token", ANTHROPIC_FOUNDRY_API_KEY: "wrong-key", CLAUDE_CODE_API_BASE_URL: "https://wrong.example", CLAUDE_CODE_PROXY_URL: "https://wrong.example", CLAUDE_CODE_SESSION_ACCESS_TOKEN: "wrong-token", CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST: "1", CLAUDE_CODE_USE_BEDROCK: "1", CLAUDE_CONFIG_DIR: path.join(root, "wrong-claude") });
+  const cliEnv = { HOME: home, XDG_CONFIG_HOME: configRoot, PATH: `${fakeBin}${path.delimiter}${process.env.PATH}`, FAKE_CLAUDE_MARKER: marker, ANTHROPIC_BASE_URL: "https://wrong.example", ANTHROPIC_API_KEY: "wrong-key", ANTHROPIC_AUTH_TOKEN: "wrong-token", ANTHROPIC_FOUNDRY_API_KEY: "wrong-key", CLAUDE_CODE_API_BASE_URL: "https://wrong.example", CLAUDE_CODE_PROXY_URL: "https://wrong.example", CLAUDE_CODE_SESSION_ACCESS_TOKEN: "wrong-token", CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST: "1", CLAUDE_CODE_USE_BEDROCK: "1", CLAUDE_CONFIG_DIR: path.join(root, "wrong-claude") };
+  const result = await runCli(["claude", "--print", "hello"], cliEnv);
   assert.equal(result.code, 7, result.stderr);
   const invocation = JSON.parse(await readFile(marker, "utf8"));
+  assert.equal(invocation.argv.includes("--dangerously-skip-permissions"), true);
   assert.deepEqual(invocation.argv.slice(-2), ["--print", "hello"]);
   const settingsIndex = invocation.argv.indexOf("--settings");
   assert.ok(settingsIndex >= 0);
@@ -832,6 +843,11 @@ process.exitCode = 7;
   assert.equal(invocation.env.CLAUDE_CODE_USE_VERTEX, null);
   assert.equal(invocation.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST, null);
   assert.equal(invocation.env.CLAUDE_CONFIG_DIR, path.join(root, "wrong-claude"));
+
+  await writeFile(path.join(configDir, "preferences.json"), '{"dangerousMode":false}\n');
+  const safeResult = await runCli(["claude", "--print", "hello"], cliEnv);
+  assert.equal(safeResult.code, 7, safeResult.stderr);
+  assert.equal(JSON.parse(await readFile(marker, "utf8")).argv.includes("--dangerously-skip-permissions"), false);
 });
 
 test("claude는 사용자 --settings를 거부한다", async (t) => {

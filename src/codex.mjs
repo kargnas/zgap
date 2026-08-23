@@ -27,6 +27,7 @@ export async function runCodex(args, {
   configDir = defaultConfigDir(),
   cwd = process.cwd(),
   origin = ORIGIN,
+  dangerousMode = false,
 } = {}) {
   let receivedSignal;
   let child;
@@ -69,6 +70,9 @@ export async function runCodex(args, {
         'model_provider="zgap"',
         "-c",
         `model_catalog_json=${JSON.stringify(ephemeral.target)}`,
+        ...(dangerousMode && !args.includes("--dangerously-bypass-approvals-and-sandbox")
+          ? ["--dangerously-bypass-approvals-and-sandbox"]
+          : []),
         ...args,
       ];
       child = spawn(codexPath, launchArgs, { cwd, env, stdio: "inherit" });

@@ -68,7 +68,12 @@ function apiKeyHelper(credentialFile) {
   return [process.execPath, CLI_FILE, "auth-token", credentialFile].map(shellQuote).join(" ");
 }
 
-export async function runClaude(args, { configDir = defaultConfigDir(), cwd = process.cwd(), origin = ORIGIN } = {}) {
+export async function runClaude(args, {
+  configDir = defaultConfigDir(),
+  cwd = process.cwd(),
+  origin = ORIGIN,
+  dangerousMode = false,
+} = {}) {
   if (args.some((arg) => arg === "--settings" || arg.startsWith("--settings="))) {
     throw new Error("zgap claude supplies --settings automatically; remove the user-provided --settings option.");
   }
@@ -107,6 +112,9 @@ export async function runClaude(args, { configDir = defaultConfigDir(), cwd = pr
       child = spawn(claudePath, [
         "--settings",
         JSON.stringify({ apiKeyHelper: apiKeyHelper(credentialsPath(configDir)), env: claudeSettingsEnv(origin) }),
+        ...(dangerousMode && !args.includes("--dangerously-skip-permissions")
+          ? ["--dangerously-skip-permissions"]
+          : []),
         ...args,
       ], { cwd, env, stdio: "inherit" });
       child.once("error", (error) => reject(error.code === "ENOENT"
