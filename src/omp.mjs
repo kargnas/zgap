@@ -1,28 +1,16 @@
 import { execFile, spawn } from "node:child_process";
-import { randomBytes } from "node:crypto";
 import { access, realpath, stat } from "node:fs/promises";
 import { constants as fsConstants, realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { credentialsPath, defaultConfigDir, resolveAccessToken } from "./credentials.mjs";
+import {
+  assertOmpLaunchArgs,
+  assertOmpVersion,
+  createOmpProviderHandshakeArgument,
+} from "./omp-provider-compat.mjs";
 
 const OMP_EXTENSION_FILE = realpathSync(fileURLToPath(new URL("./omp-provider-extension.mjs", import.meta.url)));
-const MINIMUM_OMP_VERSION = [18, 0, 3];
-const OMP_VALUE_FLAGS = new Set([
-  "--cwd", "--config", "--add-dir", "--mode", "--fork", "--provider", "--model", "--smol", "--slow",
-  "--plan", "--prewalk-into", "--plan-yolo-into", "--max-time", "--service-tier", "--api-key",
-  "--system-prompt", "--append-system-prompt", "--provider-session-id", "--prompt-cache-key",
-  "--session-dir", "--models", "--tools", "--thinking", "--export", "--hook", "--extension", "-e",
-  "--trusted-extension", "--plugin-dir", "--skills", "--approval-mode", "--profile", "--alias",
-]);
-const OMP_OPTIONAL_VALUE_FLAGS = new Set(["--resume", "-r", "--session"]);
-const OMP_MANAGEMENT_COMMANDS = new Set([
-  "auth-broker", "auth-gateway", "agents", "bench", "browser-relay", "cleanse", "commit",
-  "completions", "__complete", "compress", "config", "dry-balance", "gc", "grep", "gallery",
-  "grievances", "images", "img", "install", "join", "models", "plugin", "ps", "say", "share",
-  "setup", "shell", "read", "render", "ssh", "stats", "update", "usage", "tiny-models", "token",
-  "ttsr", "worktree", "wt", "search", "q", "help",
-]);
 const FORWARDED_SIGNALS = process.platform === "win32"
   ? ["SIGINT", "SIGTERM"]
   : ["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT"];
@@ -59,50 +47,12 @@ export async function readOmpVersion(ompPath, env = process.env) {
   return match[1];
 }
 
-function assertSupportedOmpVersion(version) {
-  const match = version.match(/^(\d+)\.(\d+)\.(\d+)(-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/);
-  if (match) {
-    let comparison = 0;
-    let valid = true;
-    for (let index = 0; index < MINIMUM_OMP_VERSION.length; index += 1) {
-      const component = Number(match[index + 1]);
-      if (!Number.isSafeInteger(component)) {
-        valid = false;
-        break;
-      }
-      if (comparison === 0) comparison = Math.sign(component - MINIMUM_OMP_VERSION[index]);
-    }
-    if (valid && (comparison > 0 || (comparison === 0 && !match[4]))) return;
-  }
-  throw new Error(`OMP 18.0.3 or newer is required; found ${version}.`);
-}
-
-function firstResidualPositional(args) {
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index];
-    if (arg === "--") return undefined;
-    if (!arg.startsWith("-")) return arg;
-    if (arg.startsWith("--") && arg.includes("=")) continue;
-    if (OMP_VALUE_FLAGS.has(arg)) {
-      index += 1;
-      continue;
-    }
-    const next = args[index + 1];
-    if (OMP_OPTIONAL_VALUE_FLAGS.has(arg) && next?.length > 0 && !next.startsWith("-")) index += 1;
-  }
-  return undefined;
-}
-
 export async function runOmp(args, {
   configDir = defaultConfigDir(),
   cwd = process.cwd(),
   dangerousMode = false,
 } = {}) {
-  const command = firstResidualPositional(args);
-  if (command === "usage") throw new Error("OMP usage is disabled while using zgap.");
-  if (OMP_MANAGEMENT_COMMANDS.has(command)) {
-    throw new Error(`OMP command "${command}" is unavailable through zgap; run \`omp ${command}\` directly.`);
-  }
+  assertOmpLaunchArgs(args);
   let receivedSignal;
   let child;
   let handlersRemoved = false;
@@ -131,14 +81,14 @@ export async function runOmp(args, {
     abortIfSignaled();
     await resolveAccessToken({ credentialFile: credentialsPath(configDir) });
     abortIfSignaled();
-    assertSupportedOmpVersion(await readOmpVersion(ompPath, env));
+    assertOmpVersion(await readOmpVersion(ompPath, env));
     abortIfSignaled();
-    const requiredFlagName = `zgap-provider-override-required-${randomBytes(16).toString("hex")}`;
+    const handshakeArgument = createOmpProviderHandshakeArgument();
     return await new Promise((resolve, reject) => {
       child = spawn(ompPath, [
         "-e", OMP_EXTENSION_FILE,
         // This random flag exists only if this exact extension loaded; otherwise OMP's second parse rejects it.
-        `--${requiredFlagName}=true`,
+        handshakeArgument,
         ...(dangerousMode && !args.includes("--auto-approve") && !args.includes("--approval-mode") && !args.some((arg) => arg.startsWith("--approval-mode="))
           ? ["--auto-approve"]
           : []),
