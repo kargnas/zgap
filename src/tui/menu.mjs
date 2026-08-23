@@ -105,6 +105,8 @@ export async function runStartMenu({
   proxyHealthCheck = checkProxyHealth,
   updateChecker,
   accountProfile,
+  dangerousMode = false,
+  onDangerousModeChange = async () => { throw new Error("Missing dangerous mode persistence handler."); },
 } = {}) {
   let renderer;
   let keyHandler;
@@ -151,6 +153,8 @@ export async function runStartMenu({
       }
     };
     let selectedIndex = 0;
+    let dangerousModeEnabled = dangerousMode;
+    let modeChangePending = false;
     const runSelectedAction = () => {
       const selected = content.actions[selectedIndex];
       const action = actions[selected.name];
@@ -230,6 +234,24 @@ export async function runStartMenu({
       justifyContent: "center",
       alignItems: "center",
     });
+    const modeArea = new BoxRenderable(renderer, {
+      width: "100%",
+      height: 2,
+      flexDirection: "column",
+      alignItems: "center",
+    });
+    const modeRail = new TextRenderable(renderer, {
+      content: "",
+      attributes: TextAttributes.BOLD,
+      selectable: true,
+    });
+    const modeHint = new TextRenderable(renderer, {
+      content: t("dangerousModeSelectHint"),
+      fg: "#64748B",
+      selectable: true,
+    });
+    modeArea.add(modeRail);
+    modeArea.add(modeHint);
     const actionRow = new BoxRenderable(renderer, {
       width: "70%",
       height: content.actions.length > 1 ? (content.actions.length * 4 + (content.actions.length > 2 ? 0 : 1)) : 4,
@@ -265,6 +287,7 @@ export async function runStartMenu({
       actionRow.add(card);
       return { card, label, description };
     });
+    centerArea.add(modeArea);
     centerArea.add(actionRow);
 
     const bottomBar = new BoxRenderable(renderer, {
@@ -304,12 +327,14 @@ export async function runStartMenu({
       statusArea.alignItems = compact ? "flex-start" : "flex-end";
       statusArea.paddingRight = compact ? 0 : 1;
       centerArea.alignItems = compact ? "stretch" : "center";
-      actionRow.flexDirection = compact && content.actions.length > 2 ? "row" : "column";
+      modeArea.height = compact ? 1 : 2;
+      modeHint.visible = !compact;
+      actionRow.flexDirection = compact && content.actions.length > 1 ? "row" : "column";
       actionRow.width = compact ? "100%" : "70%";
       actionRow.height = compact ? 3 : (content.actions.length > 1 ? (content.actions.length * 4 + (content.actions.length > 2 ? 0 : 1)) : 4);
       actionRow.gap = compact ? 0 : (content.actions.length > 2 ? 0 : (content.actions.length > 1 ? 1 : 0));
       actionCards.forEach(({ card, description }) => {
-        card.width = compact && content.actions.length > 2 ? `${100 / content.actions.length}%` : "100%";
+        card.width = compact && content.actions.length > 1 ? `${100 / content.actions.length}%` : "100%";
         card.height = compact ? 3 : 4;
         card.paddingX = compact ? 0 : 1;
         description.visible = !compact;
@@ -318,7 +343,7 @@ export async function runStartMenu({
       ready.visible = !compact;
       hint.content = compact ? t("compactHint") : t("hint");
       infoArea.paddingTop = compact ? 0 : 1;
-      // Short terminals have no spare row after status, both actions, and the quit hint.
+      // Short terminals have no spare row after status, mode, actions, and the quit hint.
       infoArea.visible = updateStatus.content !== "" && !compact;
     };
     // Terminal resize keeps the primary action and quit instruction visible instead of clipping long locale strings.
@@ -332,7 +357,29 @@ export async function runStartMenu({
         label.fg = selected ? "#F8FAFC" : "#94A3B8";
       });
     };
+    const updateDangerousMode = (saveFailed = false) => {
+      const track = dangerousModeEnabled ? "○━━━━━━━━━━━━●" : "●━━━━━━━━━━━━○";
+      modeRail.content = `${t("dangerousModeSafe")}  ${track}  ${t("dangerousModeYolo")}`;
+      modeRail.fg = dangerousModeEnabled ? "#F87171" : "#86EFAC";
+      modeHint.content = saveFailed ? t("dangerousModeSaveFailed") : t("dangerousModeSelectHint");
+      modeHint.fg = saveFailed ? "#F87171" : "#64748B";
+    };
+    const setDangerousMode = async (enabled) => {
+      if (modeChangePending || enabled === dangerousModeEnabled) return;
+      modeChangePending = true;
+      try {
+        await onDangerousModeChange(enabled);
+        if (cleaned) return;
+        dangerousModeEnabled = enabled;
+        updateDangerousMode();
+      } catch {
+        if (!cleaned) updateDangerousMode(true);
+      } finally {
+        modeChangePending = false;
+      }
+    };
     updateSelection();
+    updateDangerousMode();
     renderer.on("resize", resizeHandler);
     const updateProxyStatus = async () => {
       while (!cleaned) {
@@ -409,6 +456,14 @@ export async function runStartMenu({
         }
         return;
       }
+      if (
+        !event.ctrl && !event.meta && !event.shift
+        && (event.name === "left" || event.name === "right")
+      ) {
+        void setDangerousMode(event.name === "right");
+        return;
+      }
+      if (modeChangePending) return;
       if (content.actions.length > 1 && (event.name === "up" || event.name === "down")) {
         const delta = event.name === "down" ? 1 : -1;
         selectedIndex = Math.max(0, Math.min(content.actions.length - 1, selectedIndex + delta));

@@ -365,6 +365,73 @@ test("인자 없는 CLI는 credential 상태를 시작 메뉴에 전달한다", 
   assert.equal(typeof menuOptions.actions.sessions, "function");
 });
 
+test("시작 메뉴의 dangerous mode 변경은 저장 후 같은 프로세스의 Codex 실행에 적용한다", async () => {
+  const { main } = await import("../src/cli.mjs");
+  const writes = [];
+  let launch;
+
+  const result = await main({
+    argv: [],
+    configDir: "/tmp/zgap-config",
+    credentialStateReader: async () => "signed-out",
+    configReader: async () => ({ host: "ai-proxy.zz.gg", origin: "https://ai-proxy.zz.gg" }),
+    dangerousModeReader: async () => false,
+    dangerousModeWriter: async (enabled) => { writes.push(enabled); },
+    codexRunner: async (args, options) => { launch = { args, options }; return 24; },
+    startMenu: async (options) => {
+      assert.equal(options.dangerousMode, false);
+      await options.onDangerousModeChange(true);
+      return options.actions.codex();
+    },
+  });
+
+  assert.equal(result, 24);
+  assert.deepEqual(writes, [true]);
+  assert.deepEqual(launch, {
+    args: [],
+    options: {
+      configDir: "/tmp/zgap-config",
+      origin: "https://ai-proxy.zz.gg",
+      dangerousMode: true,
+    },
+  });
+});
+
+test("저장된 dangerous mode는 Codex와 Claude 직접 명령에 함께 적용된다", async () => {
+  const { main } = await import("../src/cli.mjs");
+  const launches = [];
+  const shared = {
+    configDir: "/tmp/zgap-config",
+    configReader: async () => ({ host: "ai-proxy.zz.gg", origin: "https://ai-proxy.zz.gg" }),
+    dangerousModeReader: async () => true,
+    codexRunner: async (args, options) => { launches.push({ agent: "codex", args, options }); return 31; },
+    claudeRunner: async (args, options) => { launches.push({ agent: "claude", args, options }); return 32; },
+  };
+
+  assert.equal(await main({ ...shared, argv: ["codex", "exec", "hello"] }), 31);
+  assert.equal(await main({ ...shared, argv: ["claude", "--print", "hello"] }), 32);
+  assert.deepEqual(launches, [
+    {
+      agent: "codex",
+      args: ["exec", "hello"],
+      options: {
+        configDir: "/tmp/zgap-config",
+        origin: "https://ai-proxy.zz.gg",
+        dangerousMode: true,
+      },
+    },
+    {
+      agent: "claude",
+      args: ["--print", "hello"],
+      options: {
+        configDir: "/tmp/zgap-config",
+        origin: "https://ai-proxy.zz.gg",
+        dangerousMode: true,
+      },
+    },
+  ]);
+});
+
 test("sessions direct command는 현재 디렉터리의 browser를 연다", async () => {
   const { main } = await import("../src/cli.mjs");
   let options;
@@ -393,11 +460,11 @@ test("session resume은 선택한 agent의 정확한 id와 저장된 디렉터�
     claudeRunner: async (args, options) => { calls.push({ agent: "claude", args, options }); return 12; },
   };
 
-  assert.equal(await cli.resumeSession({ agent: "codex", id: "codex-id", cwd: codexCwd }, "/config", runners), 11);
-  assert.equal(await cli.resumeSession({ agent: "claude", id: "claude-id", cwd: claudeCwd }, "/config", runners), 12);
+  assert.equal(await cli.resumeSession({ agent: "codex", id: "codex-id", cwd: codexCwd }, "/config", { ...runners, dangerousMode: true }), 11);
+  assert.equal(await cli.resumeSession({ agent: "claude", id: "claude-id", cwd: claudeCwd }, "/config", { ...runners, dangerousMode: true }), 12);
   assert.deepEqual(calls, [
-    { agent: "codex", args: ["resume", "codex-id"], options: { configDir: "/config", cwd: codexCwd } },
-    { agent: "claude", args: ["--resume", "claude-id"], options: { configDir: "/config", cwd: claudeCwd } },
+    { agent: "codex", args: ["resume", "codex-id"], options: { configDir: "/config", cwd: codexCwd, dangerousMode: true } },
+    { agent: "claude", args: ["--resume", "claude-id"], options: { configDir: "/config", cwd: claudeCwd, dangerousMode: true } },
   ]);
 });
 
@@ -488,6 +555,74 @@ test("로그인 상태에서는 Login을 숨기고 CODEX를 실행한다", async
   assert.deepEqual(calls, ["codex"]);
 });
 
+test("중앙 mode rail은 좌우 화살표로 SAFE와 YOLO를 선택하고 중복 저장을 생략한다", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runStartMenu } = await import("../src/tui/menu.mjs");
+  const setup = await createTestRenderer({ width: 100, height: 24 });
+  t.after(() => setup.renderer.destroy());
+  const writes = [];
+  const resultPromise = runStartMenu({
+    rendererFactory: async () => setup,
+    credentialState: "signed-in",
+    dangerousMode: false,
+    onDangerousModeChange: async (enabled) => { writes.push(enabled); },
+    actions: { codex: async () => 0, claude: async () => 0 },
+  });
+
+  await flushMenu(setup);
+  const initialFrame = setup.captureCharFrame();
+
+  await setup.mockInput.pressArrow("right");
+  await flushMenu(setup);
+  const writesAfterRight = [...writes];
+  const frameAfterRight = setup.captureCharFrame();
+
+  await setup.mockInput.pressArrow("right");
+  await flushMenu(setup);
+  const writesAfterSecondRight = [...writes];
+
+  await setup.mockInput.pressArrow("left");
+  await flushMenu(setup);
+  const writesAfterLeft = [...writes];
+  const frameAfterLeft = setup.captureCharFrame();
+
+  await setup.mockInput.pressCtrlC();
+  await setup.mockInput.pressCtrlC();
+  assert.equal(await resultPromise, 130);
+  assert.match(initialFrame, /SAFE\s+●━+○\s+YOLO/);
+  assert.deepEqual(writesAfterRight, [true]);
+  assert.match(frameAfterRight, /SAFE\s+○━+●\s+YOLO/);
+  assert.match(frameAfterRight, /Left selects SAFE · Right selects YOLO/);
+  assert.deepEqual(writesAfterSecondRight, [true]);
+  assert.deepEqual(writesAfterLeft, [true, false]);
+  assert.match(frameAfterLeft, /SAFE\s+●━+○\s+YOLO/);
+});
+
+test("dangerous mode 저장 실패는 SAFE 상태와 오류 안내를 유지한다", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runStartMenu } = await import("../src/tui/menu.mjs");
+  const setup = await createTestRenderer({ width: 100, height: 24 });
+  t.after(() => setup.renderer.destroy());
+  const resultPromise = runStartMenu({
+    rendererFactory: async () => setup,
+    credentialState: "signed-in",
+    dangerousMode: false,
+    onDangerousModeChange: async () => { throw new Error("disk full"); },
+    actions: { codex: async () => 0, claude: async () => 0 },
+  });
+
+  await flushMenu(setup);
+  await setup.mockInput.pressArrow("right");
+  await flushMenu(setup);
+  const frameAfterFailedRight = setup.captureCharFrame();
+
+  await setup.mockInput.pressCtrlC();
+  await setup.mockInput.pressCtrlC();
+  assert.equal(await resultPromise, 130);
+  assert.match(frameAfterFailedRight, /SAFE\s+●━+○\s+YOLO/);
+  assert.match(frameAfterFailedRight, /Could not save YOLO mode/);
+});
+
 test("로그인 상태에서는 CODEX, Claude, Sessions를 선택할 수 있다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runStartMenu } = await import("../src/tui/menu.mjs");
@@ -566,6 +701,7 @@ test("Stacked Command Cards는 상하 박스와 선택 테두리를 유지한다
   assert.match(compact.captureCharFrame(), /CODEX/);
   assert.match(compact.captureCharFrame(), /Claude/);
   assert.match(compact.captureCharFrame(), /Sessions/);
+  assert.match(compact.captureCharFrame(), /SAFE.*YOLO/);
   assert.match(compact.captureCharFrame(), /Esc/);
 
   await wide.mockInput.pressArrow("down");
@@ -716,7 +852,7 @@ test("Corner Map은 40x10으로 줄어도 상태, action, 종료 hint를 유지�
   await flushMenu(setup);
   const boundaryFrame = setup.captureCharFrame();
   assert.doesNotMatch(boundaryFrame, /zgap \/ ready/);
-  assert.match(boundaryFrame, /↑↓ move · ↵ select · Esc Esc quit/);
+  const compactHintMatches = /←→ mode · ↑↓ · ↵ select · Esc Esc quit/.test(boundaryFrame);
   setup.resize(40, 10);
   await flushMenu(setup);
   const frame = setup.captureCharFrame();
@@ -731,6 +867,7 @@ test("Corner Map은 40x10으로 줄어도 상태, action, 종료 hint를 유지�
   await setup.mockInput.pressCtrlC();
   await setup.mockInput.pressCtrlC();
   assert.equal(await resultPromise, 130);
+  assert.equal(compactHintMatches, true);
 });
 
 test("지원하지 않는 locale은 English로 fallback한다", async (t) => {
@@ -919,8 +1056,8 @@ printf '%s\\n' "$@" >> ${marker}
   assert.equal(code, 0);
   assert.equal(
     await readFile(marker, "utf8"),
-    "add\n-g\ngithub:kargnas/zgap#main\n--force\n--no-cache\n"
-      + "update\n-g\nzgap\n--force\n--no-cache\n",
+    "add\n-g\ngithub:kargnas/zgap#main\n--force\n--no-cache\n--registry\nhttps://registry.npmjs.org\n"
+      + "update\n-g\nzgap\n--force\n--no-cache\n--registry\nhttps://registry.npmjs.org\n",
   );
   assert.equal((await readdir(root)).includes("zgap"), false);
 });
@@ -947,8 +1084,8 @@ chmod +x ${bunInstall}/bin/bun
   assert.equal(await readFile(curlArgs, "utf8"), "-fsSL\nhttps://bun.com/install\n");
   assert.equal(
     await readFile(bunArgs, "utf8"),
-    "add\n-g\ngithub:kargnas/zgap#main\n--force\n--no-cache\n"
-      + "update\n-g\nzgap\n--force\n--no-cache\n",
+    "add\n-g\ngithub:kargnas/zgap#main\n--force\n--no-cache\n--registry\nhttps://registry.npmjs.org\n"
+      + "update\n-g\nzgap\n--force\n--no-cache\n--registry\nhttps://registry.npmjs.org\n",
   );
 });
 

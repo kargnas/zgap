@@ -12,6 +12,7 @@ import { runClaude } from "./claude.mjs";
 import { runOmp } from "./omp.mjs";
 import { stat } from "node:fs/promises";
 import { readProxyConfig } from "./config.mjs";
+import { readDangerousMode, writeDangerousMode } from "./preferences.mjs";
 import { checkForGlobalUpdate, updateGlobalInstall } from "./install.mjs";
 import { runStartMenu } from "./tui/menu.mjs";
 import { runSessionBrowser } from "./tui/session-browser.mjs";
@@ -20,6 +21,7 @@ const BACK_TO_START_MENU = Symbol("back-to-start-menu");
 
 export async function resumeSession(session, configDir, {
   origin,
+  dangerousMode = false,
   codexRunner = runCodex,
   claudeRunner = runClaude,
 } = {}) {
@@ -31,11 +33,13 @@ export async function resumeSession(session, configDir, {
   if (session?.agent === "codex") {
     const options = { configDir, cwd: session.cwd };
     if (origin) options.origin = origin;
+    if (dangerousMode) options.dangerousMode = true;
     return codexRunner(["resume", session.id], options);
   }
   if (session?.agent === "claude") {
     const options = { configDir, cwd: session.cwd };
     if (origin) options.origin = origin;
+    if (dangerousMode) options.dangerousMode = true;
     return claudeRunner(["--resume", session.id], options);
   }
   throw new Error(`Unsupported session agent: ${session?.agent ?? "unknown"}`);
@@ -63,6 +67,10 @@ export async function main({
   sessionBrowser = runSessionBrowser,
   updateChecker = checkForGlobalUpdate,
   configReader = readProxyConfig,
+  dangerousModeReader = readDangerousMode,
+  dangerousModeWriter = writeDangerousMode,
+  codexRunner = runCodex,
+  claudeRunner = runClaude,
   cwd = process.cwd(),
 } = {}) {
   const [command, ...args] = argv;
@@ -77,12 +85,18 @@ export async function main({
     return 0;
   }
   if (command === "codex") {
-    const { origin } = await configReader(configDir);
-    return runCodex(args, { configDir, origin });
+    const [{ origin }, dangerousMode] = await Promise.all([
+      configReader(configDir),
+      dangerousModeReader(configDir),
+    ]);
+    return codexRunner(args, { configDir, origin, dangerousMode });
   }
   if (command === "claude") {
-    const { origin } = await configReader(configDir);
-    return runClaude(args, { configDir, origin });
+    const [{ origin }, dangerousMode] = await Promise.all([
+      configReader(configDir),
+      dangerousModeReader(configDir),
+    ]);
+    return claudeRunner(args, { configDir, origin, dangerousMode });
   }
   if (command === "omp") {
     const { origin } = await configReader(configDir);
@@ -92,8 +106,11 @@ export async function main({
     return sessionBrowser({
       cwd,
       onSelect: async (session) => {
-        const { origin } = await configReader(configDir);
-        return resumeSession(session, configDir, { origin });
+        const [{ origin }, dangerousMode] = await Promise.all([
+          configReader(configDir),
+          dangerousModeReader(configDir),
+        ]);
+        return resumeSession(session, configDir, { origin, dangerousMode, codexRunner, claudeRunner });
       },
     });
   }
@@ -102,6 +119,7 @@ export async function main({
   }
   if (!command) {
     const proxyConfig = await configReader(configDir);
+    let dangerousMode = await dangerousModeReader(configDir);
     while (true) {
       const credentialFile = credentialsPath(configDir);
       const credentialState = await credentialStateReader({
@@ -122,10 +140,15 @@ export async function main({
         host: proxyConfig.host,
         origin: proxyConfig.origin,
         updateChecker,
+        dangerousMode,
+        onDangerousModeChange: async (enabled) => {
+          await dangerousModeWriter(enabled, configDir);
+          dangerousMode = enabled;
+        },
         actions: {
           login: () => login({ configDir, origin: proxyConfig.origin }),
-          codex: () => runCodex([], { configDir, origin: proxyConfig.origin }),
-          claude: () => runClaude([], { configDir, origin: proxyConfig.origin }),
+          codex: () => codexRunner([], { configDir, origin: proxyConfig.origin, dangerousMode }),
+          claude: () => claudeRunner([], { configDir, origin: proxyConfig.origin, dangerousMode }),
           omp: () => runOmp([], { configDir, origin: proxyConfig.origin }),
           sessions: async () => {
             let selected = false;
@@ -133,7 +156,12 @@ export async function main({
               cwd,
               onSelect: (session) => {
                 selected = true;
-                return resumeSession(session, configDir, { origin: proxyConfig.origin });
+                return resumeSession(session, configDir, {
+                  origin: proxyConfig.origin,
+                  dangerousMode,
+                  codexRunner,
+                  claudeRunner,
+                });
               },
             });
             return selected || browserResult !== 0 ? browserResult : BACK_TO_START_MENU;
