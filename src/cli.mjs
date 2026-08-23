@@ -71,6 +71,7 @@ export async function main({
   dangerousModeWriter = writeDangerousMode,
   codexRunner = runCodex,
   claudeRunner = runClaude,
+  ompRunner = runOmp,
   cwd = process.cwd(),
 } = {}) {
   const [command, ...args] = argv;
@@ -99,8 +100,11 @@ export async function main({
     return claudeRunner(args, { configDir, origin, dangerousMode });
   }
   if (command === "omp") {
-    const { origin } = await configReader(configDir);
-    return runOmp(args, { configDir, origin });
+    const [{ origin }, dangerousMode] = await Promise.all([
+      configReader(configDir),
+      dangerousModeReader(configDir),
+    ]);
+    return ompRunner(args, { configDir, origin, dangerousMode });
   }
   if (command === "sessions") {
     return sessionBrowser({
@@ -149,7 +153,7 @@ export async function main({
           login: () => login({ configDir, origin: proxyConfig.origin }),
           codex: () => codexRunner([], { configDir, origin: proxyConfig.origin, dangerousMode }),
           claude: () => claudeRunner([], { configDir, origin: proxyConfig.origin, dangerousMode }),
-          omp: () => runOmp([], { configDir, origin: proxyConfig.origin }),
+          omp: () => ompRunner([], { configDir, origin: proxyConfig.origin, dangerousMode }),
           sessions: async () => {
             let selected = false;
             const browserResult = await sessionBrowser({

@@ -1012,6 +1012,28 @@ process.exitCode = 5;
   assert.equal(invocation.env.ZGAP_API_KEY, null);
   assert.equal(invocation.env.PI_CODEX_WEBSOCKET, "1");
   assert.equal(invocation.env.HOME, home);
+
+  await writeFile(path.join(configDir, "preferences.json"), '{"dangerousMode":true}\n');
+  const yoloResult = await runCli(["omp", "--print", "hello"], {
+    HOME: home,
+    XDG_CONFIG_HOME: configRoot,
+    PATH: `${fakeBin}${path.delimiter}${process.env.PATH}`,
+    NODE_OPTIONS: `--import=${fetchRedirectModule}`,
+  });
+  assert.equal(yoloResult.code, 5, yoloResult.stderr);
+  const yoloInvocation = JSON.parse(yoloResult.stdout);
+  assert.equal(yoloInvocation.argv.includes("--auto-approve"), true);
+  assert.deepEqual(yoloInvocation.argv.slice(-2), ["--print", "hello"]);
+
+  await writeFile(path.join(configDir, "preferences.json"), '{"dangerousMode":false}\n');
+  const safeResult = await runCli(["omp", "--print", "hello"], {
+    HOME: home,
+    XDG_CONFIG_HOME: configRoot,
+    PATH: `${fakeBin}${path.delimiter}${process.env.PATH}`,
+    NODE_OPTIONS: `--import=${fetchRedirectModule}`,
+  });
+  assert.equal(safeResult.code, 5, safeResult.stderr);
+  assert.equal(JSON.parse(safeResult.stdout).argv.includes("--auto-approve"), false);
 });
 
 test("omp catalog 변환은 hide 모델 제외 후 남는 모델이 없으면 실패한다", async () => {

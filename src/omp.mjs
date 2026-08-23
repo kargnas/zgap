@@ -145,6 +145,7 @@ export async function runOmp(args, {
   configDir = defaultConfigDir(),
   cwd = process.cwd(),
   origin = ORIGIN,
+  dangerousMode = false,
 } = {}) {
   let receivedSignal;
   let child;
@@ -188,7 +189,15 @@ export async function runOmp(args, {
     return await new Promise((resolve, reject) => {
       // The temporary extension stays on disk for the whole run because OMP subagents
       // re-import extension paths after startup; it is removed once the child exits.
-      child = spawn(ompPath, ["-e", ephemeral.target, "--config", ephemeral.overlay, ...args], { cwd, env, stdio: "inherit" });
+      child = spawn(ompPath, [
+        "-e", ephemeral.target,
+        "--config", ephemeral.overlay,
+        // YOLO mode skips OMP's tool-approval prompts, matching the Codex/Claude runners.
+        ...(dangerousMode && !args.includes("--auto-approve") && !args.some((arg) => arg.startsWith("--approval-mode="))
+          ? ["--auto-approve"]
+          : []),
+        ...args,
+      ], { cwd, env, stdio: "inherit" });
       child.once("error", (error) => reject(error.code === "ENOENT"
         ? new Error("OMP CLI is not installed or not in PATH.")
         : error));

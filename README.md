@@ -27,7 +27,7 @@ zgap sessions          Browse agent history
 zgap --help            Show all commands
 ```
 
-Press Left or Right in the start menu to select SAFE or YOLO mode for Codex and Claude Code. The choice is saved locally and applies to new launches, direct commands, and resumed sessions. YOLO mode bypasses Codex approval and sandbox checks and Claude Code permission checks.
+Press Left or Right in the start menu to select SAFE or YOLO mode for Codex, Claude Code, and OMP. The choice is saved locally and applies to new launches, direct commands, and resumed sessions. YOLO mode bypasses Codex approval and sandbox checks, Claude Code permission checks, and OMP tool-approval prompts.
 
 ## Development
 
