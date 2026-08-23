@@ -870,7 +870,7 @@ test("claude가 PATH에 없으면 명확한 오류를 반환한다", async () =>
   assert.match(result.stderr, /Claude CLI is not installed or not in PATH/);
 });
 
-test("omp는 기본 OMP home을 유지하고 catalog 기반 임시 extension으로 zgap provider를 등록한다", async (t) => {
+test("omp는 정적 extension과 사용자 OMP 설정을 그대로 넘긴다", async (t) => {
   const root = await tempDir(t);
   const home = path.join(root, "home");
   const configRoot = path.join(root, "config");
@@ -878,43 +878,8 @@ test("omp는 기본 OMP home을 유지하고 catalog 기반 임시 extension으�
   const fakeBin = path.join(root, "bin");
   await mkdir(configDir, { recursive: true });
   await mkdir(fakeBin, { recursive: true });
-  let modelRequest;
   const origin = "https://proxy.example.test";
   const accessToken = jwt("old@example.com", "codex", origin);
-  const gateway = createServer(async (request, response) => {
-    modelRequest = { authorization: request.headers.authorization, url: request.url };
-    response.writeHead(200, { "content-type": "application/json" });
-    response.end(JSON.stringify({
-      models: [
-        {
-          slug: "gpt-5.6-luna",
-          display_name: "GPT-5.6 Luna",
-          context_window: 922000,
-          priority: 3,
-          supported_reasoning_levels: [{ effort: "low" }, { effort: "high" }, { effort: "ultra" }],
-        },
-        {
-          slug: "hidden-model",
-          visibility: "hide",
-          context_window: 128000,
-          priority: 0,
-        },
-        {
-          slug: "anthropic/claude-sonnet-5",
-          display_name: "Claude Sonnet 5",
-          visibility: "list",
-          context_window: 1000000,
-          priority: 1,
-          input_modalities: ["text", "image"],
-          supported_reasoning_levels: [],
-        },
-      ],
-    }));
-  });
-  gateway.listen(0, "127.0.0.1");
-  await once(gateway, "listening");
-  t.after(() => gateway.close());
-  const fetchRedirectModule = await installGatewayFetchRedirect(t, gateway.address().port, [origin]);
   await writeFile(path.join(configDir, "config.yml"), "host: proxy.example.test\n");
   await writeFile(path.join(configDir, "credentials.json"), JSON.stringify({
     access_expires_at: "2099-01-02T00:00:00.000Z",
@@ -924,158 +889,119 @@ test("omp는 기본 OMP home을 유지하고 catalog 기반 임시 extension으�
     refresh_expires_at: "2099-01-05T00:00:00.000Z",
     refresh_token: REFRESH_OLD,
   }), { mode: 0o600 });
+  await writeFile(path.join(configDir, "preferences.json"), '{"dangerousMode":true}\n');
 
   const fakeOmp = path.join(fakeBin, "omp");
   await writeFile(fakeOmp, `#!/usr/bin/env node
-import { readFileSync, statSync } from "node:fs";
 const args = process.argv.slice(2);
-if (args[0] === "--version") { process.stdout.write("omp/18.0.0\\n"); process.exit(0); }
-const extensionPath = args[args.indexOf("-e") + 1];
-const overlayPath = args[args.indexOf("--config") + 1];
+if (args[0] === "--version") { process.stdout.write("omp/18.0.3\\n"); process.exit(0); }
 process.stdout.write(JSON.stringify({
   argv: args,
-  extension: readFileSync(extensionPath, "utf8"),
-  overlay: readFileSync(overlayPath, "utf8"),
-  extensionMode: statSync(extensionPath).mode & 0o777,
-  extensionDirectoryMode: statSync(extensionPath.replace(/\\/extension\\.mjs$/, "")).mode & 0o777,
-  env: Object.fromEntries(["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "OPENAI_API_KEY", "OPENAI_BASE_URL", "ZGAP_API_KEY", "PI_CODEX_WEBSOCKET", "HOME"].map((key) => [key, process.env[key] ?? null])),
+  env: Object.fromEntries(["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "OPENAI_API_KEY", "OPENAI_BASE_URL", "ZGAP_API_KEY", "PI_CODEX_WEBSOCKET", "HOME", "OMP_PROFILE", "PI_CONFIG_DIR"].map((key) => [key, process.env[key] ?? null])),
 }));
 process.exitCode = 5;
 `);
   await chmod(fakeOmp, 0o755);
 
-  const result = await runCli(["omp", "--print", "hello"], {
+  const cliEnv = {
     HOME: home,
     XDG_CONFIG_HOME: configRoot,
     PATH: `${fakeBin}${path.delimiter}${process.env.PATH}`,
-    NODE_OPTIONS: `--import=${fetchRedirectModule}`,
-    ANTHROPIC_BASE_URL: "https://wrong.example",
-    ANTHROPIC_API_KEY: "wrong-key",
-    OPENAI_BASE_URL: "https://wrong.example",
-    OPENAI_API_KEY: "wrong-key",
-    ZGAP_API_KEY: "wrong-key",
-  });
+    ANTHROPIC_API_KEY: "user-anthropic-key",
+    ANTHROPIC_BASE_URL: "https://user-anthropic.example",
+    OPENAI_API_KEY: "user-openai-key",
+    OPENAI_BASE_URL: "https://user-openai.example",
+    ZGAP_API_KEY: "user-zgap-key",
+    PI_CODEX_WEBSOCKET: "0",
+    OMP_PROFILE: "work",
+    PI_CONFIG_DIR: path.join(root, "omp-config"),
+  };
+  const result = await runCli(["omp", "--print", "hello"], cliEnv);
   assert.equal(result.code, 5, result.stderr);
   const invocation = JSON.parse(result.stdout);
-  assert.deepEqual(modelRequest, {
-    authorization: `Bearer ${accessToken}`,
-    url: "/v1/models?client_version=18.0.0",
-  });
-  assert.equal(invocation.argv[0], "-e");
-  assert.equal(invocation.argv[2], "--config");
-  assert.deepEqual(invocation.argv.slice(4, 6), ["--model", "zgap/anthropic/claude-sonnet-5"]);
+  assert.equal(invocation.argv[0], "--trusted-extension");
+  assert.equal(invocation.argv.filter((arg) => arg === "--trusted-extension").length, 1);
+  assert.equal(invocation.argv.includes("-e"), false);
+  assert.equal(invocation.argv.includes("--config"), false);
+  assert.equal(invocation.argv.includes("--model"), false);
+  assert.equal(invocation.argv.includes("--auto-approve"), true);
   assert.deepEqual(invocation.argv.slice(-2), ["--print", "hello"]);
   const extensionPath = invocation.argv[1];
-  assert.match(extensionPath, new RegExp(`${path.sep}zgap-[^${path.sep}]+${path.sep}extension\\.mjs$`));
-  assert.equal(path.dirname(invocation.argv[3]), path.dirname(extensionPath));
-  assert.equal(invocation.extensionMode, 0o600);
-  assert.equal(invocation.extensionDirectoryMode, 0o700);
-  await assert.rejects(access(extensionPath), { code: "ENOENT" });
-  // priority 1이 hide 모델(priority 0)을 제외한 최소값이므로 서버 순위가 기본 모델을 결정한다.
-  assert.equal(invocation.overlay, [
-    "modelRoles:",
-    ...["default", "smol", "slow", "vision", "plan", "designer", "commit", "tiny", "task", "advisor"]
-      .map((role) => `  ${role}: "zgap/anthropic/claude-sonnet-5"`),
-    "retry:",
-    "  fallbackChains:",
-    "    default: []",
-    '    "zgap/*": []',
-    "",
-  ].join("\n"));
-
-  assert.match(invocation.extension, /registerProvider\("zgap"/);
-  assert.match(invocation.extension, /https:\/\/proxy\.example\.test\/v1\/responses\?omp_endpoint=\/codex\/responses/);
-  assert.match(invocation.extension, /"openai-codex-responses"/);
-  assert.match(invocation.extension, /authHeader: true/);
-  assert.match(invocation.extension, /apiKey: "!/);
-  assert.match(invocation.extension, /auth-token/);
-  assert.match(invocation.extension, new RegExp(credentialPathPattern(path.join(configDir, "credentials.json"))));
-  assert.equal(invocation.extension.includes(accessToken), false);
-  assert.equal(invocation.extension.includes(REFRESH_OLD), false);
-  const registered = JSON.parse(invocation.extension.match(/models: (\[[\s\S]*\])/)[1]);
-  assert.deepEqual(registered, [
-    {
-      id: "gpt-5.6-luna",
-      name: "GPT-5.6 Luna",
-      reasoning: true,
-      thinking: { mode: "effort", efforts: ["low", "high"] },
-      input: ["text"],
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      contextWindow: 922000,
-      maxTokens: 128000,
-    },
-    {
-      id: "anthropic/claude-sonnet-5",
-      name: "Claude Sonnet 5",
-      reasoning: false,
-      input: ["text", "image"],
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      contextWindow: 1000000,
-      maxTokens: 128000,
-    },
-  ]);
-
-  assert.equal(invocation.env.ANTHROPIC_API_KEY, null);
-  assert.equal(invocation.env.ANTHROPIC_BASE_URL, null);
-  assert.equal(invocation.env.OPENAI_API_KEY, null);
-  assert.equal(invocation.env.OPENAI_BASE_URL, null);
-  assert.equal(invocation.env.ZGAP_API_KEY, null);
-  assert.equal(invocation.env.PI_CODEX_WEBSOCKET, "1");
-  assert.equal(invocation.env.HOME, home);
-
-  await writeFile(path.join(configDir, "preferences.json"), '{"dangerousMode":true}\n');
-  const yoloResult = await runCli(["omp", "--print", "hello"], {
+  const shippedExtensionPath = path.join(repoDir, "src", "omp-provider-extension.mjs");
+  assert.equal(await realpath(extensionPath), await realpath(shippedExtensionPath));
+  assert.ok((await readFile(extensionPath, "utf8")).length > 0);
+  assert.deepEqual(invocation.env, {
+    ANTHROPIC_API_KEY: "user-anthropic-key",
+    ANTHROPIC_BASE_URL: "https://user-anthropic.example",
+    OPENAI_API_KEY: "user-openai-key",
+    OPENAI_BASE_URL: "https://user-openai.example",
+    ZGAP_API_KEY: "user-zgap-key",
+    PI_CODEX_WEBSOCKET: "0",
     HOME: home,
-    XDG_CONFIG_HOME: configRoot,
-    PATH: `${fakeBin}${path.delimiter}${process.env.PATH}`,
-    NODE_OPTIONS: `--import=${fetchRedirectModule}`,
+    OMP_PROFILE: "work",
+    PI_CONFIG_DIR: path.join(root, "omp-config"),
   });
-  assert.equal(yoloResult.code, 5, yoloResult.stderr);
-  const yoloInvocation = JSON.parse(yoloResult.stdout);
-  assert.equal(yoloInvocation.argv.includes("--auto-approve"), true);
-  assert.deepEqual(yoloInvocation.argv.slice(-2), ["--print", "hello"]);
 
-  const explicitModeResult = await runCli(["omp", "--approval-mode", "always-ask", "--print", "hello"], {
-    HOME: home,
-    XDG_CONFIG_HOME: configRoot,
-    PATH: `${fakeBin}${path.delimiter}${process.env.PATH}`,
-    NODE_OPTIONS: `--import=${fetchRedirectModule}`,
-  });
+  const explicitModeResult = await runCli(["omp", "--approval-mode", "always-ask", "--print", "hello"], cliEnv);
   assert.equal(explicitModeResult.code, 5, explicitModeResult.stderr);
   const explicitModeInvocation = JSON.parse(explicitModeResult.stdout);
   assert.equal(explicitModeInvocation.argv.includes("--auto-approve"), false);
+  assert.deepEqual(explicitModeInvocation.argv.slice(-4), ["--approval-mode", "always-ask", "--print", "hello"]);
 
   await writeFile(path.join(configDir, "preferences.json"), '{"dangerousMode":false}\n');
-  const safeResult = await runCli(["omp", "--print", "hello"], {
-    HOME: home,
-    XDG_CONFIG_HOME: configRoot,
-    PATH: `${fakeBin}${path.delimiter}${process.env.PATH}`,
-    NODE_OPTIONS: `--import=${fetchRedirectModule}`,
-  });
+  const safeResult = await runCli(["omp", "--print", "hello"], cliEnv);
   assert.equal(safeResult.code, 5, safeResult.stderr);
   assert.equal(JSON.parse(safeResult.stdout).argv.includes("--auto-approve"), false);
 });
 
-test("omp catalog 변환은 hide 모델 제외 후 남는 모델이 없으면 실패한다", async () => {
-  const { catalogToOmpModels } = await import("../src/omp.mjs");
-  assert.throws(
-    () => catalogToOmpModels({ models: [{ slug: "hidden", visibility: "hide", context_window: 1000 }] }),
-    /no listable models/,
-  );
-  assert.throws(
-    () => catalogToOmpModels({ models: [{ slug: "broken", visibility: "list" }] }),
-    /missing a valid context_window/,
-  );
-  // priority가 전부 없으면 첫 모델이 기본값이 된다.
-  const fallback = catalogToOmpModels({ models: [
-    { slug: "first", context_window: 1000 },
-    { slug: "second", context_window: 1000 },
-  ] });
-  assert.equal(fallback.defaultSlug, "first");
+test("OMP extension은 기존 OpenAI와 Anthropic provider를 proxy로 재등록한다", async () => {
+  const { authTokenCommand, registerProxyProviders } = await import("../src/omp-provider-extension.mjs");
+  const registrations = [];
+  const origin = "https://proxy.example.test";
+  const credentialFile = "/tmp/zgap credentials.json";
+  const env = {
+    CLAUDE_CODE_USE_FOUNDRY: "1",
+    FOUNDRY_BASE_URL: "https://foundry.example",
+    ANTHROPIC_CUSTOM_HEADERS: "x-tenant: keep, Authorization: Bearer wrong\nX-Api-Key: wrong",
+    PRESERVED: "yes",
+  };
+  await registerProxyProviders({
+    registerProvider(name, config) {
+      registrations.push({ name, config });
+    },
+  }, { origin, credentialFile, platform: "linux", env });
+
+  assert.deepEqual(registrations.map(({ name }) => name), ["openai-codex", "anthropic"]);
+  const openai = registrations[0].config;
+  const anthropic = registrations[1].config;
+  assert.equal(openai.baseUrl, `${origin}/v1/responses?omp_endpoint=/codex/responses`);
+  assert.equal(anthropic.baseUrl, origin);
+  const expectedKey = authTokenCommand(credentialFile, "linux");
+  assert.match(expectedKey, /^!/);
+  assert.match(expectedKey, /auth-token/);
+  assert.equal(openai.apiKey, expectedKey);
+  assert.equal(anthropic.apiKey, expectedKey);
+  assert.equal(anthropic.authHeader, true);
+  assert.equal(anthropic.headers["X-Api-Key"], expectedKey);
+  assert.deepEqual(env, {
+    ANTHROPIC_CUSTOM_HEADERS: "x-tenant: keep",
+    PRESERVED: "yes",
+  });
+
+  for (const { name, config } of registrations) {
+    assert.equal(Object.hasOwn(config, "models"), false);
+    assert.equal(config.usage.id, name);
+    assert.equal(config.usage.supports({ provider: name, credential: { type: "oauth", accessToken: "unused" } }), false);
+    assert.equal(config.usage.supports({ provider: name, credential: { type: "api_key", apiKey: "unused" } }), false);
+    assert.equal(await config.usage.fetchUsage(
+      { provider: name, credential: { type: "api_key", apiKey: "unused" } },
+      { fetch: async () => { throw new Error("official usage endpoint must not be called"); } },
+    ), null);
+  }
 });
 
 test("omp Windows auth helper는 경로를 PowerShell encoded command로 전달한다", async () => {
-  const { authTokenCommand } = await import("../src/omp.mjs");
+  const { authTokenCommand } = await import("../src/omp-provider-extension.mjs");
   const credentialFile = "C:\\Users\\O'Neil\\%TOKEN%\\credentials.json";
   const command = authTokenCommand(credentialFile, "win32");
   const encoded = command.split(" ").at(-1);
@@ -1087,7 +1013,73 @@ test("omp Windows auth helper는 경로를 PowerShell encoded command로 전달�
   assert.match(script, /\nexit \$LASTEXITCODE$/);
 });
 
-test("omp는 로그인 전이면 실행하지 않고 login 안내를 반환한다", async (t) => {
+test("omp는 18.0.3보다 오래된 버전을 실행 전에 거부한다", async (t) => {
+  const root = await tempDir(t);
+  const configRoot = path.join(root, "config");
+  const configDir = path.join(configRoot, "zgap");
+  const fakeBin = path.join(root, "bin");
+  const marker = path.join(root, "normal-invocation");
+  await mkdir(configDir, { recursive: true });
+  await mkdir(fakeBin, { recursive: true });
+  await writeFile(path.join(configDir, "credentials.json"), JSON.stringify({
+    access_expires_at: "2099-01-02T00:00:00.000Z",
+    access_token: ACCESS_OLD,
+    device_id: "d".repeat(43),
+    origin: "https://ai-proxy.zz.gg",
+    refresh_expires_at: "2099-01-05T00:00:00.000Z",
+    refresh_token: REFRESH_OLD,
+  }), { mode: 0o600 });
+  const fakeOmp = path.join(fakeBin, "omp");
+  await writeFile(fakeOmp, `#!/usr/bin/env node
+if (process.argv[2] === "--version") { process.stdout.write(\`omp/\${process.env.FAKE_OMP_VERSION}\\n\`); process.exit(0); }
+import("node:fs").then(({ writeFileSync }) => writeFileSync(${JSON.stringify(marker)}, "ran"));
+`);
+  await chmod(fakeOmp, 0o755);
+
+  for (const version of ["18.0.2", "18.0.3-rc.1"]) {
+    const result = await runCli(["omp"], {
+      XDG_CONFIG_HOME: configRoot,
+      PATH: `${fakeBin}${path.delimiter}${process.env.PATH}`,
+      FAKE_OMP_VERSION: version,
+    });
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /18\.0\.3/);
+    await assert.rejects(access(marker), { code: "ENOENT" });
+  }
+});
+
+test("omp standalone usage는 공식 provider 조회 전에 거부한다", async (t) => {
+  const root = await tempDir(t);
+  const configRoot = path.join(root, "config");
+  const configDir = path.join(configRoot, "zgap");
+  const fakeBin = path.join(root, "bin");
+  const marker = path.join(root, "ran");
+  await mkdir(configDir, { recursive: true });
+  await mkdir(fakeBin, { recursive: true });
+  await writeFile(path.join(configDir, "credentials.json"), JSON.stringify({
+    access_expires_at: "2099-01-02T00:00:00.000Z",
+    access_token: ACCESS_OLD,
+    device_id: "d".repeat(43),
+    origin: "https://ai-proxy.zz.gg",
+    refresh_expires_at: "2099-01-05T00:00:00.000Z",
+    refresh_token: REFRESH_OLD,
+  }), { mode: 0o600 });
+  await writeFile(path.join(fakeBin, "omp"), `#!/usr/bin/env node
+import { writeFileSync } from "node:fs";
+writeFileSync(${JSON.stringify(marker)}, "ran");
+`);
+  await chmod(path.join(fakeBin, "omp"), 0o755);
+
+  const result = await runCli(["omp", "--cwd", ".", "usage", "--json"], {
+    XDG_CONFIG_HOME: configRoot,
+    PATH: `${fakeBin}${path.delimiter}${process.env.PATH}`,
+  });
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /usage.*disabled/i);
+  await assert.rejects(access(marker), { code: "ENOENT" });
+});
+
+test("omp는 로그인 전이면 OMP 확인도 하지 않고 login 안내를 반환한다", async (t) => {
   const root = await tempDir(t);
   const configRoot = path.join(root, "config");
   const fakeBin = path.join(root, "bin");
@@ -1096,8 +1088,9 @@ test("omp는 로그인 전이면 실행하지 않고 login 안내를 반환한�
   const marker = path.join(root, "ran");
   const fakeOmp = path.join(fakeBin, "omp");
   await writeFile(fakeOmp, `#!/usr/bin/env node
-if (process.argv[2] === "--version") { process.stdout.write("omp/18.0.0\\n"); process.exit(0); }
-import("node:fs").then(({ writeFileSync }) => writeFileSync(${JSON.stringify(marker)}, "ran"));
+import { writeFileSync } from "node:fs";
+writeFileSync(${JSON.stringify(marker)}, "ran");
+if (process.argv[2] === "--version") { process.stdout.write("omp/18.0.3\\n"); process.exit(0); }
 `);
   await chmod(fakeOmp, 0o755);
   const result = await runCli(["omp"], {
