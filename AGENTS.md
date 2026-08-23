@@ -69,7 +69,7 @@
 ## Multi-Agent Contract
 
 - Keep `login` credential-only: write the zgap credential path and do not mutate the user's Codex configuration.
-- Keep agent configuration process-local: `zgap codex` injects launch arguments and a temporary catalog, `zgap claude` injects child environment and inline settings, and `zgap omp` loads only the shipped provider override through OMP's fail-closed trusted-extension allowlist. Regular OMP configuration, extensions, and history remain untouched.
+- Keep agent configuration process-local: `zgap codex` injects launch arguments and a temporary catalog, `zgap claude` injects child environment and inline settings, and `zgap omp` additively loads the shipped provider override with a required extension-owned CLI flag. Regular OMP configuration, ambient extensions, and history remain active and untouched.
 - Preserve each supported agent's normal local configuration and history.
 
 ## Self reviewing
