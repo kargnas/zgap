@@ -306,7 +306,7 @@ test("Corner Map은 100x24의 네 모서리와 중앙을 사용한다", async (t
   assert.ok(title.x <= 3 && title.y <= 3, `title at ${title.x},${title.y}`);
   assert.ok(status.x >= 80 && status.y <= 3, `status at ${status.x},${status.y}`);
   assert.ok(proxy.x >= 75 && proxy.y <= 4, `proxy at ${proxy.x},${proxy.y}`);
-  assert.ok(action.x <= 20 && action.y >= 9 && action.y <= 14, `action at ${action.x},${action.y}`);
+  assert.ok(action.x <= 20 && action.y >= 5 && action.y <= 14, `action at ${action.x},${action.y}`);
   assert.ok(hint.x >= 30 && hint.y >= 21, `hint at ${hint.x},${hint.y}`);
 
   await setup.mockInput.pressCtrlC();
@@ -507,21 +507,27 @@ test("로그인 상태에서는 CODEX, Claude, Sessions를 선택할 수 있다"
   const frame = setup.captureCharFrame();
   assert.match(frame, /CODEX/);
   assert.match(frame, /Claude/);
+  assert.match(frame, /OMP/);
   assert.match(frame, /Sessions/);
   assert.doesNotMatch(frame, /Login/);
   const codexLabel = findText(setup.renderer.root, "CODEX  ↵");
   const claudeLabel = findText(setup.renderer.root, "Claude  ↵");
+  const ompLabel = findText(setup.renderer.root, "OMP  ↵");
   const sessionsLabel = findText(setup.renderer.root, "Sessions  ↵");
   assert.equal(codexLabel.x, claudeLabel.x);
-  assert.equal(claudeLabel.x, sessionsLabel.x);
+  assert.equal(claudeLabel.x, ompLabel.x);
+  assert.equal(ompLabel.x, sessionsLabel.x);
   assert.ok(claudeLabel.y > codexLabel.y, `Claude action must be below Codex: ${claudeLabel.y} <= ${codexLabel.y}`);
-  assert.ok(sessionsLabel.y > claudeLabel.y, `Sessions action must be below Claude: ${sessionsLabel.y} <= ${claudeLabel.y}`);
+  assert.ok(ompLabel.y > claudeLabel.y, `OMP action must be below Claude: ${ompLabel.y} <= ${claudeLabel.y}`);
+  assert.ok(sessionsLabel.y > ompLabel.y, `Sessions action must be below OMP: ${sessionsLabel.y} <= ${ompLabel.y}`);
   assert.notEqual(codexLabel.fg.toString(), claudeLabel.fg.toString());
 
   await setup.mockInput.pressArrow("down");
   assert.notEqual(codexLabel.fg.toString(), claudeLabel.fg.toString());
   await setup.mockInput.pressArrow("down");
-  assert.notEqual(claudeLabel.fg.toString(), sessionsLabel.fg.toString());
+  assert.notEqual(claudeLabel.fg.toString(), ompLabel.fg.toString());
+  await setup.mockInput.pressArrow("down");
+  assert.notEqual(ompLabel.fg.toString(), sessionsLabel.fg.toString());
   await setup.mockInput.pressEnter();
   await assert.rejects(resultPromise, /Missing menu action: sessions/);
   assert.deepEqual(calls, []);

@@ -9,6 +9,7 @@ import {
 import { login } from "./login.mjs";
 import { runCodex } from "./codex.mjs";
 import { runClaude } from "./claude.mjs";
+import { runOmp } from "./omp.mjs";
 import { stat } from "node:fs/promises";
 import { readProxyConfig } from "./config.mjs";
 import { checkForGlobalUpdate, updateGlobalInstall } from "./install.mjs";
@@ -46,6 +47,7 @@ function printHelp() {
   zgap logout            Sign out on this device
   zgap codex [args...]   Run Codex through the configured proxy
   zgap claude [args...]  Run Claude through the configured proxy
+  zgap omp [args...]     Run OMP through the configured proxy
   zgap sessions          Browse agent history
   zgap update            Update zgap from GitHub main
 
@@ -81,6 +83,10 @@ export async function main({
   if (command === "claude") {
     const { origin } = await configReader(configDir);
     return runClaude(args, { configDir, origin });
+  }
+  if (command === "omp") {
+    const { origin } = await configReader(configDir);
+    return runOmp(args, { configDir, origin });
   }
   if (command === "sessions") {
     return sessionBrowser({
@@ -120,6 +126,7 @@ export async function main({
           login: () => login({ configDir, origin: proxyConfig.origin }),
           codex: () => runCodex([], { configDir, origin: proxyConfig.origin }),
           claude: () => runClaude([], { configDir, origin: proxyConfig.origin }),
+          omp: () => runOmp([], { configDir, origin: proxyConfig.origin }),
           sessions: async () => {
             let selected = false;
             const browserResult = await sessionBrowser({

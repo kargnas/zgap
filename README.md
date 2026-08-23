@@ -17,11 +17,12 @@ zgap login
 zgap
 ```
 
-Codex and Claude Code are currently supported. Existing local configuration and session history remain in their normal locations.
+Codex, Claude Code, and OMP are currently supported. Existing local configuration and session history remain in their normal locations.
 
 ```text
 zgap codex [args...]   Run Codex
 zgap claude [args...]  Run Claude Code
+zgap omp [args...]     Run OMP
 zgap sessions          Browse agent history
 zgap --help            Show all commands
 ```

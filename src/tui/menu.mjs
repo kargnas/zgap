@@ -66,6 +66,7 @@ function menuContent(credentialState, accountProfile, t, host) {
       actions: [
         { name: "codex", label: t("codex"), description: t("codexDescription", { host }) },
         { name: "claude", label: t("claude"), description: t("claudeDescription", { host }) },
+        { name: "omp", label: t("omp"), description: t("ompDescription", { host }) },
         { name: "sessions", label: t("sessions"), description: t("sessionsDescription") },
       ],
     };

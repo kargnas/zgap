@@ -18,6 +18,8 @@
   "codexDescription": "Launch through {{host}}",
   "claude": "Claude",
   "claudeDescription": "Launch through {{host}}",
+  "omp": "OMP",
+  "ompDescription": "Launch through {{host}}",
   "sessions": "Sessions",
   "sessionsDescription": "Browse agent history",
   "sessionsTitle": "SESSIONS",

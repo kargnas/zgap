@@ -18,6 +18,8 @@
   "codexDescription": "{{host}}를 통해 실행합니다",
   "claude": "Claude",
   "claudeDescription": "{{host}}를 통해 실행합니다",
+  "omp": "OMP",
+  "ompDescription": "{{host}}를 통해 실행합니다",
   "sessions": "세션",
   "sessionsDescription": "에이전트 기록을 봅니다",
   "sessionsTitle": "세션",

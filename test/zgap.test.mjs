@@ -854,6 +854,196 @@ test("claude가 PATH에 없으면 명확한 오류를 반환한다", async () =>
   assert.match(result.stderr, /Claude CLI is not installed or not in PATH/);
 });
 
+test("omp는 기본 OMP home을 유지하고 catalog 기반 임시 extension으로 zgap provider를 등록한다", async (t) => {
+  const root = await tempDir(t);
+  const home = path.join(root, "home");
+  const configRoot = path.join(root, "config");
+  const configDir = path.join(configRoot, "zgap");
+  const fakeBin = path.join(root, "bin");
+  await mkdir(configDir, { recursive: true });
+  await mkdir(fakeBin, { recursive: true });
+  let modelRequest;
+  const origin = "https://proxy.example.test";
+  const accessToken = jwt("old@example.com", "codex", origin);
+  const gateway = createServer(async (request, response) => {
+    modelRequest = { authorization: request.headers.authorization, url: request.url };
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({
+      models: [
+        {
+          slug: "gpt-5.6-luna",
+          display_name: "GPT-5.6 Luna",
+          context_window: 922000,
+          priority: 3,
+          supported_reasoning_levels: [{ effort: "low" }, { effort: "high" }, { effort: "ultra" }],
+        },
+        {
+          slug: "hidden-model",
+          visibility: "hide",
+          context_window: 128000,
+          priority: 0,
+        },
+        {
+          slug: "anthropic/claude-sonnet-5",
+          display_name: "Claude Sonnet 5",
+          visibility: "list",
+          context_window: 1000000,
+          priority: 1,
+          input_modalities: ["text", "image"],
+          supported_reasoning_levels: [],
+        },
+      ],
+    }));
+  });
+  gateway.listen(0, "127.0.0.1");
+  await once(gateway, "listening");
+  t.after(() => gateway.close());
+  const fetchRedirectModule = await installGatewayFetchRedirect(t, gateway.address().port, [origin]);
+  await writeFile(path.join(configDir, "config.yml"), "host: proxy.example.test\n");
+  await writeFile(path.join(configDir, "credentials.json"), JSON.stringify({
+    access_expires_at: "2099-01-02T00:00:00.000Z",
+    access_token: accessToken,
+    device_id: "d".repeat(43),
+    origin,
+    refresh_expires_at: "2099-01-05T00:00:00.000Z",
+    refresh_token: REFRESH_OLD,
+  }), { mode: 0o600 });
+
+  const fakeOmp = path.join(fakeBin, "omp");
+  await writeFile(fakeOmp, `#!/usr/bin/env node
+import { readFileSync, statSync } from "node:fs";
+const args = process.argv.slice(2);
+if (args[0] === "--version") { process.stdout.write("omp/18.0.0\\n"); process.exit(0); }
+const extensionPath = args[args.indexOf("-e") + 1];
+const overlayPath = args[args.indexOf("--config") + 1];
+process.stdout.write(JSON.stringify({
+  argv: args,
+  extension: readFileSync(extensionPath, "utf8"),
+  overlay: readFileSync(overlayPath, "utf8"),
+  extensionMode: statSync(extensionPath).mode & 0o777,
+  extensionDirectoryMode: statSync(extensionPath.replace(/\\/extension\\.mjs$/, "")).mode & 0o777,
+  env: Object.fromEntries(["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "OPENAI_API_KEY", "OPENAI_BASE_URL", "ZGAP_API_KEY", "PI_CODEX_WEBSOCKET", "HOME"].map((key) => [key, process.env[key] ?? null])),
+}));
+process.exitCode = 5;
+`);
+  await chmod(fakeOmp, 0o755);
+
+  const result = await runCli(["omp", "--print", "hello"], {
+    HOME: home,
+    XDG_CONFIG_HOME: configRoot,
+    PATH: `${fakeBin}${path.delimiter}${process.env.PATH}`,
+    NODE_OPTIONS: `--import=${fetchRedirectModule}`,
+    ANTHROPIC_BASE_URL: "https://wrong.example",
+    ANTHROPIC_API_KEY: "wrong-key",
+    OPENAI_BASE_URL: "https://wrong.example",
+    OPENAI_API_KEY: "wrong-key",
+    ZGAP_API_KEY: "wrong-key",
+  });
+  assert.equal(result.code, 5, result.stderr);
+  const invocation = JSON.parse(result.stdout);
+  assert.deepEqual(modelRequest, {
+    authorization: `Bearer ${accessToken}`,
+    url: "/v1/models?client_version=18.0.0",
+  });
+  assert.equal(invocation.argv[0], "-e");
+  assert.equal(invocation.argv[2], "--config");
+  assert.deepEqual(invocation.argv.slice(-2), ["--print", "hello"]);
+  const extensionPath = invocation.argv[1];
+  assert.match(extensionPath, new RegExp(`${path.sep}zgap-[^${path.sep}]+${path.sep}extension\\.mjs$`));
+  assert.equal(path.dirname(invocation.argv[3]), path.dirname(extensionPath));
+  assert.equal(invocation.extensionMode, 0o600);
+  assert.equal(invocation.extensionDirectoryMode, 0o700);
+  await assert.rejects(access(extensionPath), { code: "ENOENT" });
+  // priority 1이 hide 모델(priority 0)을 제외한 최소값이므로 서버 순위가 기본 모델을 결정한다.
+  assert.equal(invocation.overlay, 'modelRoles:\n  default: "zgap/anthropic/claude-sonnet-5"\n');
+
+  assert.match(invocation.extension, /registerProvider\("zgap"/);
+  assert.match(invocation.extension, /https:\/\/proxy\.example\.test\/v1\/responses\?omp_endpoint=\/codex\/responses/);
+  assert.match(invocation.extension, /"openai-codex-responses"/);
+  assert.match(invocation.extension, /authHeader: true/);
+  assert.match(invocation.extension, /apiKey: "!/);
+  assert.match(invocation.extension, /auth-token/);
+  assert.match(invocation.extension, new RegExp(credentialPathPattern(path.join(configDir, "credentials.json"))));
+  assert.equal(invocation.extension.includes(accessToken), false);
+  assert.equal(invocation.extension.includes(REFRESH_OLD), false);
+  const registered = JSON.parse(invocation.extension.match(/models: (\[[\s\S]*\])/)[1]);
+  assert.deepEqual(registered, [
+    {
+      id: "gpt-5.6-luna",
+      name: "GPT-5.6 Luna",
+      reasoning: true,
+      thinking: { mode: "effort", efforts: ["low", "high"] },
+      input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 922000,
+      maxTokens: 128000,
+    },
+    {
+      id: "anthropic/claude-sonnet-5",
+      name: "Claude Sonnet 5",
+      reasoning: false,
+      input: ["text", "image"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 1000000,
+      maxTokens: 128000,
+    },
+  ]);
+
+  assert.equal(invocation.env.ANTHROPIC_API_KEY, null);
+  assert.equal(invocation.env.ANTHROPIC_BASE_URL, null);
+  assert.equal(invocation.env.OPENAI_API_KEY, null);
+  assert.equal(invocation.env.OPENAI_BASE_URL, null);
+  assert.equal(invocation.env.ZGAP_API_KEY, null);
+  assert.equal(invocation.env.PI_CODEX_WEBSOCKET, "1");
+  assert.equal(invocation.env.HOME, home);
+});
+
+test("omp catalog 변환은 hide 모델 제외 후 남는 모델이 없으면 실패한다", async () => {
+  const { catalogToOmpModels } = await import("../src/omp.mjs");
+  assert.throws(
+    () => catalogToOmpModels({ models: [{ slug: "hidden", visibility: "hide", context_window: 1000 }] }),
+    /no listable models/,
+  );
+  assert.throws(
+    () => catalogToOmpModels({ models: [{ slug: "broken", visibility: "list" }] }),
+    /missing a valid context_window/,
+  );
+  // priority가 전부 없으면 첫 모델이 기본값이 된다.
+  const fallback = catalogToOmpModels({ models: [
+    { slug: "first", context_window: 1000 },
+    { slug: "second", context_window: 1000 },
+  ] });
+  assert.equal(fallback.defaultSlug, "first");
+});
+
+test("omp는 로그인 전이면 실행하지 않고 login 안내를 반환한다", async (t) => {
+  const root = await tempDir(t);
+  const configRoot = path.join(root, "config");
+  const fakeBin = path.join(root, "bin");
+  await mkdir(path.join(configRoot, "zgap"), { recursive: true });
+  await mkdir(fakeBin, { recursive: true });
+  const marker = path.join(root, "ran");
+  const fakeOmp = path.join(fakeBin, "omp");
+  await writeFile(fakeOmp, `#!/usr/bin/env node
+if (process.argv[2] === "--version") { process.stdout.write("omp/18.0.0\\n"); process.exit(0); }
+import("node:fs").then(({ writeFileSync }) => writeFileSync(${JSON.stringify(marker)}, "ran"));
+`);
+  await chmod(fakeOmp, 0o755);
+  const result = await runCli(["omp"], {
+    XDG_CONFIG_HOME: configRoot,
+    PATH: `${fakeBin}${path.delimiter}${process.env.PATH}`,
+  });
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /Not logged in\. Run `zgap login` first\./);
+  await assert.rejects(access(marker), { code: "ENOENT" });
+});
+
+test("omp가 PATH에 없으면 명확한 오류를 반환한다", async () => {
+  const result = await runCli(["omp"], { PATH: "" });
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /OMP CLI is not installed or not in PATH/);
+});
+
 test("auth-token은 전체 CLI 모듈 없이 credential 경로만 실행한다", async (t) => {
   const root = await tempDir(t);
   const isolatedCli = path.join(root, "bin", "zgap.mjs");
