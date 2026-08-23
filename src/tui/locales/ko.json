@@ -18,6 +18,8 @@
   "codexDescription": "{{host}}를 통해 실행합니다",
   "claude": "Claude",
   "claudeDescription": "{{host}}를 통해 실행합니다",
+  "omp": "OMP",
+  "ompDescription": "{{host}}를 통해 실행합니다",
   "sessions": "세션",
   "sessionsDescription": "에이전트 기록을 봅니다",
   "sessionsTitle": "세션",
@@ -64,8 +66,8 @@
   "sessionsActiveResumeConfirm": "이 세션은 이미 실행 중입니다. 1초 안에 Enter를 다시 누르면 재개합니다",
   "dangerousModeSafe": "SAFE",
   "dangerousModeYolo": "YOLO",
-  "dangerousModeToggleHint": "Y를 누르면 Codex와 Claude가 함께 전환됩니다",
+  "dangerousModeSelectHint": "왼쪽은 SAFE · 오른쪽은 YOLO",
   "dangerousModeSaveFailed": "YOLO 모드를 저장하지 못했습니다",
   "hint": "Up/Down 이동  ·  Enter 선택  ·  Ctrl+C 두 번 또는 Esc 두 번 종료",
-  "compactHint": "Y 모드 · ↑↓ · ↵ 선택 · Esc 두 번 종료"
+  "compactHint": "←→ 모드 · ↑↓ · ↵ 선택 · Esc 두 번 종료"
 }

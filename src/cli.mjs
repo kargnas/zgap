@@ -9,6 +9,7 @@ import {
 import { login } from "./login.mjs";
 import { runCodex } from "./codex.mjs";
 import { runClaude } from "./claude.mjs";
+import { runOmp } from "./omp.mjs";
 import { stat } from "node:fs/promises";
 import { readProxyConfig } from "./config.mjs";
 import { readDangerousMode, writeDangerousMode } from "./preferences.mjs";
@@ -50,6 +51,7 @@ function printHelp() {
   zgap logout            Sign out on this device
   zgap codex [args...]   Run Codex through the configured proxy
   zgap claude [args...]  Run Claude through the configured proxy
+  zgap omp [args...]     Run OMP through the configured proxy
   zgap sessions          Browse agent history
   zgap update            Update zgap from GitHub main
 
@@ -69,6 +71,7 @@ export async function main({
   dangerousModeWriter = writeDangerousMode,
   codexRunner = runCodex,
   claudeRunner = runClaude,
+  ompRunner = runOmp,
   cwd = process.cwd(),
 } = {}) {
   const [command, ...args] = argv;
@@ -95,6 +98,13 @@ export async function main({
       dangerousModeReader(configDir),
     ]);
     return claudeRunner(args, { configDir, origin, dangerousMode });
+  }
+  if (command === "omp") {
+    const [{ origin }, dangerousMode] = await Promise.all([
+      configReader(configDir),
+      dangerousModeReader(configDir),
+    ]);
+    return ompRunner(args, { configDir, origin, dangerousMode });
   }
   if (command === "sessions") {
     return sessionBrowser({
@@ -143,6 +153,7 @@ export async function main({
           login: () => login({ configDir, origin: proxyConfig.origin }),
           codex: () => codexRunner([], { configDir, origin: proxyConfig.origin, dangerousMode }),
           claude: () => claudeRunner([], { configDir, origin: proxyConfig.origin, dangerousMode }),
+          omp: () => ompRunner([], { configDir, origin: proxyConfig.origin, dangerousMode }),
           sessions: async () => {
             let selected = false;
             const browserResult = await sessionBrowser({

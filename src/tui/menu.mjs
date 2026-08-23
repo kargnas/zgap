@@ -66,6 +66,7 @@ function menuContent(credentialState, accountProfile, t, host) {
       actions: [
         { name: "codex", label: t("codex"), description: t("codexDescription", { host }) },
         { name: "claude", label: t("claude"), description: t("claudeDescription", { host }) },
+        { name: "omp", label: t("omp"), description: t("ompDescription", { host }) },
         { name: "sessions", label: t("sessions"), description: t("sessionsDescription") },
       ],
     };
@@ -153,7 +154,7 @@ export async function runStartMenu({
     };
     let selectedIndex = 0;
     let dangerousModeEnabled = dangerousMode;
-    let modeTogglePending = false;
+    let modeChangePending = false;
     const runSelectedAction = () => {
       const selected = content.actions[selectedIndex];
       const action = actions[selected.name];
@@ -245,7 +246,7 @@ export async function runStartMenu({
       selectable: true,
     });
     const modeHint = new TextRenderable(renderer, {
-      content: t("dangerousModeToggleHint"),
+      content: t("dangerousModeSelectHint"),
       fg: "#64748B",
       selectable: true,
     });
@@ -259,7 +260,11 @@ export async function runStartMenu({
       alignItems: "stretch",
       gap: content.actions.length > 2 ? 0 : (content.actions.length > 1 ? 1 : 0),
     });
-    const actionCards = content.actions.map((item) => {
+    const actionGrid = content.actions.length >= 4;
+    // Compact single-row cards drop the Enter suffix so all agent labels fit narrow terminals.
+    const fullLabels = content.actions.map((item) => `${item.label}  ↵`);
+    const compactLabels = content.actions.map((item) => item.label);
+    const actionCards = content.actions.map((item, index) => {
       const card = new BoxRenderable(renderer, {
         width: "100%",
         height: 4,
@@ -271,7 +276,7 @@ export async function runStartMenu({
         paddingX: 1,
       });
       const label = new TextRenderable(renderer, {
-        content: `${item.label}  ↵`,
+        content: fullLabels[index],
         fg: "#F8FAFC",
         attributes: TextAttributes.BOLD,
         selectable: true,
@@ -313,7 +318,8 @@ export async function runStartMenu({
     renderer.root.add(root);
 
     const applyResponsiveLayout = (width, height = renderer.height) => {
-      const compact = width <= COMPACT_WIDTH || height <= 12;
+      // Four full cards need 81 columns and 19 rows before labels, descriptions, and the footer stop colliding.
+      const compact = width <= COMPACT_WIDTH || height <= 12 || (actionGrid && (width <= 80 || height <= 18));
       root.paddingTop = compact ? 0 : 1;
       root.paddingBottom = compact ? 0 : 1;
       topBar.flexDirection = compact ? "column" : "row";
@@ -328,15 +334,22 @@ export async function runStartMenu({
       centerArea.alignItems = compact ? "stretch" : "center";
       modeArea.height = compact ? 1 : 2;
       modeHint.visible = !compact;
-      actionRow.flexDirection = compact && content.actions.length > 1 ? "row" : "column";
-      actionRow.width = compact ? "100%" : "70%";
-      actionRow.height = compact ? 3 : (content.actions.length > 1 ? (content.actions.length * 4 + (content.actions.length > 2 ? 0 : 1)) : 4);
-      actionRow.gap = compact ? 0 : (content.actions.length > 2 ? 0 : (content.actions.length > 1 ? 1 : 0));
-      actionCards.forEach(({ card, description }) => {
-        card.width = compact && content.actions.length > 1 ? `${100 / content.actions.length}%` : "100%";
+      // With 4+ agent cards the stacked column no longer fits a 24-row terminal
+      // next to the mode rail, so non-compact layouts wrap cards in two columns too.
+      const grid = compact ? content.actions.length > 1 : actionGrid;
+      actionRow.flexDirection = grid ? "row" : "column";
+      actionRow.flexWrap = grid ? "wrap" : "nowrap";
+      actionRow.width = compact ? "100%" : (actionGrid ? "88%" : "70%");
+      actionRow.height = compact ? 3 : (actionGrid ? 8 : (content.actions.length > 1 ? (content.actions.length * 4 + (content.actions.length > 2 ? 0 : 1)) : 4));
+      actionRow.gap = compact ? 0 : (actionGrid ? 1 : (content.actions.length > 2 ? 0 : (content.actions.length > 1 ? 1 : 0)));
+      actionCards.forEach(({ card, label, description }, index) => {
+        // Intrinsic compact widths keep long labels from overwriting their right border at 40 columns.
+        card.width = grid ? (compact ? "auto" : "48%") : "100%";
+        card.flexGrow = compact ? 1 : 0;
         card.height = compact ? 3 : 4;
         card.paddingX = compact ? 0 : 1;
         description.visible = !compact;
+        label.content = compact ? compactLabels[index] : fullLabels[index];
       });
       bottomBar.justifyContent = compact ? "flex-start" : "space-between";
       ready.visible = !compact;
@@ -360,12 +373,12 @@ export async function runStartMenu({
       const track = dangerousModeEnabled ? "○━━━━━━━━━━━━●" : "●━━━━━━━━━━━━○";
       modeRail.content = `${t("dangerousModeSafe")}  ${track}  ${t("dangerousModeYolo")}`;
       modeRail.fg = dangerousModeEnabled ? "#F87171" : "#86EFAC";
-      modeHint.content = saveFailed ? t("dangerousModeSaveFailed") : t("dangerousModeToggleHint");
+      modeHint.content = saveFailed ? t("dangerousModeSaveFailed") : t("dangerousModeSelectHint");
       modeHint.fg = saveFailed ? "#F87171" : "#64748B";
     };
-    const toggleDangerousMode = async () => {
-      modeTogglePending = true;
-      const enabled = !dangerousModeEnabled;
+    const setDangerousMode = async (enabled) => {
+      if (modeChangePending || enabled === dangerousModeEnabled) return;
+      modeChangePending = true;
       try {
         await onDangerousModeChange(enabled);
         if (cleaned) return;
@@ -374,7 +387,7 @@ export async function runStartMenu({
       } catch {
         if (!cleaned) updateDangerousMode(true);
       } finally {
-        modeTogglePending = false;
+        modeChangePending = false;
       }
     };
     updateSelection();
@@ -419,18 +432,18 @@ export async function runStartMenu({
                   timeZone: "UTC",
                 }).format(date),
               });
-              infoArea.visible = renderer.width > COMPACT_WIDTH && renderer.height > 12;
+              applyResponsiveLayout(renderer.width, renderer.height);
               return;
             }
           }
           updateStatus.content = t("updateFailed");
           updateStatus.fg = "#F87171";
-          infoArea.visible = renderer.width > COMPACT_WIDTH && renderer.height > 12;
+          applyResponsiveLayout(renderer.width, renderer.height);
         }).catch(() => {
           if (cleaned) return;
           updateStatus.content = t("updateFailed");
           updateStatus.fg = "#F87171";
-          infoArea.visible = renderer.width > COMPACT_WIDTH && renderer.height > 12;
+          applyResponsiveLayout(renderer.width, renderer.height);
         });
     }
 
@@ -455,11 +468,14 @@ export async function runStartMenu({
         }
         return;
       }
-      if (!event.ctrl && !event.meta && event.name === "y") {
-        if (!modeTogglePending) void toggleDangerousMode();
+      if (
+        !event.ctrl && !event.meta && !event.shift
+        && (event.name === "left" || event.name === "right")
+      ) {
+        void setDangerousMode(event.name === "right");
         return;
       }
-      if (modeTogglePending) return;
+      if (modeChangePending) return;
       if (content.actions.length > 1 && (event.name === "up" || event.name === "down")) {
         const delta = event.name === "down" ? 1 : -1;
         selectedIndex = Math.max(0, Math.min(content.actions.length - 1, selectedIndex + delta));

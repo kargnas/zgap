@@ -306,7 +306,7 @@ test("Corner Map은 100x24의 네 모서리와 중앙을 사용한다", async (t
   assert.ok(title.x <= 3 && title.y <= 3, `title at ${title.x},${title.y}`);
   assert.ok(status.x >= 80 && status.y <= 3, `status at ${status.x},${status.y}`);
   assert.ok(proxy.x >= 75 && proxy.y <= 4, `proxy at ${proxy.x},${proxy.y}`);
-  assert.ok(action.x <= 20 && action.y >= 9 && action.y <= 14, `action at ${action.x},${action.y}`);
+  assert.ok(action.x <= 20 && action.y >= 5 && action.y <= 18, `action at ${action.x},${action.y}`);
   assert.ok(hint.x >= 30 && hint.y >= 21, `hint at ${hint.x},${hint.y}`);
 
   await setup.mockInput.pressCtrlC();
@@ -365,7 +365,7 @@ test("인자 없는 CLI는 credential 상태를 시작 메뉴에 전달한다", 
   assert.equal(typeof menuOptions.actions.sessions, "function");
 });
 
-test("시작 메뉴의 dangerous mode 토글은 저장 후 같은 프로세스의 Codex 실행에 적용한다", async () => {
+test("시작 메뉴의 dangerous mode 변경은 저장 후 같은 프로세스의 Codex 실행에 적용한다", async () => {
   const { main } = await import("../src/cli.mjs");
   const writes = [];
   let launch;
@@ -555,7 +555,7 @@ test("로그인 상태에서는 Login을 숨기고 CODEX를 실행한다", async
   assert.deepEqual(calls, ["codex"]);
 });
 
-test("중앙 mode rail은 Y로 Codex와 Claude의 dangerous mode를 함께 저장하고 전환한다", async (t) => {
+test("중앙 mode rail은 좌우 화살표로 SAFE와 YOLO를 선택하고 중복 저장을 생략한다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runStartMenu } = await import("../src/tui/menu.mjs");
   const setup = await createTestRenderer({ width: 100, height: 24 });
@@ -570,22 +570,32 @@ test("중앙 mode rail은 Y로 Codex와 Claude의 dangerous mode를 함께 저�
   });
 
   await flushMenu(setup);
-  assert.match(setup.captureCharFrame(), /SAFE\s+●━+○\s+YOLO/);
-  assert.match(setup.captureCharFrame(), /Y toggles Codex and Claude together/);
+  const initialFrame = setup.captureCharFrame();
 
-  await setup.mockInput.typeText("y");
+  await setup.mockInput.pressArrow("right");
   await flushMenu(setup);
-  assert.deepEqual(writes, [true]);
-  assert.match(setup.captureCharFrame(), /SAFE\s+○━+●\s+YOLO/);
+  const writesAfterRight = [...writes];
+  const frameAfterRight = setup.captureCharFrame();
 
-  await setup.mockInput.typeText("y");
+  await setup.mockInput.pressArrow("right");
   await flushMenu(setup);
-  assert.deepEqual(writes, [true, false]);
-  assert.match(setup.captureCharFrame(), /SAFE\s+●━+○\s+YOLO/);
+  const writesAfterSecondRight = [...writes];
+
+  await setup.mockInput.pressArrow("left");
+  await flushMenu(setup);
+  const writesAfterLeft = [...writes];
+  const frameAfterLeft = setup.captureCharFrame();
 
   await setup.mockInput.pressCtrlC();
   await setup.mockInput.pressCtrlC();
   assert.equal(await resultPromise, 130);
+  assert.match(initialFrame, /SAFE\s+●━+○\s+YOLO/);
+  assert.deepEqual(writesAfterRight, [true]);
+  assert.match(frameAfterRight, /SAFE\s+○━+●\s+YOLO/);
+  assert.match(frameAfterRight, /Left selects SAFE · Right selects YOLO/);
+  assert.deepEqual(writesAfterSecondRight, [true]);
+  assert.deepEqual(writesAfterLeft, [true, false]);
+  assert.match(frameAfterLeft, /SAFE\s+●━+○\s+YOLO/);
 });
 
 test("dangerous mode 저장 실패는 SAFE 상태와 오류 안내를 유지한다", async (t) => {
@@ -602,14 +612,15 @@ test("dangerous mode 저장 실패는 SAFE 상태와 오류 안내를 유지한�
   });
 
   await flushMenu(setup);
-  await setup.mockInput.typeText("y");
+  await setup.mockInput.pressArrow("right");
   await flushMenu(setup);
-  assert.match(setup.captureCharFrame(), /SAFE\s+●━+○\s+YOLO/);
-  assert.match(setup.captureCharFrame(), /Could not save YOLO mode/);
+  const frameAfterFailedRight = setup.captureCharFrame();
 
   await setup.mockInput.pressCtrlC();
   await setup.mockInput.pressCtrlC();
   assert.equal(await resultPromise, 130);
+  assert.match(frameAfterFailedRight, /SAFE\s+●━+○\s+YOLO/);
+  assert.match(frameAfterFailedRight, /Could not save YOLO mode/);
 });
 
 test("로그인 상태에서는 CODEX, Claude, Sessions를 선택할 수 있다", async (t) => {
@@ -631,21 +642,29 @@ test("로그인 상태에서는 CODEX, Claude, Sessions를 선택할 수 있다"
   const frame = setup.captureCharFrame();
   assert.match(frame, /CODEX/);
   assert.match(frame, /Claude/);
+  assert.match(frame, /OMP/);
   assert.match(frame, /Sessions/);
   assert.doesNotMatch(frame, /Login/);
   const codexLabel = findText(setup.renderer.root, "CODEX  ↵");
   const claudeLabel = findText(setup.renderer.root, "Claude  ↵");
+  const ompLabel = findText(setup.renderer.root, "OMP  ↵");
   const sessionsLabel = findText(setup.renderer.root, "Sessions  ↵");
-  assert.equal(codexLabel.x, claudeLabel.x);
+  // Four agent cards wrap into a 2x2 grid: row order is Codex/Claude then OMP/Sessions.
+  assert.equal(codexLabel.y, claudeLabel.y);
+  assert.equal(ompLabel.y, sessionsLabel.y);
+  assert.equal(codexLabel.x, ompLabel.x);
   assert.equal(claudeLabel.x, sessionsLabel.x);
-  assert.ok(claudeLabel.y > codexLabel.y, `Claude action must be below Codex: ${claudeLabel.y} <= ${codexLabel.y}`);
+  assert.ok(claudeLabel.x > codexLabel.x, `Claude action must be right of Codex: ${claudeLabel.x} <= ${codexLabel.x}`);
+  assert.ok(ompLabel.y > codexLabel.y, `OMP action must be below Codex: ${ompLabel.y} <= ${codexLabel.y}`);
   assert.ok(sessionsLabel.y > claudeLabel.y, `Sessions action must be below Claude: ${sessionsLabel.y} <= ${claudeLabel.y}`);
   assert.notEqual(codexLabel.fg.toString(), claudeLabel.fg.toString());
 
   await setup.mockInput.pressArrow("down");
   assert.notEqual(codexLabel.fg.toString(), claudeLabel.fg.toString());
   await setup.mockInput.pressArrow("down");
-  assert.notEqual(claudeLabel.fg.toString(), sessionsLabel.fg.toString());
+  assert.notEqual(claudeLabel.fg.toString(), ompLabel.fg.toString());
+  await setup.mockInput.pressArrow("down");
+  assert.notEqual(ompLabel.fg.toString(), sessionsLabel.fg.toString());
   await setup.mockInput.pressEnter();
   await assert.rejects(resultPromise, /Missing menu action: sessions/);
   assert.deepEqual(calls, []);
@@ -801,7 +820,7 @@ test("Corner Map의 action text는 mouse drag로 선택할 수 있다", async (t
     actions: { login: async () => 0, codex: async () => 0 },
   });
   await flushMenu(setup);
-  const actionLabel = findText(setup.renderer.root, "CODEX  ↵");
+  const actionLabel = findText(setup.renderer.root, "CODEX");
   await setup.mockMouse.drag(actionLabel.x, actionLabel.y, actionLabel.x + 10, actionLabel.y);
 
   assert.match(setup.renderer.getSelection()?.getSelectedText() ?? "", /CODEX/);
@@ -831,11 +850,21 @@ test("Corner Map은 40x10으로 줄어도 상태, action, 종료 hint를 유지�
   assert.match(wideFrame, /Claude/);
   assert.match(wideFrame, /Sessions/);
   assert.match(wideFrame, /Esc/);
+  setup.resize(72, 24);
+  await flushMenu(setup);
+  const mediumFrame = setup.captureCharFrame();
+  assert.match(mediumFrame, /CODEX/);
+  assert.match(mediumFrame, /OMP/);
+  setup.resize(100, 18);
+  await flushMenu(setup);
+  const shortFrame = setup.captureCharFrame();
+  assert.match(shortFrame, /CODEX/);
+  assert.match(shortFrame, /OMP/);
   setup.resize(60, 10);
   await flushMenu(setup);
   const boundaryFrame = setup.captureCharFrame();
   assert.doesNotMatch(boundaryFrame, /zgap \/ ready/);
-  assert.match(boundaryFrame, /Y mode · ↑↓ · ↵ select · Esc Esc quit/);
+  const compactHintMatches = /←→ mode · ↑↓ · ↵ select · Esc Esc quit/.test(boundaryFrame);
   setup.resize(40, 10);
   await flushMenu(setup);
   const frame = setup.captureCharFrame();
@@ -845,11 +874,13 @@ test("Corner Map은 40x10으로 줄어도 상태, action, 종료 hint를 유지�
   assert.match(frame, /CODEX/);
   assert.match(frame, /Claude/);
   assert.match(frame, /Sessions/);
+  assert.match(frame, /│Sessions\s+│/);
   assert.match(frame, /Esc/);
   assert.deepEqual(Array.from(setup.captureSpans().lines[0].spans[0].bg.buffer), [0, 0, 0, 255]);
   await setup.mockInput.pressCtrlC();
   await setup.mockInput.pressCtrlC();
   assert.equal(await resultPromise, 130);
+  assert.equal(compactHintMatches, true);
 });
 
 test("지원하지 않는 locale은 English로 fallback한다", async (t) => {

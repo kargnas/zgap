@@ -17,16 +17,17 @@ zgap login
 zgap
 ```
 
-Codex and Claude Code are currently supported. Existing local configuration and session history remain in their normal locations.
+Codex, Claude Code, and OMP are currently supported. Existing local configuration and session history remain in their normal locations.
 
 ```text
 zgap codex [args...]   Run Codex
 zgap claude [args...]  Run Claude Code
+zgap omp [args...]     Run OMP
 zgap sessions          Browse agent history
 zgap --help            Show all commands
 ```
 
-Press `Y` in the start menu to switch Codex and Claude Code between SAFE and YOLO mode. The choice is saved locally and applies to new launches, direct commands, and resumed sessions. YOLO mode bypasses Codex approval and sandbox checks and Claude Code permission checks.
+Press Left or Right in the start menu to select SAFE or YOLO mode for Codex, Claude Code, and OMP. The choice is saved locally and applies to new launches, direct commands, and resumed sessions. YOLO mode bypasses Codex approval and sandbox checks, Claude Code permission checks, and OMP tool-approval prompts.
 
 ## Development
 
