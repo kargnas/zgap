@@ -261,6 +261,7 @@ export async function runStartMenu({
       gap: content.actions.length > 2 ? 0 : (content.actions.length > 1 ? 1 : 0),
     });
     const actionGrid = content.actions.length >= 4;
+    let actionColumns = 1;
     // Compact single-row cards drop the Enter suffix so all agent labels fit narrow terminals.
     const fullLabels = content.actions.map((item) => `${item.label}  ↵`);
     const compactLabels = content.actions.map((item) => item.label);
@@ -337,6 +338,7 @@ export async function runStartMenu({
       // With 4+ agent cards the stacked column no longer fits a 24-row terminal
       // next to the mode rail, so non-compact layouts wrap cards in two columns too.
       const grid = compact ? content.actions.length > 1 : actionGrid;
+      actionColumns = grid ? (compact ? content.actions.length : 2) : 1;
       actionRow.flexDirection = grid ? "row" : "column";
       actionRow.flexWrap = grid ? "wrap" : "nowrap";
       actionRow.width = compact ? "100%" : (actionGrid ? "88%" : "70%");
@@ -469,16 +471,18 @@ export async function runStartMenu({
         return;
       }
       if (
-        !event.ctrl && !event.meta && !event.shift
-        && (event.name === "left" || event.name === "right")
+        !event.ctrl && !event.meta && !event.option && !event.shift && !event.super && !event.hyper
+        && event.name === "tab"
       ) {
-        void setDangerousMode(event.name === "right");
+        void setDangerousMode(!dangerousModeEnabled);
         return;
       }
       if (modeChangePending) return;
-      if (content.actions.length > 1 && (event.name === "up" || event.name === "down")) {
-        const delta = event.name === "down" ? 1 : -1;
-        selectedIndex = Math.max(0, Math.min(content.actions.length - 1, selectedIndex + delta));
+      if (content.actions.length > 1 && ["up", "down", "left", "right"].includes(event.name)) {
+        if (event.name === "left" && selectedIndex % actionColumns > 0) selectedIndex -= 1;
+        if (event.name === "right" && selectedIndex % actionColumns < actionColumns - 1 && selectedIndex + 1 < content.actions.length) selectedIndex += 1;
+        if (event.name === "up" && selectedIndex >= actionColumns) selectedIndex -= actionColumns;
+        if (event.name === "down" && selectedIndex + actionColumns < content.actions.length) selectedIndex += actionColumns;
         updateSelection();
         return;
       }
