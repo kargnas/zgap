@@ -19,7 +19,7 @@ zgap
 
 The first proxy-backed command creates `config.yml` when it is missing. The file is stored at `$XDG_CONFIG_HOME/zgap/config.yml` when `XDG_CONFIG_HOME` is set, `%APPDATA%\zgap\config.yml` on Windows, and `~/.config/zgap/config.yml` otherwise. Its generated comments explain the `host` option; enter a hostname without a URL scheme, port, or path. An existing file is never replaced.
 
-Codex, Claude Code, and OMP are currently supported. Existing local configuration and session history remain in their normal locations. `zgap omp` loads its provider override only in the launched OMP process: existing `openai-codex` and `anthropic` model requests use the configured proxy, direct official usage checks for those providers are disabled, and a regular `omp` process remains unchanged. The standalone `zgap omp usage` command is rejected.
+Codex, Claude Code, and OMP are currently supported. Existing local configuration and session history remain in their normal locations. `zgap omp` loads its provider override only in the launched OMP process: the server model catalog and context-window metadata populate the `openai-codex` and `anthropic` providers, their requests use the configured proxy, direct official usage checks for those providers are disabled, and a regular `omp` process remains unchanged. The standalone `zgap omp usage` command is rejected.
 
 Existing OMP extensions continue to load in the zgap child. A required extension handshake aborts startup before a session can run if the proxy override cannot load.
 
