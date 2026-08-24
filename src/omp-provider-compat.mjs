@@ -176,7 +176,16 @@ function compatRegistrations(providers, requiredFlagName) {
 }
 
 function registerProviders(registerProvider, registrations) {
-  for (const [name, config] of registrations) registerProvider(name, config);
+  for (const [name, config] of registrations) {
+    if (!Array.isArray(config.models) || config.models.length === 0) {
+      registerProvider(name, config);
+      continue;
+    }
+    const { models, ...providerConfig } = config;
+    registerProvider(name, { ...providerConfig, models });
+    // OMP 18.0.3 returns after model overlays, so provider headers and routing need a separate registration.
+    registerProvider(name, providerConfig);
+  }
 }
 
 function headerValue(headers, name) {

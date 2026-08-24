@@ -987,6 +987,51 @@ test("OMP extension은 기존 OpenAI와 Anthropic provider를 proxy로 재등록
   const origin = "https://proxy.example.test";
   const credentialFile = "/tmp/zgap credentials.json";
   const requiredFlagName = "zgap-provider-override-required-test";
+  const catalogModels = [
+    {
+      slug: "openai/catalog-openai",
+      context_window: 131072,
+      display_name: "OpenAI Proxy Model",
+      input_modalities: ["text", "image"],
+      supported_reasoning_levels: [
+        { effort: "low", description: "Quick reasoning" },
+        { effort: "medium", description: "Balanced reasoning" },
+        { effort: "high", description: "Deep reasoning" },
+      ],
+      default_reasoning_level: "medium",
+      supported_in_api: true,
+      visibility: "list",
+    },
+    {
+      slug: "anthropic/catalog-anthropic",
+      context_window: 200000,
+      display_name: "Anthropic Proxy Model",
+      input_modalities: ["text"],
+      supported_reasoning_levels: [
+        { effort: "minimal", description: "Minimal adaptive reasoning" },
+        { effort: "low", description: "Low adaptive reasoning" },
+        { effort: "high", description: "High adaptive reasoning" },
+        { effort: "max", description: "Maximum adaptive reasoning" },
+      ],
+      default_reasoning_level: "high",
+      supported_in_api: true,
+      visibility: "list",
+    },
+    {
+      slug: "third-party/catalog-third",
+      context_window: 262144,
+      display_name: "Third-party Proxy Model",
+      input_modalities: ["image", "text"],
+      supported_reasoning_levels: [
+        { effort: "minimal", description: "Minimal third-party reasoning" },
+        { effort: "xhigh", description: "Extended third-party reasoning" },
+        { effort: "max", description: "Maximum third-party reasoning" },
+      ],
+      default_reasoning_level: "xhigh",
+      supported_in_api: true,
+      visibility: "list",
+    },
+  ];
   const env = {
     CLAUDE_CODE_USE_FOUNDRY: "1",
     FOUNDRY_BASE_URL: "https://foundry.example",
@@ -1014,6 +1059,7 @@ test("OMP extension은 기존 OpenAI와 Anthropic provider를 proxy로 재등록
     platform: "linux",
     env,
     requiredFlagName,
+    models: catalogModels,
     terminate(message) {
       terminations.push(message);
     },
@@ -1023,11 +1069,74 @@ test("OMP extension은 기존 OpenAI와 Anthropic provider를 proxy로 재등록
     { name: requiredFlagName, type: "boolean" },
   ]);
   assert.deepEqual([...handlers.keys()].sort(), ["before_agent_start", "before_provider_request", "session_start"]);
-  assert.deepEqual(registrations.map(({ name }) => name), ["openai-codex", "anthropic"]);
-  const openai = registrations[0].config;
-  const anthropic = registrations[1].config;
+  assert.deepEqual(registrations.map(({ name }) => name), [
+    "openai-codex",
+    "openai-codex",
+    "anthropic",
+    "anthropic",
+  ]);
+  const openaiModels = registrations[0].config;
+  const openai = registrations[1].config;
+  const anthropicModels = registrations[2].config;
+  const anthropic = registrations[3].config;
+  assert.equal(Object.hasOwn(openaiModels, "models"), true);
+  assert.equal(Object.hasOwn(openai, "models"), false);
+  assert.equal(Object.hasOwn(anthropicModels, "models"), true);
+  assert.equal(Object.hasOwn(anthropic, "models"), false);
   assert.equal(openai.baseUrl, `${origin}/v1/responses?omp_endpoint=/codex/responses`);
   assert.equal(anthropic.baseUrl, origin);
+  const observedModelMetadata = (model) => ({
+    id: model.id,
+    name: model.name,
+    input: model.input,
+    contextWindow: model.contextWindow,
+    reasoning: model.reasoning,
+    thinking: {
+      mode: model.thinking?.mode,
+      efforts: model.thinking?.efforts,
+      defaultLevel: model.thinking?.defaultLevel,
+    },
+  });
+  assert.deepEqual(openaiModels.models?.map(observedModelMetadata), [
+    {
+      id: "catalog-openai",
+      name: "OpenAI Proxy Model",
+      input: ["text", "image"],
+      contextWindow: 131072,
+      reasoning: true,
+      thinking: {
+        mode: "effort",
+        efforts: ["low", "medium", "high"],
+        defaultLevel: "medium",
+      },
+    },
+    {
+      id: "third-party/catalog-third",
+      name: "Third-party Proxy Model",
+      input: ["image", "text"],
+      contextWindow: 262144,
+      reasoning: true,
+      thinking: {
+        mode: "effort",
+        efforts: ["minimal", "xhigh", "max"],
+        defaultLevel: "xhigh",
+      },
+    },
+  ]);
+  assert.deepEqual(anthropicModels.models?.map(observedModelMetadata), [
+    {
+      id: "catalog-anthropic",
+      name: "Anthropic Proxy Model",
+      input: ["text"],
+      contextWindow: 200000,
+      reasoning: true,
+      thinking: {
+        mode: "anthropic-adaptive",
+        efforts: ["minimal", "low", "high", "max"],
+        defaultLevel: "high",
+      },
+    },
+  ]);
   const expectedKey = authTokenCommand(credentialFile, "linux");
   assert.match(expectedKey, /^!/);
   assert.match(expectedKey, /auth-token/);
@@ -1044,7 +1153,6 @@ test("OMP extension은 기존 OpenAI와 Anthropic provider를 proxy로 재등록
 
   const assertDisabledUsage = async (actualRegistrations) => {
     for (const { name, config } of actualRegistrations) {
-      assert.equal(Object.hasOwn(config, "models"), false);
       assert.equal(config.usage.id, name);
       assert.equal(config.usage.supports({ provider: name, credential: { type: "oauth", accessToken: "unused" } }), false);
       assert.equal(config.usage.supports({ provider: name, credential: { type: "api_key", apiKey: "unused" } }), false);
@@ -1129,20 +1237,35 @@ test("OMP extension은 기존 OpenAI와 Anthropic provider를 proxy로 재등록
       },
     },
   );
-  assert.deepEqual(sessionOperations, ["register:openai-codex", "register:anthropic", "setModel"]);
+  assert.deepEqual(sessionOperations, [
+    "register:openai-codex",
+    "register:openai-codex",
+    "register:anthropic",
+    "register:anthropic",
+    "setModel",
+  ]);
   assert.deepEqual(selectedModels, [refreshedModel]);
   assert.deepEqual(terminations, []);
   assert.deepEqual(await sessionAuthStorage.fetchUsageReports(), []);
   assert.equal(officialUsageCalls, 0);
-  assert.deepEqual(reasserted.map(({ name }) => name), ["openai-codex", "anthropic"]);
-  assert.equal(reasserted[0].config.baseUrl, openai.baseUrl);
-  assert.equal(reasserted[0].config.apiKey, expectedKey);
-  assert.equal(reasserted[1].config.baseUrl, anthropic.baseUrl);
+  assert.deepEqual(reasserted.map(({ name }) => name), [
+    "openai-codex",
+    "openai-codex",
+    "anthropic",
+    "anthropic",
+  ]);
+  assert.equal(Object.hasOwn(reasserted[0].config, "models"), true);
+  assert.equal(Object.hasOwn(reasserted[1].config, "models"), false);
+  assert.equal(Object.hasOwn(reasserted[2].config, "models"), true);
+  assert.equal(Object.hasOwn(reasserted[3].config, "models"), false);
+  assert.equal(reasserted[1].config.baseUrl, openai.baseUrl);
   assert.equal(reasserted[1].config.apiKey, expectedKey);
-  assert.equal(reasserted[1].config.authHeader, true);
-  assert.equal(reasserted[1].config.headers["X-Api-Key"], expectedKey);
-  assert.equal(reasserted[0].config.headers["X-Zgap-Provider-Override"], requiredFlagName);
+  assert.equal(reasserted[3].config.baseUrl, anthropic.baseUrl);
+  assert.equal(reasserted[3].config.apiKey, expectedKey);
+  assert.equal(reasserted[3].config.authHeader, true);
+  assert.equal(reasserted[3].config.headers["X-Api-Key"], expectedKey);
   assert.equal(reasserted[1].config.headers["X-Zgap-Provider-Override"], requiredFlagName);
+  assert.equal(reasserted[3].config.headers["X-Zgap-Provider-Override"], requiredFlagName);
   await assertDisabledUsage(reasserted);
 
   const secondHandlers = new Map();
@@ -1161,6 +1284,7 @@ test("OMP extension은 기존 OpenAI와 Anthropic provider를 proxy로 재등록
     credentialFile,
     platform: "linux",
     env: {},
+    models: catalogModels,
     requiredFlagName,
     terminate(message) {
       secondTerminations.push(message);
