@@ -12,7 +12,12 @@ import { runClaude } from "./claude.mjs";
 import { runOmp } from "./omp.mjs";
 import { stat } from "node:fs/promises";
 import { readProxyConfig } from "./config.mjs";
-import { readDangerousMode, writeDangerousMode } from "./preferences.mjs";
+import {
+  readDangerousMode,
+  readOmpLeanMode,
+  writeDangerousMode,
+  writeOmpLeanMode,
+} from "./preferences.mjs";
 import { checkForGlobalUpdate, updateGlobalInstall } from "./install.mjs";
 import { runStartMenu } from "./tui/menu.mjs";
 import { runSessionBrowser } from "./tui/session-browser.mjs";
@@ -69,6 +74,8 @@ export async function main({
   configReader = readProxyConfig,
   dangerousModeReader = readDangerousMode,
   dangerousModeWriter = writeDangerousMode,
+  ompLeanModeReader = readOmpLeanMode,
+  ompLeanModeWriter = writeOmpLeanMode,
   codexRunner = runCodex,
   claudeRunner = runClaude,
   ompRunner = runOmp,
@@ -100,11 +107,12 @@ export async function main({
     return claudeRunner(args, { configDir, origin, dangerousMode });
   }
   if (command === "omp") {
-    const [{ origin }, dangerousMode] = await Promise.all([
+    const [{ origin }, dangerousMode, leanMode] = await Promise.all([
       configReader(configDir),
       dangerousModeReader(configDir),
+      ompLeanModeReader(configDir),
     ]);
-    return ompRunner(args, { configDir, origin, dangerousMode });
+    return ompRunner(args, { configDir, origin, dangerousMode, leanMode });
   }
   if (command === "sessions") {
     return sessionBrowser({
@@ -123,7 +131,10 @@ export async function main({
   }
   if (!command) {
     const proxyConfig = await configReader(configDir);
-    let dangerousMode = await dangerousModeReader(configDir);
+    let [dangerousMode, ompLeanMode] = await Promise.all([
+      dangerousModeReader(configDir),
+      ompLeanModeReader(configDir),
+    ]);
     while (true) {
       const credentialFile = credentialsPath(configDir);
       const credentialState = await credentialStateReader({
@@ -145,15 +156,25 @@ export async function main({
         origin: proxyConfig.origin,
         updateChecker,
         dangerousMode,
+        ompLeanMode,
         onDangerousModeChange: async (enabled) => {
           await dangerousModeWriter(enabled, configDir);
           dangerousMode = enabled;
+        },
+        onOmpLeanModeChange: async (enabled) => {
+          await ompLeanModeWriter(enabled, configDir);
+          ompLeanMode = enabled;
         },
         actions: {
           login: () => login({ configDir, origin: proxyConfig.origin }),
           codex: () => codexRunner([], { configDir, origin: proxyConfig.origin, dangerousMode }),
           claude: () => claudeRunner([], { configDir, origin: proxyConfig.origin, dangerousMode }),
-          omp: () => ompRunner([], { configDir, origin: proxyConfig.origin, dangerousMode }),
+          omp: () => ompRunner([], {
+            configDir,
+            origin: proxyConfig.origin,
+            dangerousMode,
+            leanMode: ompLeanMode,
+          }),
           sessions: async () => {
             let selected = false;
             const browserResult = await sessionBrowser({

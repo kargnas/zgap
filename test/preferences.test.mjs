@@ -10,25 +10,53 @@ async function tempDir(t) {
   return directory;
 }
 
-test("dangerous mode preference defaults to false when preferences.json is absent", async (t) => {
+test("launch mode preferences default to false when preferences.json is absent", async (t) => {
   const configDir = await tempDir(t);
-  const { readDangerousMode } = await import("../src/preferences.mjs");
+  const { readDangerousMode, readOmpLeanMode } = await import("../src/preferences.mjs");
 
   assert.equal(await readDangerousMode(configDir), false);
+  assert.equal(await readOmpLeanMode(configDir), false);
 });
 
-test("dangerous mode preference writes and reads the exact boolean record", async (t) => {
+test("launch mode writers preserve the other preference", async (t) => {
   const configDir = await tempDir(t);
   const preferencesFile = path.join(configDir, "preferences.json");
-  const { readDangerousMode, writeDangerousMode } = await import("../src/preferences.mjs");
+  const {
+    readDangerousMode,
+    readOmpLeanMode,
+    writeDangerousMode,
+    writeOmpLeanMode,
+  } = await import("../src/preferences.mjs");
 
   await writeDangerousMode(true, configDir);
-
   assert.equal(await readDangerousMode(configDir), true);
+  assert.equal(await readOmpLeanMode(configDir), false);
   assert.equal(await readFile(preferencesFile, "utf8"), '{"dangerousMode":true}\n');
+
+  await writeOmpLeanMode(true, configDir);
+  assert.equal(await readDangerousMode(configDir), true);
+  assert.equal(await readOmpLeanMode(configDir), true);
+  assert.equal(await readFile(preferencesFile, "utf8"), '{"dangerousMode":true,"ompLeanMode":true}\n');
+
+  await writeDangerousMode(false, configDir);
+  assert.equal(await readOmpLeanMode(configDir), true);
+  assert.equal(await readFile(preferencesFile, "utf8"), '{"dangerousMode":false,"ompLeanMode":true}\n');
 });
 
-test("dangerous mode preference rejects malformed or non-exact records", async (t) => {
+test("legacy dangerous mode preference defaults OMP lean mode to false", async (t) => {
+  const configDir = await tempDir(t);
+  const preferencesFile = path.join(configDir, "preferences.json");
+  const { readDangerousMode, readOmpLeanMode, writeOmpLeanMode } = await import("../src/preferences.mjs");
+  await writeFile(preferencesFile, '{"dangerousMode":true}\n');
+
+  assert.equal(await readDangerousMode(configDir), true);
+  assert.equal(await readOmpLeanMode(configDir), false);
+
+  await writeOmpLeanMode(true, configDir);
+  assert.equal(await readFile(preferencesFile, "utf8"), '{"dangerousMode":true,"ompLeanMode":true}\n');
+});
+
+test("launch mode preferences reject malformed or unknown records", async (t) => {
   const configDir = await tempDir(t);
   const preferencesFile = path.join(configDir, "preferences.json");
   const { readDangerousMode } = await import("../src/preferences.mjs");
@@ -37,14 +65,15 @@ test("dangerous mode preference rejects malformed or non-exact records", async (
     "not json",
     "{}",
     '{"dangerousMode":"yes"}',
-    '{"dangerousMode":false,"extra":true}',
+    '{"dangerousMode":false,"ompLeanMode":"yes"}',
+    '{"dangerousMode":false,"ompLeanMode":false,"extra":true}',
     "null",
     "[]",
   ]) {
     await writeFile(preferencesFile, source);
     await assert.rejects(
       () => readDangerousMode(configDir),
-      /Invalid zgap dangerous mode preferences/,
+      /Invalid zgap launch mode preferences/,
     );
   }
 });

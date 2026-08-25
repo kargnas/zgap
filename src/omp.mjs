@@ -11,6 +11,13 @@ import {
 } from "./omp-provider-compat.mjs";
 
 const OMP_EXTENSION_FILE = realpathSync(fileURLToPath(new URL("./omp-provider-extension.mjs", import.meta.url)));
+const OMP_LEAN_ARGS = [
+  "--no-extensions",
+  "--no-skills",
+  "--no-rules",
+  "--no-title",
+  "--tools=read,bash,edit,write",
+];
 const FORWARDED_SIGNALS = process.platform === "win32"
   ? ["SIGINT", "SIGTERM"]
   : ["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT"];
@@ -51,8 +58,12 @@ export async function runOmp(args, {
   configDir = defaultConfigDir(),
   cwd = process.cwd(),
   dangerousMode = false,
+  leanMode = false,
 } = {}) {
   assertOmpLaunchArgs(args);
+  const leanArgs = leanMode && args.some((arg) => arg === "--tools" || arg.startsWith("--tools="))
+    ? OMP_LEAN_ARGS.slice(0, -1)
+    : (leanMode ? OMP_LEAN_ARGS : []);
   let receivedSignal;
   let child;
   let handlersRemoved = false;
@@ -92,6 +103,7 @@ export async function runOmp(args, {
         ...(dangerousMode && !args.includes("--auto-approve") && !args.includes("--approval-mode") && !args.some((arg) => arg.startsWith("--approval-mode="))
           ? ["--auto-approve"]
           : []),
+        ...leanArgs,
         ...args,
       ], { cwd, env, stdio: "inherit" });
       child.once("error", (error) => reject(error.code === "ENOENT"

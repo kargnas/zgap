@@ -106,7 +106,9 @@ export async function runStartMenu({
   updateChecker,
   accountProfile,
   dangerousMode = false,
+  ompLeanMode = false,
   onDangerousModeChange = async () => { throw new Error("Missing dangerous mode persistence handler."); },
+  onOmpLeanModeChange = async () => { throw new Error("Missing OMP lean mode persistence handler."); },
 } = {}) {
   let renderer;
   let keyHandler;
@@ -154,6 +156,7 @@ export async function runStartMenu({
     };
     let selectedIndex = 0;
     let dangerousModeEnabled = dangerousMode;
+    let ompLeanModeEnabled = ompLeanMode;
     let modeChangePending = false;
     const runSelectedAction = () => {
       const selected = content.actions[selectedIndex];
@@ -263,8 +266,10 @@ export async function runStartMenu({
     const actionGrid = content.actions.length >= 4;
     let actionColumns = 1;
     // Compact single-row cards drop the Enter suffix so all agent labels fit narrow terminals.
-    const fullLabels = content.actions.map((item) => `${item.label}  ↵`);
-    const compactLabels = content.actions.map((item) => item.label);
+    const labelFor = (item, compact = false) => `${item.label}${item.name === "omp" && ompLeanModeEnabled ? " · LEAN" : ""}${compact ? "" : "  ↵"}`;
+    const fullLabels = content.actions.map((item) => labelFor(item));
+    const compactLabels = content.actions.map((item) => labelFor(item, true));
+    const ompActionIndex = content.actions.findIndex((item) => item.name === "omp");
     const actionCards = content.actions.map((item, index) => {
       const card = new BoxRenderable(renderer, {
         width: "100%",
@@ -392,6 +397,32 @@ export async function runStartMenu({
         modeChangePending = false;
       }
     };
+    const updateOmpLeanMode = (saveFailed = false) => {
+      if (ompActionIndex < 0) return;
+      fullLabels[ompActionIndex] = labelFor(content.actions[ompActionIndex]);
+      compactLabels[ompActionIndex] = labelFor(content.actions[ompActionIndex], true);
+      applyResponsiveLayout(renderer.width, renderer.height);
+      if (saveFailed) {
+        modeHint.content = t("ompLeanModeSaveFailed");
+        modeHint.fg = "#F87171";
+      } else {
+        updateDangerousMode();
+      }
+    };
+    const setOmpLeanMode = async (enabled) => {
+      if (modeChangePending || enabled === ompLeanModeEnabled || ompActionIndex < 0) return;
+      modeChangePending = true;
+      try {
+        await onOmpLeanModeChange(enabled);
+        if (cleaned) return;
+        ompLeanModeEnabled = enabled;
+        updateOmpLeanMode();
+      } catch {
+        if (!cleaned) updateOmpLeanMode(true);
+      } finally {
+        modeChangePending = false;
+      }
+    };
     updateSelection();
     updateDangerousMode();
     renderer.on("resize", resizeHandler);
@@ -470,11 +501,13 @@ export async function runStartMenu({
         }
         return;
       }
-      if (
-        !event.ctrl && !event.meta && !event.option && !event.shift && !event.super && !event.hyper
-        && event.name === "tab"
-      ) {
+      const noModifiers = !event.ctrl && !event.meta && !event.option && !event.shift && !event.super && !event.hyper;
+      if (noModifiers && event.name === "tab") {
         void setDangerousMode(!dangerousModeEnabled);
+        return;
+      }
+      if (noModifiers && event.name === "l") {
+        void setOmpLeanMode(!ompLeanModeEnabled);
         return;
       }
       if (modeChangePending) return;

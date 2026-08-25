@@ -66,8 +66,9 @@
   "sessionsActiveResumeConfirm": "This session is already running. Press Enter again within 1 second to resume",
   "dangerousModeSafe": "SAFE",
   "dangerousModeYolo": "YOLO",
-  "dangerousModeSelectHint": "Tab switches between SAFE and YOLO",
+  "dangerousModeSelectHint": "Tab switches SAFE/YOLO · L toggles OMP LEAN",
   "dangerousModeSaveFailed": "Could not save YOLO mode",
-  "hint": "Arrow keys move · Tab toggles mode · Enter selects · Ctrl+C×2 or Esc×2 quits",
-  "compactHint": "←↑↓→ move · Tab toggle · ↵ select · ^C×2/Esc×2 quit"
+  "ompLeanModeSaveFailed": "Could not save OMP LEAN mode",
+  "hint": "Arrows move · Tab SAFE/YOLO · L OMP LEAN · Enter select · ^C×2/Esc×2 quit",
+  "compactHint": "←↑↓→ · Tab mode · L lean · ↵ select · ^C×2/Esc×2"
 }

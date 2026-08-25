@@ -66,8 +66,9 @@
   "sessionsActiveResumeConfirm": "이 세션은 이미 실행 중입니다. 1초 안에 Enter를 다시 누르면 재개합니다",
   "dangerousModeSafe": "SAFE",
   "dangerousModeYolo": "YOLO",
-  "dangerousModeSelectHint": "Tab으로 SAFE와 YOLO를 전환합니다",
+  "dangerousModeSelectHint": "Tab으로 SAFE/YOLO 전환 · L로 OMP LEAN 전환",
   "dangerousModeSaveFailed": "YOLO 모드를 저장하지 못했습니다",
-  "hint": "화살표로 이동 · Tab으로 모드 전환 · Enter로 선택 · Ctrl+C×2 또는 Esc×2로 종료",
-  "compactHint": "←↑↓→ 이동 · Tab 전환 · ↵ 선택 · ^C×2/Esc×2 종료"
+  "ompLeanModeSaveFailed": "OMP LEAN 모드를 저장하지 못했습니다",
+  "hint": "화살표 이동 · Tab SAFE/YOLO · L OMP LEAN · Enter 선택 · ^C×2/Esc×2 종료",
+  "compactHint": "←↑↓→ · Tab 모드 · L lean · ↵ 선택 · ^C×2/Esc×2"
 }

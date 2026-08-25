@@ -964,6 +964,32 @@ process.exitCode = 5;
   );
   assert.deepEqual(safeInvocation.argv.slice(-2), ["--print", "hello"]);
 
+  await writeFile(path.join(configDir, "preferences.json"), '{"dangerousMode":false,"ompLeanMode":true}\n');
+  const leanResult = await runCli(["omp", "--print", "hello"], cliEnv);
+  assert.equal(leanResult.code, 5, leanResult.stderr);
+  const leanInvocation = JSON.parse(leanResult.stdout);
+  const leanArgs = [
+    "--no-extensions",
+    "--no-skills",
+    "--no-rules",
+    "--no-title",
+    "--tools=read,bash,edit,write",
+  ];
+  const leanArgsStart = leanInvocation.argv.indexOf(leanArgs[0]);
+  assert.notEqual(leanArgsStart, -1);
+  assert.deepEqual(leanInvocation.argv.slice(leanArgsStart, leanArgsStart + leanArgs.length), leanArgs);
+  assert.equal(leanInvocation.argv.includes("--no-session"), false);
+  assert.equal(leanInvocation.argv.includes("--no-lsp"), false);
+  assert.equal(leanInvocation.argv.includes("--auto-approve"), false);
+  assert.deepEqual(leanInvocation.argv.slice(-2), ["--print", "hello"]);
+
+  const customToolsResult = await runCli(["omp", "--tools=read,bash", "--print", "hello"], cliEnv);
+  assert.equal(customToolsResult.code, 5, customToolsResult.stderr);
+  const customToolsInvocation = JSON.parse(customToolsResult.stdout);
+  assert.deepEqual(customToolsInvocation.argv.filter((arg) => arg.startsWith("--tools=")), ["--tools=read,bash"]);
+  assert.equal(customToolsInvocation.argv.includes("--no-session"), false);
+  assert.equal(customToolsInvocation.argv.includes("--no-lsp"), false);
+
   const managementMarker = path.join(root, "management-ran");
   await writeFile(fakeOmp, `#!/usr/bin/env node
 if (process.argv[2] === "--version") { process.stdout.write("omp/18.0.3\\n"); process.exit(0); }

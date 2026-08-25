@@ -301,7 +301,7 @@ test("Corner Map은 100x24의 네 모서리와 중앙을 사용한다", async (t
   const status = findText(setup.renderer.root, "● user@example.com");
   const proxy = findText(setup.renderer.root, "● Proxy online · 85 ms");
   const action = findText(setup.renderer.root, "CODEX  ↵");
-  const hint = findText(setup.renderer.root, "Arrow keys move · Tab toggles mode · Enter selects · Ctrl+C×2 or Esc×2 quits");
+  const hint = findText(setup.renderer.root, "Arrows move · Tab SAFE/YOLO · L OMP LEAN · Enter select · ^C×2/Esc×2 quit");
   assert.doesNotMatch(setup.captureCharFrame(), /CHOOSE AN ACTION/);
   assert.ok(title.x <= 3 && title.y <= 3, `title at ${title.x},${title.y}`);
   assert.ok(status.x >= 80 && status.y <= 3, `status at ${status.x},${status.y}`);
@@ -393,6 +393,40 @@ test("시작 메뉴의 dangerous mode 변경은 저장 후 같은 프로세스�
       configDir: "/tmp/zgap-config",
       origin: "https://ai-proxy.zz.gg",
       dangerousMode: true,
+    },
+  });
+});
+
+test("시작 메뉴의 OMP LEAN 변경은 저장 후 같은 프로세스의 OMP 실행에만 적용한다", async () => {
+  const { main } = await import("../src/cli.mjs");
+  const writes = [];
+  let launch;
+
+  const result = await main({
+    argv: [],
+    configDir: "/tmp/zgap-config",
+    credentialStateReader: async () => "signed-out",
+    configReader: async () => ({ host: "ai-proxy.zz.gg", origin: "https://ai-proxy.zz.gg" }),
+    dangerousModeReader: async () => false,
+    ompLeanModeReader: async () => false,
+    ompLeanModeWriter: async (enabled) => { writes.push(enabled); },
+    ompRunner: async (args, options) => { launch = { args, options }; return 25; },
+    startMenu: async (options) => {
+      assert.equal(options.ompLeanMode, false);
+      await options.onOmpLeanModeChange(true);
+      return options.actions.omp();
+    },
+  });
+
+  assert.equal(result, 25);
+  assert.deepEqual(writes, [true]);
+  assert.deepEqual(launch, {
+    args: [],
+    options: {
+      configDir: "/tmp/zgap-config",
+      origin: "https://ai-proxy.zz.gg",
+      dangerousMode: false,
+      leanMode: true,
     },
   });
 });
@@ -604,10 +638,67 @@ test("중앙 mode rail은 Tab으로 SAFE와 YOLO를 전환한다", async (t) => 
   assert.match(initialFrame, /SAFE\s+●━+○\s+YOLO/);
   assert.deepEqual(writesAfterFirstToggle, [true]);
   assert.match(frameAfterFirstToggle, /SAFE\s+○━+●\s+YOLO/);
-  assert.match(frameAfterFirstToggle, /Tab switches between SAFE and YOLO/);
+  assert.match(frameAfterFirstToggle, /Tab switches SAFE\/YOLO · L toggles OMP LEAN/);
   assert.deepEqual(writesAfterSecondToggle, [true, false]);
   assert.deepEqual(writesAfterThirdToggle, [true, false, true]);
   assert.match(frameAfterThirdToggle, /SAFE\s+○━+●\s+YOLO/);
+});
+
+test("L은 OMP LEAN을 전환하고 OMP 카드에 현재 상태를 표시한다", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runStartMenu } = await import("../src/tui/menu.mjs");
+  const setup = await createTestRenderer({ width: 100, height: 24, kittyKeyboard: true });
+  t.after(() => setup.renderer.destroy());
+  const writes = [];
+  let saveFails = false;
+  const pressL = (modifiers = {}) => setup.renderer.keyInput.emit("keypress", {
+    eventType: "press",
+    name: "l",
+    ...modifiers,
+  });
+  const resultPromise = runStartMenu({
+    rendererFactory: async () => setup,
+    credentialState: "signed-in",
+    ompLeanMode: false,
+    onOmpLeanModeChange: async (enabled) => {
+      if (saveFails) throw new Error("disk full");
+      writes.push(enabled);
+    },
+    actions: { codex: async () => 0, claude: async () => 0, omp: async () => 0 },
+  });
+
+  await flushMenu(setup);
+  assert.doesNotMatch(setup.captureCharFrame(), /OMP · LEAN/);
+  for (const modifiers of [
+    { ctrl: true },
+    { meta: true },
+    { shift: true },
+    { super: true },
+    { hyper: true },
+  ]) pressL(modifiers);
+  await flushMenu(setup);
+  assert.deepEqual(writes, []);
+
+  pressL();
+  await flushMenu(setup);
+  assert.deepEqual(writes, [true]);
+  assert.match(setup.captureCharFrame(), /OMP · LEAN/);
+
+  pressL();
+  await flushMenu(setup);
+  assert.deepEqual(writes, [true, false]);
+  assert.doesNotMatch(setup.captureCharFrame(), /OMP · LEAN/);
+
+  saveFails = true;
+  pressL();
+  await flushMenu(setup);
+  assert.deepEqual(writes, [true, false]);
+  assert.match(setup.captureCharFrame(), /Could not save OMP LEAN mode/);
+  assert.doesNotMatch(setup.captureCharFrame(), /OMP · LEAN/);
+
+  await setup.mockInput.pressCtrlC();
+  await setup.mockInput.pressCtrlC();
+  assert.equal(await resultPromise, 130);
 });
 
 test("dangerous mode 저장 실패는 SAFE 상태와 오류 안내를 유지한다", async (t) => {
@@ -920,7 +1011,7 @@ test("Corner Map은 40x10으로 줄어도 상태, action, 종료 hint를 유지�
   await flushMenu(setup);
   const boundaryFrame = setup.captureCharFrame();
   assert.doesNotMatch(boundaryFrame, /zgap \/ ready/);
-  const compactHintMatches = /←↑↓→\s+move\s+·\s+Tab\s+toggle\s+·\s+↵\s+select\s+·\s+\^C×2\/Esc×2\s+quit/.test(boundaryFrame);
+  const compactHintMatches = /←↑↓→\s+·\s+Tab\s+mode\s+·\s+L\s+lean\s+·\s+↵\s+select\s+·\s+\^C×2\/Esc×2/.test(boundaryFrame);
   setup.resize(40, 10);
   await flushMenu(setup);
   const frame = setup.captureCharFrame();

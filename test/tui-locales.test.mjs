@@ -39,7 +39,7 @@ test("영어와 한국어 locale은 같은 메뉴 key를 제공하고 40x10에�
       await flushMenu(setup);
       const frame = setup.captureCharFrame();
       const proxyStatus = locale === "ko" ? "프록시 접속됨" : "Proxy online";
-      const modeHint = locale === "ko" ? "←↑↓→ 이동 · Tab 전환 · ↵ 선택 · ^C×2/Esc×2 종료" : "←↑↓→ move · Tab toggle · ↵ select · ^C×2/Esc×2 quit";
+      const modeHint = locale === "ko" ? "←↑↓→ · Tab 모드 · L lean · ↵ 선택 · ^C×2/Esc×2" : "←↑↓→ · Tab mode · L lean · ↵ select · ^C×2/Esc×2";
       const sessionsLabel = locale === "ko" ? "세션" : "Sessions";
       assert.match(frame, new RegExp(status), `${locale} ${credentialState} status clipped`);
       assert.match(frame, new RegExp(action), `${locale} ${credentialState} action clipped`);
