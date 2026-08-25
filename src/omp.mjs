@@ -39,7 +39,7 @@ export async function resolveOmpExecutable({ env = process.env, cwd = process.cw
       if (await executable(candidate)) return realpath(candidate);
     }
   }
-  throw new Error("OMP CLI is not installed or not in PATH.");
+  throw new Error("OMP CLI is not installed or not in PATH. Install it with:\n  curl -fsSL https://omp.sh/install | sh");
 }
 
 export async function readOmpVersion(ompPath, env = process.env) {

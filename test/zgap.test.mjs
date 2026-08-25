@@ -1796,10 +1796,11 @@ if (process.argv[2] === "--version") { process.stdout.write("omp/18.0.3\\n"); pr
   await assert.rejects(access(marker), { code: "ENOENT" });
 });
 
-test("omp가 PATH에 없으면 명확한 오류를 반환한다", async () => {
+test("omp가 PATH에 없으면 설치 명령어를 안내한다", async () => {
   const result = await runCli(["omp"], { PATH: "" });
   assert.equal(result.code, 1);
   assert.match(result.stderr, /OMP CLI is not installed or not in PATH/);
+  assert.match(result.stderr, /curl -fsSL https:\/\/omp\.sh\/install \| sh/);
 });
 
 test("auth-token은 전체 CLI 모듈 없이 credential 경로만 실행한다", async (t) => {

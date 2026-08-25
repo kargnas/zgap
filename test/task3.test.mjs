@@ -644,12 +644,13 @@ test("중앙 mode rail은 Tab으로 SAFE와 YOLO를 전환한다", async (t) => 
   assert.match(frameAfterThirdToggle, /SAFE\s+○━+●\s+YOLO/);
 });
 
-test("L은 경고 확인 후에만 OMP LEAN을 켜고 끌 때는 즉시 저장한다", async (t) => {
+test("L은 OMP LEAN을 즉시 전환하고 OMP 시작 시에만 경고를 표시한다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runStartMenu } = await import("../src/tui/menu.mjs");
   const setup = await createTestRenderer({ width: 100, height: 24, kittyKeyboard: true });
   t.after(() => setup.renderer.destroy());
   const writes = [];
+  const launches = [];
   let saveFails = false;
   const pressL = (modifiers = {}) => setup.renderer.keyInput.emit("keypress", {
     eventType: "press",
@@ -664,7 +665,12 @@ test("L은 경고 확인 후에만 OMP LEAN을 켜고 끌 때는 즉시 저장�
       if (saveFails) throw new Error("disk full");
       writes.push(enabled);
     },
-    actions: { codex: async () => 0, claude: async () => 0, omp: async () => 0 },
+    actions: {
+      codex: async () => 0,
+      claude: async () => 0,
+      omp: async () => { launches.push("omp"); return 7; },
+      sessions: async () => 0,
+    },
   });
 
   await flushMenu(setup);
@@ -681,32 +687,9 @@ test("L은 경고 확인 후에만 OMP LEAN을 켜고 끌 때는 즉시 저장�
 
   pressL();
   await flushMenu(setup);
-  const confirmationFrame = setup.captureCharFrame();
-  assert.deepEqual(writes, []);
-  assert.match(confirmationFrame, /ENABLE OMP LEAN\?/);
-  assert.match(confirmationFrame, /Project extensions and rules will not load; only selected skills/);
-  assert.match(confirmationFrame, /may load/);
-  assert.match(confirmationFrame, /Enter enable · Esc cancel/);
-  assert.doesNotMatch(confirmationFrame, /OMP · LEAN/);
-
-  setup.resize(40, 10);
-  await flushMenu(setup);
-  const compactConfirmationFrame = setup.captureCharFrame();
-  assert.match(compactConfirmationFrame, /ENABLE OMP LEAN\?/);
-  assert.match(compactConfirmationFrame, /Enter enable/);
-  assert.match(compactConfirmationFrame, /Esc cancel/);
-  await setup.mockInput.pressEscape();
-  setup.resize(100, 24);
-  await flushMenu(setup);
-  assert.deepEqual(writes, []);
-  assert.doesNotMatch(setup.captureCharFrame(), /ENABLE OMP LEAN\?/);
-
-  pressL();
-  await flushMenu(setup);
-  await setup.mockInput.pressEnter();
-  await flushMenu(setup);
   assert.deepEqual(writes, [true]);
   assert.match(setup.captureCharFrame(), /OMP · LEAN/);
+  assert.doesNotMatch(setup.captureCharFrame(), /OMP LEAN ACTIVE/);
 
   pressL();
   await flushMenu(setup);
@@ -716,16 +699,44 @@ test("L은 경고 확인 후에만 OMP LEAN을 켜고 끌 때는 즉시 저장�
   saveFails = true;
   pressL();
   await flushMenu(setup);
-  assert.match(setup.captureCharFrame(), /ENABLE OMP LEAN\?/);
-  await setup.mockInput.pressEnter();
-  await flushMenu(setup);
   assert.deepEqual(writes, [true, false]);
   assert.match(setup.captureCharFrame(), /Could not save OMP LEAN mode/);
-  assert.doesNotMatch(setup.captureCharFrame(), /OMP · LEAN/);
+  saveFails = false;
+  pressL();
+  await flushMenu(setup);
+  assert.deepEqual(writes, [true, false, true]);
+  assert.match(setup.captureCharFrame(), /OMP · LEAN/);
 
-  await setup.mockInput.pressCtrlC();
-  await setup.mockInput.pressCtrlC();
-  assert.equal(await resultPromise, 130);
+  await setup.mockInput.pressArrow("down");
+  await flushMenu(setup);
+  await setup.mockInput.pressEnter();
+  await flushMenu(setup);
+  const warningFrame = setup.captureCharFrame();
+  assert.match(warningFrame, /OMP LEAN ACTIVE/);
+  assert.match(warningFrame, /Project extensions and rules will not load; only selected skills/);
+  assert.match(warningFrame, /may load/);
+  assert.match(warningFrame, /Enter continue · Esc cancel/);
+  assert.doesNotMatch(warningFrame, /OMP · LEAN/);
+  assert.deepEqual(launches, []);
+
+  setup.resize(40, 10);
+  await flushMenu(setup);
+  const compactWarningFrame = setup.captureCharFrame();
+  assert.match(compactWarningFrame, /OMP LEAN ACTIVE/);
+  assert.match(compactWarningFrame, /Enter continue/);
+  assert.match(compactWarningFrame, /Esc cancel/);
+  await setup.mockInput.pressEscape();
+  setup.resize(100, 24);
+  await flushMenu(setup);
+  assert.doesNotMatch(setup.captureCharFrame(), /OMP LEAN ACTIVE/);
+  assert.deepEqual(launches, []);
+
+  await setup.mockInput.pressEnter();
+  await flushMenu(setup);
+  assert.match(setup.captureCharFrame(), /OMP LEAN ACTIVE/);
+  await setup.mockInput.pressEnter();
+  assert.equal(await resultPromise, 7);
+  assert.deepEqual(launches, ["omp"]);
 });
 
 test("OMP LEAN 스킬 선택창은 선택을 저장하고 전체 해제한다", async (t) => {

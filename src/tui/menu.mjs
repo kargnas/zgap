@@ -169,7 +169,7 @@ export async function runStartMenu({
     let ompLeanModeEnabled = ompLeanMode;
     let ompLeanSkillsEnabled = new Set(ompLeanSkills);
     let modeChangePending = false;
-    let leanConfirmationVisible = false;
+    let leanWarningVisible = false;
     let skillPickerVisible = false;
     let skillPickerState = "idle";
     let availableSkills = [];
@@ -344,7 +344,7 @@ export async function runStartMenu({
     });
     bottomBar.add(ready);
     bottomBar.add(hint);
-    const leanConfirmationOverlay = new BoxRenderable(renderer, {
+    const leanWarningOverlay = new BoxRenderable(renderer, {
       position: "absolute",
       top: 0,
       right: 0,
@@ -355,7 +355,7 @@ export async function runStartMenu({
       alignItems: "center",
       visible: false,
     });
-    const leanConfirmationDialog = new BoxRenderable(renderer, {
+    const leanWarningDialog = new BoxRenderable(renderer, {
       width: 72,
       height: 8,
       backgroundColor: "#0B171D",
@@ -366,33 +366,33 @@ export async function runStartMenu({
       justifyContent: "center",
       paddingX: 2,
     });
-    const leanConfirmationTitle = new TextRenderable(renderer, {
-      content: t("ompLeanConfirmTitle"),
+    const leanWarningTitle = new TextRenderable(renderer, {
+      content: t("ompLeanWarningTitle"),
       fg: "#FCD34D",
       attributes: TextAttributes.BOLD,
       selectable: true,
     });
-    const leanConfirmationWarning = new TextRenderable(renderer, {
-      content: t("ompLeanConfirmWarning"),
+    const leanWarningBody = new TextRenderable(renderer, {
+      content: t("ompLeanWarningBody"),
       fg: "#F8FAFC",
       selectable: true,
     });
-    const leanConfirmationDetails = new TextRenderable(renderer, {
-      content: t("ompLeanConfirmDetails"),
+    const leanWarningDetails = new TextRenderable(renderer, {
+      content: t("ompLeanWarningDetails"),
       fg: "#94A3B8",
       selectable: true,
     });
-    const leanConfirmationHint = new TextRenderable(renderer, {
-      content: t("ompLeanConfirmHint"),
+    const leanWarningHint = new TextRenderable(renderer, {
+      content: t("ompLeanWarningHint"),
       fg: "#67E8F9",
       attributes: TextAttributes.BOLD,
       selectable: true,
     });
-    leanConfirmationDialog.add(leanConfirmationTitle);
-    leanConfirmationDialog.add(leanConfirmationWarning);
-    leanConfirmationDialog.add(leanConfirmationDetails);
-    leanConfirmationDialog.add(leanConfirmationHint);
-    leanConfirmationOverlay.add(leanConfirmationDialog);
+    leanWarningDialog.add(leanWarningTitle);
+    leanWarningDialog.add(leanWarningBody);
+    leanWarningDialog.add(leanWarningDetails);
+    leanWarningDialog.add(leanWarningHint);
+    leanWarningOverlay.add(leanWarningDialog);
     const skillPickerOverlay = new BoxRenderable(renderer, {
       position: "absolute",
       top: 0,
@@ -445,7 +445,7 @@ export async function runStartMenu({
     root.add(infoArea);
     root.add(centerArea);
     root.add(bottomBar);
-    root.add(leanConfirmationOverlay);
+    root.add(leanWarningOverlay);
     root.add(skillPickerOverlay);
     renderer.root.add(root);
 
@@ -495,9 +495,9 @@ export async function runStartMenu({
       ready.visible = !compact;
       updateMenuHint();
       infoArea.paddingTop = compact ? 0 : 1;
-      leanConfirmationDialog.width = compact ? "100%" : 72;
-      leanConfirmationDialog.height = compact ? 9 : 8;
-      leanConfirmationDetails.visible = !compact;
+      leanWarningDialog.width = compact ? "100%" : 72;
+      leanWarningDialog.height = compact ? 9 : 8;
+      leanWarningDetails.visible = !compact;
       skillPickerDialog.width = compact ? "100%" : Math.min(80, Math.max(40, width - 4));
       skillPickerDialog.height = compact ? "100%" : Math.min(20, Math.max(10, height - 4));
       skillPickerDialog.paddingX = compact ? 1 : 2;
@@ -642,14 +642,13 @@ export async function runStartMenu({
         modeChangePending = false;
       }
     };
-    const showLeanConfirmation = () => {
-      if (modeChangePending || ompActionIndex < 0) return;
-      leanConfirmationVisible = true;
-      leanConfirmationOverlay.visible = true;
+    const showLeanWarning = () => {
+      leanWarningVisible = true;
+      leanWarningOverlay.visible = true;
     };
-    const hideLeanConfirmation = () => {
-      leanConfirmationVisible = false;
-      leanConfirmationOverlay.visible = false;
+    const hideLeanWarning = () => {
+      leanWarningVisible = false;
+      leanWarningOverlay.visible = false;
     };
     const hideSkillPicker = () => {
       skillPickerGeneration += 1;
@@ -816,15 +815,15 @@ export async function runStartMenu({
         renderSkillPicker();
         return;
       }
-      if (leanConfirmationVisible) {
+      if (leanWarningVisible) {
         if (noModifiers && event.name === "escape") {
-          hideLeanConfirmation();
+          hideLeanWarning();
           lastEscape = null;
           return;
         }
         if (noModifiers && (event.name === "return" || event.name === "enter" || event.name === "linefeed")) {
-          hideLeanConfirmation();
-          void setOmpLeanMode(true);
+          hideLeanWarning();
+          runSelectedAction();
           return;
         }
         return;
@@ -842,8 +841,7 @@ export async function runStartMenu({
         return;
       }
       if (noModifiers && event.name === "l") {
-        if (ompLeanModeEnabled) void setOmpLeanMode(false);
-        else showLeanConfirmation();
+        void setOmpLeanMode(!ompLeanModeEnabled);
         return;
       }
       if (noModifiers && event.name === "space") {
@@ -860,6 +858,10 @@ export async function runStartMenu({
         return;
       }
       if (event.name === "return" || event.name === "enter" || event.name === "linefeed") {
+        if (selectedIndex === ompActionIndex && ompLeanModeEnabled) {
+          showLeanWarning();
+          return;
+        }
         runSelectedAction();
       }
     };
