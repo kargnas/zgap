@@ -10,13 +10,16 @@ import { login } from "./login.mjs";
 import { runCodex } from "./codex.mjs";
 import { runClaude } from "./claude.mjs";
 import { runOmp } from "./omp.mjs";
+import { discoverOmpSkills } from "./omp-skills.mjs";
 import { stat } from "node:fs/promises";
 import { readProxyConfig } from "./config.mjs";
 import {
   readDangerousMode,
   readOmpLeanMode,
+  readOmpLeanSkills,
   writeDangerousMode,
   writeOmpLeanMode,
+  writeOmpLeanSkills,
 } from "./preferences.mjs";
 import { checkForGlobalUpdate, updateGlobalInstall } from "./install.mjs";
 import { runStartMenu } from "./tui/menu.mjs";
@@ -76,6 +79,9 @@ export async function main({
   dangerousModeWriter = writeDangerousMode,
   ompLeanModeReader = readOmpLeanMode,
   ompLeanModeWriter = writeOmpLeanMode,
+  ompSkillsLoader = discoverOmpSkills,
+  ompLeanSkillsReader = readOmpLeanSkills,
+  ompLeanSkillsWriter = writeOmpLeanSkills,
   codexRunner = runCodex,
   claudeRunner = runClaude,
   ompRunner = runOmp,
@@ -107,12 +113,19 @@ export async function main({
     return claudeRunner(args, { configDir, origin, dangerousMode });
   }
   if (command === "omp") {
-    const [{ origin }, dangerousMode, leanMode] = await Promise.all([
+    const [{ origin }, dangerousMode, leanMode, ompLeanSkills] = await Promise.all([
       configReader(configDir),
       dangerousModeReader(configDir),
       ompLeanModeReader(configDir),
+      ompLeanSkillsReader(configDir),
     ]);
-    return ompRunner(args, { configDir, origin, dangerousMode, leanMode });
+    return ompRunner(args, {
+      configDir,
+      origin,
+      dangerousMode,
+      leanMode,
+      ...(ompLeanSkills.length > 0 ? { ompLeanSkills } : {}),
+    });
   }
   if (command === "sessions") {
     return sessionBrowser({
@@ -131,9 +144,10 @@ export async function main({
   }
   if (!command) {
     const proxyConfig = await configReader(configDir);
-    let [dangerousMode, ompLeanMode] = await Promise.all([
+    let [dangerousMode, ompLeanMode, ompLeanSkills] = await Promise.all([
       dangerousModeReader(configDir),
       ompLeanModeReader(configDir),
+      ompLeanSkillsReader(configDir),
     ]);
     while (true) {
       const credentialFile = credentialsPath(configDir);
@@ -157,6 +171,8 @@ export async function main({
         updateChecker,
         dangerousMode,
         ompLeanMode,
+        ompLeanSkills,
+        onOmpSkillsLoad: () => ompSkillsLoader({ cwd }),
         onDangerousModeChange: async (enabled) => {
           await dangerousModeWriter(enabled, configDir);
           dangerousMode = enabled;
@@ -164,6 +180,10 @@ export async function main({
         onOmpLeanModeChange: async (enabled) => {
           await ompLeanModeWriter(enabled, configDir);
           ompLeanMode = enabled;
+        },
+        onOmpLeanSkillsChange: async (skills) => {
+          await ompLeanSkillsWriter(skills, configDir);
+          ompLeanSkills = skills;
         },
         actions: {
           login: () => login({ configDir, origin: proxyConfig.origin }),
@@ -174,6 +194,7 @@ export async function main({
             origin: proxyConfig.origin,
             dangerousMode,
             leanMode: ompLeanMode,
+            ...(ompLeanSkills.length > 0 ? { ompLeanSkills } : {}),
           }),
           sessions: async () => {
             let selected = false;

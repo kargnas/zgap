@@ -870,6 +870,47 @@ test("claude가 PATH에 없으면 명확한 오류를 반환한다", async () =>
   assert.match(result.stderr, /Claude CLI is not installed or not in PATH/);
 });
 
+test("start menu의 OMP action은 저장된 lean skill과 변경 hook을 전달한다", async () => {
+  const { main } = await import("../src/cli.mjs");
+  let menuOptions;
+  let ompOptions;
+  const result = await main({
+    argv: [],
+    configDir: "/tmp/zgap-test-config",
+    configReader: async () => ({ host: "proxy.example.test", origin: "https://proxy.example.test" }),
+    credentialStateReader: async () => "signed-out",
+    dangerousModeReader: async () => false,
+    ompLeanModeReader: async () => true,
+    ompSkillsLoader: async () => [{ name: "alpha", source: "test:user" }],
+    ompLeanSkillsReader: async () => ["alpha"],
+    startMenu: async (options) => {
+      menuOptions = options;
+      await options.actions.omp();
+      return 0;
+    },
+    ompRunner: async (_args, options) => {
+      ompOptions = options;
+      return 0;
+    },
+  });
+  assert.equal(result, 0);
+  assert.deepEqual(menuOptions.ompLeanSkills, ["alpha"]);
+  assert.equal(menuOptions.ompLeanMode, true);
+  assert.deepEqual(await menuOptions.onOmpSkillsLoad(), [{ name: "alpha", source: "test:user" }]);
+  assert.deepEqual(ompOptions.ompLeanSkills, ["alpha"]);
+  await menuOptions.onOmpLeanSkillsChange(["beta"]);
+  await menuOptions.actions.omp();
+  assert.deepEqual(ompOptions.ompLeanSkills, ["beta"]);
+});
+
+test("OMP LEAN skill 옵션은 잘못된 값을 조용히 무시하지 않는다", async () => {
+  const { runOmp } = await import("../src/omp.mjs");
+  await assert.rejects(
+    runOmp([], { leanMode: true, ompLeanSkills: "alpha" }),
+    /OMP lean skills must be an array of non-empty strings/,
+  );
+});
+
 test("omp는 정적 extension과 사용자 OMP 설정을 그대로 넘긴다", async (t) => {
   const root = await tempDir(t);
   const home = path.join(root, "home");
@@ -982,6 +1023,25 @@ process.exitCode = 5;
   assert.equal(leanInvocation.argv.includes("--no-lsp"), false);
   assert.equal(leanInvocation.argv.includes("--auto-approve"), false);
   assert.deepEqual(leanInvocation.argv.slice(-2), ["--print", "hello"]);
+
+  await writeFile(path.join(configDir, "preferences.json"), '{"dangerousMode":false,"ompLeanMode":true,"ompLeanSkills":["alpha","beta"]}\n');
+  const selectedSkillsResult = await runCli(["omp", "--print", "hello"], cliEnv);
+  assert.equal(selectedSkillsResult.code, 5, selectedSkillsResult.stderr);
+  const selectedSkillsInvocation = JSON.parse(selectedSkillsResult.stdout);
+  assert.equal(selectedSkillsInvocation.argv.includes("--no-skills"), false);
+  assert.equal(selectedSkillsInvocation.argv.includes("--skills=alpha,beta"), true);
+
+  const explicitSkillsResult = await runCli(["omp", "--skills=custom", "--print", "hello"], cliEnv);
+  assert.equal(explicitSkillsResult.code, 5, explicitSkillsResult.stderr);
+  const explicitSkillsInvocation = JSON.parse(explicitSkillsResult.stdout);
+  assert.deepEqual(explicitSkillsInvocation.argv.filter((arg) => arg.startsWith("--skills")), ["--skills=custom"]);
+  assert.equal(explicitSkillsInvocation.argv.includes("--no-skills"), false);
+
+  const explicitNoSkillsResult = await runCli(["omp", "--no-skills", "--print", "hello"], cliEnv);
+  assert.equal(explicitNoSkillsResult.code, 5, explicitNoSkillsResult.stderr);
+  const explicitNoSkillsInvocation = JSON.parse(explicitNoSkillsResult.stdout);
+  assert.equal(explicitNoSkillsInvocation.argv.filter((arg) => arg === "--no-skills").length, 1);
+  assert.equal(explicitNoSkillsInvocation.argv.some((arg) => arg.startsWith("--skills=")), false);
 
   const customToolsResult = await runCli(["omp", "--tools=read,bash", "--print", "hello"], cliEnv);
   assert.equal(customToolsResult.code, 5, customToolsResult.stderr);

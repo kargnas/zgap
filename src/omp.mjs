@@ -59,11 +59,25 @@ export async function runOmp(args, {
   cwd = process.cwd(),
   dangerousMode = false,
   leanMode = false,
+  ompLeanSkills = [],
 } = {}) {
   assertOmpLaunchArgs(args);
-  const leanArgs = leanMode && args.some((arg) => arg === "--tools" || arg.startsWith("--tools="))
-    ? OMP_LEAN_ARGS.slice(0, -1)
-    : (leanMode ? OMP_LEAN_ARGS : []);
+  if (!Array.isArray(ompLeanSkills) || ompLeanSkills.some((skill) => typeof skill !== "string" || skill.length === 0)) {
+    throw new TypeError("OMP lean skills must be an array of non-empty strings.");
+  }
+  const hasToolsArg = args.some((arg) => arg === "--tools" || arg.startsWith("--tools="));
+  const hasSkillsArg = args.some((arg) => arg === "--skills" || arg === "--no-skills" || arg.startsWith("--skills="));
+  const selectedSkills = leanMode ? [...new Set(ompLeanSkills)] : [];
+  const leanArgs = leanMode
+    ? OMP_LEAN_ARGS.flatMap((arg) => {
+      if (arg === "--no-skills") {
+        if (hasSkillsArg) return [];
+        return selectedSkills.length > 0 ? [`--skills=${selectedSkills.join(",")}`] : [arg];
+      }
+      if (arg === "--tools=read,bash,edit,write" && hasToolsArg) return [];
+      return [arg];
+    })
+    : [];
   let receivedSignal;
   let child;
   let handlersRemoved = false;
