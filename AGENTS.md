@@ -18,6 +18,7 @@
 - `src/catalog.mjs` and `src/codex.mjs`: Codex-specific discovery, ephemeral catalog assembly, and launch arguments.
 - `src/claude.mjs`: Claude Code launch arguments, inline settings, and child environment cleanup.
 - `src/omp.mjs`: OMP authentication/version gates, process arguments, signal forwarding, and process-local extension loading.
+- `src/omp-skills.mjs`: read-only OMP skill discovery for the LEAN selector.
 - `src/omp-provider-extension.mjs`: process-local OpenAI Codex and Anthropic transport/auth definitions.
 - `src/omp-provider-compat.mjs`: explicitly marked OMP 18.0.3 compatibility workarounds for additive fail-closed loading, provider ownership, and usage suppression.
 - `src/sessions.mjs`: Multi-agent session discovery and shared history parsing.
@@ -51,7 +52,7 @@
 - Keep persistent launch-mode state in `src/preferences.mjs`.
 - Keep catalog validation and temporary-file lifecycle in `src/catalog.mjs`.
 - Keep Codex process arguments and child environment cleanup in `src/codex.mjs`.
-- Keep OMP launch gates, process arguments, and signal cleanup in `src/omp.mjs`; keep proxy provider definitions and credential commands in `src/omp-provider-extension.mjs`; keep every version-specific workaround in `src/omp-provider-compat.mjs`.
+- Keep OMP launch gates, process arguments, and signal cleanup in `src/omp.mjs`; keep read-only skill discovery in `src/omp-skills.mjs`; keep proxy provider definitions and credential commands in `src/omp-provider-extension.mjs`; keep every version-specific workaround in `src/omp-provider-compat.mjs`.
 - Keep menu rendering and keyboard handling in `src/tui/menu.mjs`; keep translations in `src/tui/locales/*.json`.
 
 ## OpenTUI

@@ -35,7 +35,7 @@ zgap --help            Show all commands
 
 Use the arrow keys to move between start-menu actions and press Tab to switch between SAFE and YOLO modes for Codex, Claude Code, and OMP. The choice is saved locally and applies to new launches, direct commands, and resumed sessions. YOLO mode bypasses Codex approval and sandbox checks, Claude Code permission checks, and OMP tool-approval prompts.
 
-Press `L` to toggle OMP LEAN mode. Enabling it opens a warning first; press Enter to confirm or Esc to cancel. Turning it off is immediate. The saved choice applies only to OMP launches. LEAN disables ambient extensions, skills, rules, and title generation, and enables only the `read`, `bash`, `edit`, and `write` built-in tools. Session storage and LSP remain active. Pass OMP's own `--tools=...` option to `zgap omp` to replace the default tool list for a launch.
+Press `L` to toggle OMP LEAN mode. Enabling it opens a warning first; press Enter to confirm or Esc to cancel. Turning it off is immediate. The saved choice applies only to OMP launches. LEAN disables ambient extensions, rules, title generation, and all skills by default, and enables only the `read`, `bash`, `edit`, and `write` built-in tools. Session storage and LSP remain active. While the OMP card is selected with LEAN enabled, press Space to choose the skills that may load; the selection is saved, and an empty selection keeps all skills disabled. Pass OMP's own `--tools=...` or `--skills=...` option to `zgap omp` to replace the saved LEAN defaults for a launch.
 
 ## Development
 
