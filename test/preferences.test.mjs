@@ -12,10 +12,11 @@ async function tempDir(t) {
 
 test("launch mode preferences default to false when preferences.json is absent", async (t) => {
   const configDir = await tempDir(t);
-  const { readDangerousMode, readOmpLeanMode } = await import("../src/preferences.mjs");
+  const { readDangerousMode, readOmpLeanMode, readOmpLeanSkills } = await import("../src/preferences.mjs");
 
   assert.equal(await readDangerousMode(configDir), false);
   assert.equal(await readOmpLeanMode(configDir), false);
+  assert.deepEqual(await readOmpLeanSkills(configDir), []);
 });
 
 test("launch mode writers preserve the other preference", async (t) => {
@@ -56,6 +57,19 @@ test("legacy dangerous mode preference defaults OMP lean mode to false", async (
   assert.equal(await readFile(preferencesFile, "utf8"), '{"dangerousMode":true,"ompLeanMode":true}\n');
 });
 
+test("OMP lean skills preserve exact unique names and legacy files", async (t) => {
+  const configDir = await tempDir(t);
+  const preferencesFile = path.join(configDir, "preferences.json");
+  const { readOmpLeanSkills, writeOmpLeanSkills } = await import("../src/preferences.mjs");
+
+  await writeFile(preferencesFile, '{"dangerousMode":false,"ompLeanMode":true}\n');
+  assert.deepEqual(await readOmpLeanSkills(configDir), []);
+
+  await writeOmpLeanSkills(["alpha", "beta", "alpha"], configDir);
+  assert.deepEqual(await readOmpLeanSkills(configDir), ["alpha", "beta"]);
+  assert.equal(await readFile(preferencesFile, "utf8"), '{"dangerousMode":false,"ompLeanMode":true,"ompLeanSkills":["alpha","beta"]}\n');
+});
+
 test("launch mode preferences reject malformed or unknown records", async (t) => {
   const configDir = await tempDir(t);
   const preferencesFile = path.join(configDir, "preferences.json");
@@ -66,6 +80,9 @@ test("launch mode preferences reject malformed or unknown records", async (t) =>
     "{}",
     '{"dangerousMode":"yes"}',
     '{"dangerousMode":false,"ompLeanMode":"yes"}',
+    '{"dangerousMode":false,"ompLeanSkills":["ok",""]}',
+    '{"dangerousMode":false,"ompLeanSkills":["ok","ok"]}',
+    '{"dangerousMode":false,"ompLeanSkills":[1]}',
     '{"dangerousMode":false,"ompLeanMode":false,"extra":true}',
     "null",
     "[]",
