@@ -69,6 +69,10 @@
   "dangerousModeSelectHint": "Tab switches SAFE/YOLO · L toggles OMP LEAN",
   "dangerousModeSaveFailed": "Could not save YOLO mode",
   "ompLeanModeSaveFailed": "Could not save OMP LEAN mode",
+  "ompLeanConfirmTitle": "ENABLE OMP LEAN?",
+  "ompLeanConfirmWarning": "Project extensions, skills, and rules will not load.",
+  "ompLeanConfirmDetails": "Only read, bash, edit, and write stay available. Title generation is off; sessions and LSP stay on.",
+  "ompLeanConfirmHint": "Enter enable · Esc cancel",
   "hint": "Arrows move · Tab SAFE/YOLO · L OMP LEAN · Enter select · ^C×2/Esc×2 quit",
   "compactHint": "←↑↓→ · Tab mode · L lean · ↵ select · ^C×2/Esc×2"
 }

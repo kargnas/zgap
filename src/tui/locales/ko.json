@@ -69,6 +69,10 @@
   "dangerousModeSelectHint": "Tab으로 SAFE/YOLO 전환 · L로 OMP LEAN 전환",
   "dangerousModeSaveFailed": "YOLO 모드를 저장하지 못했습니다",
   "ompLeanModeSaveFailed": "OMP LEAN 모드를 저장하지 못했습니다",
+  "ompLeanConfirmTitle": "OMP LEAN을 켤까요?",
+  "ompLeanConfirmWarning": "프로젝트 확장, 스킬, 규칙을 불러오지 않습니다.",
+  "ompLeanConfirmDetails": "read, bash, edit, write 도구만 사용합니다. 제목 생성은 끄고 세션과 LSP는 유지합니다.",
+  "ompLeanConfirmHint": "Enter 활성화 · Esc 취소",
   "hint": "화살표 이동 · Tab SAFE/YOLO · L OMP LEAN · Enter 선택 · ^C×2/Esc×2 종료",
   "compactHint": "←↑↓→ · Tab 모드 · L lean · ↵ 선택 · ^C×2/Esc×2"
 }

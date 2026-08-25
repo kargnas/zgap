@@ -644,7 +644,7 @@ test("중앙 mode rail은 Tab으로 SAFE와 YOLO를 전환한다", async (t) => 
   assert.match(frameAfterThirdToggle, /SAFE\s+○━+●\s+YOLO/);
 });
 
-test("L은 OMP LEAN을 전환하고 OMP 카드에 현재 상태를 표시한다", async (t) => {
+test("L은 경고 확인 후에만 OMP LEAN을 켜고 끌 때는 즉시 저장한다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runStartMenu } = await import("../src/tui/menu.mjs");
   const setup = await createTestRenderer({ width: 100, height: 24, kittyKeyboard: true });
@@ -681,6 +681,29 @@ test("L은 OMP LEAN을 전환하고 OMP 카드에 현재 상태를 표시한다"
 
   pressL();
   await flushMenu(setup);
+  const confirmationFrame = setup.captureCharFrame();
+  assert.deepEqual(writes, []);
+  assert.match(confirmationFrame, /ENABLE OMP LEAN\?/);
+  assert.match(confirmationFrame, /Project extensions, skills, and rules will not load/);
+  assert.match(confirmationFrame, /Enter enable · Esc cancel/);
+  assert.doesNotMatch(confirmationFrame, /OMP · LEAN/);
+
+  setup.resize(40, 10);
+  await flushMenu(setup);
+  const compactConfirmationFrame = setup.captureCharFrame();
+  assert.match(compactConfirmationFrame, /ENABLE OMP LEAN\?/);
+  assert.match(compactConfirmationFrame, /Enter enable/);
+  assert.match(compactConfirmationFrame, /Esc cancel/);
+  await setup.mockInput.pressEscape();
+  setup.resize(100, 24);
+  await flushMenu(setup);
+  assert.deepEqual(writes, []);
+  assert.doesNotMatch(setup.captureCharFrame(), /ENABLE OMP LEAN\?/);
+
+  pressL();
+  await flushMenu(setup);
+  await setup.mockInput.pressEnter();
+  await flushMenu(setup);
   assert.deepEqual(writes, [true]);
   assert.match(setup.captureCharFrame(), /OMP · LEAN/);
 
@@ -691,6 +714,9 @@ test("L은 OMP LEAN을 전환하고 OMP 카드에 현재 상태를 표시한다"
 
   saveFails = true;
   pressL();
+  await flushMenu(setup);
+  assert.match(setup.captureCharFrame(), /ENABLE OMP LEAN\?/);
+  await setup.mockInput.pressEnter();
   await flushMenu(setup);
   assert.deepEqual(writes, [true, false]);
   assert.match(setup.captureCharFrame(), /Could not save OMP LEAN mode/);

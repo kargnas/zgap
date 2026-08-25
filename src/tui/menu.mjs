@@ -158,6 +158,7 @@ export async function runStartMenu({
     let dangerousModeEnabled = dangerousMode;
     let ompLeanModeEnabled = ompLeanMode;
     let modeChangePending = false;
+    let leanConfirmationVisible = false;
     const runSelectedAction = () => {
       const selected = content.actions[selectedIndex];
       const action = actions[selected.name];
@@ -317,10 +318,60 @@ export async function runStartMenu({
     });
     bottomBar.add(ready);
     bottomBar.add(hint);
+    const leanConfirmationOverlay = new BoxRenderable(renderer, {
+      position: "absolute",
+      top: 0,
+      right: 0,
+      bottom: 0,
+      left: 0,
+      backgroundColor: "#000000",
+      justifyContent: "center",
+      alignItems: "center",
+      visible: false,
+    });
+    const leanConfirmationDialog = new BoxRenderable(renderer, {
+      width: 72,
+      height: 7,
+      backgroundColor: "#0B171D",
+      border: true,
+      borderStyle: "rounded",
+      borderColor: "#FCD34D",
+      flexDirection: "column",
+      justifyContent: "center",
+      paddingX: 2,
+    });
+    const leanConfirmationTitle = new TextRenderable(renderer, {
+      content: t("ompLeanConfirmTitle"),
+      fg: "#FCD34D",
+      attributes: TextAttributes.BOLD,
+      selectable: true,
+    });
+    const leanConfirmationWarning = new TextRenderable(renderer, {
+      content: t("ompLeanConfirmWarning"),
+      fg: "#F8FAFC",
+      selectable: true,
+    });
+    const leanConfirmationDetails = new TextRenderable(renderer, {
+      content: t("ompLeanConfirmDetails"),
+      fg: "#94A3B8",
+      selectable: true,
+    });
+    const leanConfirmationHint = new TextRenderable(renderer, {
+      content: t("ompLeanConfirmHint"),
+      fg: "#67E8F9",
+      attributes: TextAttributes.BOLD,
+      selectable: true,
+    });
+    leanConfirmationDialog.add(leanConfirmationTitle);
+    leanConfirmationDialog.add(leanConfirmationWarning);
+    leanConfirmationDialog.add(leanConfirmationDetails);
+    leanConfirmationDialog.add(leanConfirmationHint);
+    leanConfirmationOverlay.add(leanConfirmationDialog);
     root.add(topBar);
     root.add(infoArea);
     root.add(centerArea);
     root.add(bottomBar);
+    root.add(leanConfirmationOverlay);
     renderer.root.add(root);
 
     const applyResponsiveLayout = (width, height = renderer.height) => {
@@ -362,6 +413,8 @@ export async function runStartMenu({
       ready.visible = !compact;
       hint.content = compact ? t("compactHint") : t("hint");
       infoArea.paddingTop = compact ? 0 : 1;
+      leanConfirmationDialog.width = compact ? "100%" : 72;
+      leanConfirmationDialog.height = compact ? 9 : 7;
       // Short terminals have no spare row after status, mode, actions, and the quit hint.
       infoArea.visible = updateStatus.content !== "" && !compact;
     };
@@ -422,6 +475,15 @@ export async function runStartMenu({
       } finally {
         modeChangePending = false;
       }
+    };
+    const showLeanConfirmation = () => {
+      if (modeChangePending || ompActionIndex < 0) return;
+      leanConfirmationVisible = true;
+      leanConfirmationOverlay.visible = true;
+    };
+    const hideLeanConfirmation = () => {
+      leanConfirmationVisible = false;
+      leanConfirmationOverlay.visible = false;
     };
     updateSelection();
     updateDangerousMode();
@@ -493,6 +555,20 @@ export async function runStartMenu({
         }
         return;
       }
+      const noModifiers = !event.ctrl && !event.meta && !event.option && !event.shift && !event.super && !event.hyper;
+      if (leanConfirmationVisible) {
+        if (noModifiers && event.name === "escape") {
+          hideLeanConfirmation();
+          lastEscape = null;
+          return;
+        }
+        if (noModifiers && (event.name === "return" || event.name === "enter" || event.name === "linefeed")) {
+          hideLeanConfirmation();
+          void setOmpLeanMode(true);
+          return;
+        }
+        return;
+      }
       if (event.name === "escape") {
         if (lastEscape !== null && timestamp - lastEscape <= 1_000) {
           void finish(async () => 130);
@@ -501,13 +577,13 @@ export async function runStartMenu({
         }
         return;
       }
-      const noModifiers = !event.ctrl && !event.meta && !event.option && !event.shift && !event.super && !event.hyper;
       if (noModifiers && event.name === "tab") {
         void setDangerousMode(!dangerousModeEnabled);
         return;
       }
       if (noModifiers && event.name === "l") {
-        void setOmpLeanMode(!ompLeanModeEnabled);
+        if (ompLeanModeEnabled) void setOmpLeanMode(false);
+        else showLeanConfirmation();
         return;
       }
       if (modeChangePending) return;
