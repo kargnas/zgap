@@ -9,6 +9,10 @@ import { DEFAULT_HOST, ORIGIN } from "../constants.mjs";
 const LOCALES = ["en", "ko"];
 const LOCALE_DIR = fileURLToPath(new URL("./locales/", import.meta.url));
 const COMPACT_WIDTH = 60;
+const ORBIT_SPINNER = {
+  frames: ["● · · ·", "· ● · ·", "· · ● ·", "· · · ●", "· · ● ·", "· ● · ·"],
+  interval: 90,
+};
 // This floor keeps the display responsive without letting an instant local checker flood the health endpoint.
 const PROXY_REFRESH_MS = 250;
 
@@ -107,12 +111,16 @@ export async function runStartMenu({
   accountProfile,
   dangerousMode = false,
   ompLeanMode = false,
+  ompLeanSkills = [],
   onDangerousModeChange = async () => { throw new Error("Missing dangerous mode persistence handler."); },
   onOmpLeanModeChange = async () => { throw new Error("Missing OMP lean mode persistence handler."); },
+  onOmpSkillsLoad = async () => { throw new Error("Missing OMP skill loader."); },
+  onOmpLeanSkillsChange = async () => { throw new Error("Missing OMP lean skills persistence handler."); },
 } = {}) {
   let renderer;
   let keyHandler;
   let resizeHandler;
+  let skillSpinnerTimer = null;
   const proxyAbortController = new AbortController();
   const updateAbortController = new AbortController();
   let cleaned = false;
@@ -121,6 +129,8 @@ export async function runStartMenu({
     cleaned = true;
     proxyAbortController.abort();
     updateAbortController.abort();
+    if (skillSpinnerTimer !== null) clearInterval(skillSpinnerTimer);
+    skillSpinnerTimer = null;
     if (renderer && keyHandler) renderer.keyInput.off("keypress", keyHandler);
     if (renderer && resizeHandler) renderer.off("resize", resizeHandler);
     renderer?.destroy();
@@ -157,8 +167,18 @@ export async function runStartMenu({
     let selectedIndex = 0;
     let dangerousModeEnabled = dangerousMode;
     let ompLeanModeEnabled = ompLeanMode;
+    let ompLeanSkillsEnabled = new Set(ompLeanSkills);
     let modeChangePending = false;
     let leanConfirmationVisible = false;
+    let skillPickerVisible = false;
+    let skillPickerState = "idle";
+    let availableSkills = [];
+    let pendingLeanSkills = new Set();
+    let skillPickerIndex = 0;
+    let skillPickerViewport = 0;
+    let skillPickerError = null;
+    let skillSpinnerIndex = 0;
+    let skillPickerGeneration = 0;
     const runSelectedAction = () => {
       const selected = content.actions[selectedIndex];
       const action = actions[selected.name];
@@ -267,7 +287,13 @@ export async function runStartMenu({
     const actionGrid = content.actions.length >= 4;
     let actionColumns = 1;
     // Compact single-row cards drop the Enter suffix so all agent labels fit narrow terminals.
-    const labelFor = (item, compact = false) => `${item.label}${item.name === "omp" && ompLeanModeEnabled ? " · LEAN" : ""}${compact ? "" : "  ↵"}`;
+    const labelFor = (item, compact = false) => {
+      const skillCount = ompLeanSkillsEnabled.size;
+      const leanLabel = item.name === "omp" && ompLeanModeEnabled
+        ? ` · LEAN${skillCount > 0 ? ` · ${skillCount}` : ""}`
+        : "";
+      return `${item.label}${leanLabel}${compact ? "" : "  ↵"}`;
+    };
     const fullLabels = content.actions.map((item) => labelFor(item));
     const compactLabels = content.actions.map((item) => labelFor(item, true));
     const ompActionIndex = content.actions.findIndex((item) => item.name === "omp");
@@ -331,7 +357,7 @@ export async function runStartMenu({
     });
     const leanConfirmationDialog = new BoxRenderable(renderer, {
       width: 72,
-      height: 7,
+      height: 8,
       backgroundColor: "#0B171D",
       border: true,
       borderStyle: "rounded",
@@ -367,13 +393,65 @@ export async function runStartMenu({
     leanConfirmationDialog.add(leanConfirmationDetails);
     leanConfirmationDialog.add(leanConfirmationHint);
     leanConfirmationOverlay.add(leanConfirmationDialog);
+    const skillPickerOverlay = new BoxRenderable(renderer, {
+      position: "absolute",
+      top: 0,
+      right: 0,
+      bottom: 0,
+      left: 0,
+      backgroundColor: "#000000",
+      justifyContent: "center",
+      alignItems: "center",
+      visible: false,
+    });
+    const skillPickerDialog = new BoxRenderable(renderer, {
+      width: 72,
+      height: 20,
+      backgroundColor: "#0B171D",
+      border: true,
+      borderStyle: "rounded",
+      borderColor: "#67E8F9",
+      flexDirection: "column",
+      paddingX: 2,
+      paddingY: 1,
+    });
+    const skillPickerTitle = new TextRenderable(renderer, {
+      content: t("ompLeanSkillsTitle"),
+      fg: "#67E8F9",
+      attributes: TextAttributes.BOLD,
+      selectable: true,
+    });
+    const skillPickerList = new TextRenderable(renderer, {
+      content: "",
+      fg: "#E2E8F0",
+      flexGrow: 1,
+      selectable: true,
+    });
+    const skillPickerHint = new TextRenderable(renderer, {
+      content: t("ompLeanSkillsHint"),
+      fg: "#94A3B8",
+      maxHeight: 2,
+      selectable: true,
+    });
+    skillPickerDialog.add(skillPickerTitle);
+    skillPickerDialog.add(skillPickerList);
+    skillPickerDialog.add(skillPickerHint);
+    skillPickerOverlay.add(skillPickerDialog);
     root.add(topBar);
     root.add(infoArea);
     root.add(centerArea);
     root.add(bottomBar);
     root.add(leanConfirmationOverlay);
+    root.add(skillPickerOverlay);
     renderer.root.add(root);
 
+    const updateMenuHint = () => {
+      const compact = renderer.width <= COMPACT_WIDTH || renderer.height <= 12 || (actionGrid && (renderer.width <= 80 || renderer.height <= 18));
+      const skillsShortcut = selectedIndex === ompActionIndex && ompLeanModeEnabled;
+      hint.content = t(compact
+        ? skillsShortcut ? "compactHintLean" : "compactHint"
+        : skillsShortcut ? "hintLean" : "hint");
+    };
     const applyResponsiveLayout = (width, height = renderer.height) => {
       // Four full cards need 81 columns and 19 rows before labels, descriptions, and the footer stop colliding.
       const compact = width <= COMPACT_WIDTH || height <= 12 || (actionGrid && (width <= 80 || height <= 18));
@@ -411,16 +489,89 @@ export async function runStartMenu({
       });
       bottomBar.justifyContent = compact ? "flex-start" : "space-between";
       ready.visible = !compact;
-      hint.content = compact ? t("compactHint") : t("hint");
+      updateMenuHint();
       infoArea.paddingTop = compact ? 0 : 1;
       leanConfirmationDialog.width = compact ? "100%" : 72;
-      leanConfirmationDialog.height = compact ? 9 : 7;
+      leanConfirmationDialog.height = compact ? 9 : 8;
+      leanConfirmationDetails.visible = !compact;
+      skillPickerDialog.width = compact ? "100%" : Math.min(80, Math.max(40, width - 4));
+      skillPickerDialog.height = compact ? "100%" : Math.min(20, Math.max(10, height - 4));
+      skillPickerDialog.paddingX = compact ? 1 : 2;
+      skillPickerDialog.paddingY = compact ? 0 : 1;
+      skillPickerHint.maxHeight = compact ? 2 : 1;
       // Short terminals have no spare row after status, mode, actions, and the quit hint.
       infoArea.visible = updateStatus.content !== "" && !compact;
     };
     // Terminal resize keeps the primary action and quit instruction visible instead of clipping long locale strings.
-    resizeHandler = (width, height) => applyResponsiveLayout(width, height);
+    resizeHandler = (width, height) => {
+      applyResponsiveLayout(width, height);
+      if (skillPickerVisible) renderSkillPicker();
+    };
     applyResponsiveLayout(renderer.width, renderer.height);
+    const skillPickerVisibleRows = () => Math.max(1, renderer.height - (renderer.height <= 12 ? 4 : 8));
+    const stopSkillSpinner = () => {
+      if (skillSpinnerTimer !== null) clearInterval(skillSpinnerTimer);
+      skillSpinnerTimer = null;
+    };
+    const renderSkillPicker = () => {
+      if (!skillPickerVisible) {
+        stopSkillSpinner();
+        return;
+      }
+      const spinning = skillPickerState === "loading" || skillPickerState === "saving";
+      if (spinning && skillSpinnerTimer === null) {
+        skillSpinnerTimer = setInterval(() => {
+          skillSpinnerIndex = (skillSpinnerIndex + 1) % ORBIT_SPINNER.frames.length;
+          if (!cleaned) renderSkillPicker();
+        }, ORBIT_SPINNER.interval);
+      } else if (!spinning) {
+        stopSkillSpinner();
+      }
+      if (skillPickerState === "loading") {
+        skillPickerList.content = `${ORBIT_SPINNER.frames[skillSpinnerIndex]} ${t("ompLeanSkillsLoading")}`;
+        skillPickerHint.content = t("ompLeanSkillsCancelHint");
+        skillPickerHint.fg = "#94A3B8";
+        skillPickerList.fg = "#94A3B8";
+        renderer.requestRender();
+        return;
+      }
+      if (skillPickerState === "saving") {
+        skillPickerList.content = `${ORBIT_SPINNER.frames[skillSpinnerIndex]} ${t("ompLeanSkillsSaving")}`;
+        skillPickerHint.content = t("ompLeanSkillsSavingHint");
+        skillPickerHint.fg = "#94A3B8";
+        skillPickerList.fg = "#94A3B8";
+        renderer.requestRender();
+        return;
+      }
+      if (skillPickerState === "error") {
+        skillPickerList.content = `${t("ompLeanSkillsLoadFailed")}: ${skillPickerError?.message ?? t("ompLeanSkillsUnknownError")}`;
+        skillPickerHint.content = t("ompLeanSkillsCancelHint");
+        skillPickerHint.fg = "#94A3B8";
+        skillPickerList.fg = "#F87171";
+        renderer.requestRender();
+        return;
+      }
+      const count = skillPickerVisibleRows();
+      skillPickerIndex = Math.max(0, Math.min(skillPickerIndex, Math.max(0, availableSkills.length - 1)));
+      if (skillPickerIndex < skillPickerViewport) skillPickerViewport = skillPickerIndex;
+      if (skillPickerIndex >= skillPickerViewport + count) skillPickerViewport = skillPickerIndex - count + 1;
+      skillPickerViewport = Math.max(0, Math.min(skillPickerViewport, Math.max(0, availableSkills.length - count)));
+      const compact = renderer.width <= COMPACT_WIDTH || renderer.height <= 12;
+      const rowWidth = Math.max(12, renderer.width - (compact ? 6 : 14));
+      const rows = availableSkills.slice(skillPickerViewport, skillPickerViewport + count).map((skill, offset) => {
+        const index = skillPickerViewport + offset;
+        const prefix = `${index === skillPickerIndex ? ">" : " "} [${pendingLeanSkills.has(skill.name) ? "x" : " "}] `;
+        const source = compact || !skill.source ? "" : `  ${skill.source}`;
+        return `${prefix}${skill.name}${source}`.slice(0, rowWidth);
+      });
+      skillPickerList.content = rows.length > 0 ? rows.join("\n") : t("ompLeanSkillsEmpty");
+      skillPickerList.fg = "#E2E8F0";
+      skillPickerHint.content = skillPickerError
+        ? t("ompLeanSkillsSaveFailed")
+        : t("ompLeanSkillsHint", { count: pendingLeanSkills.size });
+      skillPickerHint.fg = skillPickerError ? "#F87171" : "#94A3B8";
+      renderer.requestRender();
+    };
     const updateSelection = () => {
       actionCards.forEach(({ card, label }, index) => {
         const selected = index === selectedIndex;
@@ -428,13 +579,19 @@ export async function runStartMenu({
         card.borderColor = selected ? "#67E8F9" : "#475569";
         label.fg = selected ? "#F8FAFC" : "#94A3B8";
       });
+      updateDangerousMode();
     };
     const updateDangerousMode = (saveFailed = false) => {
       const track = dangerousModeEnabled ? "○━━━━━━━━━━━━●" : "●━━━━━━━━━━━━○";
       modeRail.content = `${t("dangerousModeSafe")}  ${track}  ${t("dangerousModeYolo")}`;
       modeRail.fg = dangerousModeEnabled ? "#F87171" : "#86EFAC";
-      modeHint.content = saveFailed ? t("dangerousModeSaveFailed") : t("dangerousModeSelectHint");
+      modeHint.content = saveFailed
+        ? t("dangerousModeSaveFailed")
+        : selectedIndex === ompActionIndex && ompLeanModeEnabled
+          ? t("ompLeanSkillsOpenHint", { count: ompLeanSkillsEnabled.size })
+          : t("dangerousModeSelectHint");
       modeHint.fg = saveFailed ? "#F87171" : "#64748B";
+      updateMenuHint();
     };
     const setDangerousMode = async (enabled) => {
       if (modeChangePending || enabled === dangerousModeEnabled) return;
@@ -484,6 +641,72 @@ export async function runStartMenu({
     const hideLeanConfirmation = () => {
       leanConfirmationVisible = false;
       leanConfirmationOverlay.visible = false;
+    };
+    const hideSkillPicker = () => {
+      skillPickerGeneration += 1;
+      skillPickerVisible = false;
+      skillPickerOverlay.visible = false;
+      stopSkillSpinner();
+      renderer.requestRender();
+    };
+    const showSkillPicker = async () => {
+      if (modeChangePending || !ompLeanModeEnabled || selectedIndex !== ompActionIndex) return;
+      const generation = ++skillPickerGeneration;
+      skillPickerVisible = true;
+      skillPickerOverlay.visible = true;
+      skillPickerState = "loading";
+      skillPickerError = null;
+      skillSpinnerIndex = 0;
+      renderSkillPicker();
+      try {
+        const loaded = await onOmpSkillsLoad();
+        if (cleaned || !skillPickerVisible || generation !== skillPickerGeneration) return;
+        if (!Array.isArray(loaded)) throw new TypeError("OMP skill loader must return an array.");
+        const names = new Set();
+        availableSkills = loaded.map((skill) => {
+          if (!skill || typeof skill !== "object" || typeof skill.name !== "string" || skill.name.length === 0) {
+            throw new TypeError("OMP skill loader returned an invalid skill.");
+          }
+          return { name: skill.name, source: typeof skill.source === "string" ? skill.source : "" };
+        }).filter((skill) => {
+          if (names.has(skill.name)) return false;
+          names.add(skill.name);
+          return true;
+        });
+        for (const name of ompLeanSkillsEnabled) {
+          if (!names.has(name)) availableSkills.push({ name, source: t("ompLeanSkillsMissingSource") });
+        }
+        pendingLeanSkills = new Set(ompLeanSkillsEnabled);
+        skillPickerIndex = Math.max(0, availableSkills.findIndex((skill) => pendingLeanSkills.has(skill.name)));
+        skillPickerViewport = 0;
+        skillPickerState = "ready";
+      } catch (error) {
+        if (cleaned || !skillPickerVisible || generation !== skillPickerGeneration) return;
+        skillPickerError = error instanceof Error ? error : new Error(String(error));
+        skillPickerState = "error";
+      }
+      renderSkillPicker();
+    };
+    const saveSkillPicker = async () => {
+      if (skillPickerState !== "ready") return;
+      const selectedSkills = availableSkills
+        .filter((skill) => pendingLeanSkills.has(skill.name))
+        .map((skill) => skill.name);
+      skillPickerState = "saving";
+      skillPickerError = null;
+      renderSkillPicker();
+      try {
+        await onOmpLeanSkillsChange(selectedSkills);
+        if (cleaned || !skillPickerVisible) return;
+        ompLeanSkillsEnabled = new Set(selectedSkills);
+        hideSkillPicker();
+        updateOmpLeanMode();
+      } catch (error) {
+        if (cleaned || !skillPickerVisible) return;
+        skillPickerError = error instanceof Error ? error : new Error(String(error));
+        skillPickerState = "ready";
+        renderSkillPicker();
+      }
     };
     updateSelection();
     updateDangerousMode();
@@ -556,6 +779,33 @@ export async function runStartMenu({
         return;
       }
       const noModifiers = !event.ctrl && !event.meta && !event.option && !event.shift && !event.super && !event.hyper;
+      if (skillPickerVisible) {
+        if (!noModifiers) return;
+        if (event.name === "escape") {
+          hideSkillPicker();
+          lastEscape = null;
+          return;
+        }
+        if (skillPickerState !== "ready") return;
+        if (event.name === "up") skillPickerIndex -= 1;
+        else if (event.name === "down") skillPickerIndex += 1;
+        else if (event.name === "home") skillPickerIndex = 0;
+        else if (event.name === "end") skillPickerIndex = availableSkills.length - 1;
+        else if (event.name === "pageup") skillPickerIndex -= skillPickerVisibleRows();
+        else if (event.name === "pagedown") skillPickerIndex += skillPickerVisibleRows();
+        else if (event.name === "space" && availableSkills[skillPickerIndex]) {
+          const name = availableSkills[skillPickerIndex].name;
+          if (pendingLeanSkills.has(name)) pendingLeanSkills.delete(name);
+          else pendingLeanSkills.add(name);
+        } else if (event.name === "return" || event.name === "enter" || event.name === "linefeed") {
+          void saveSkillPicker();
+          return;
+        } else {
+          return;
+        }
+        renderSkillPicker();
+        return;
+      }
       if (leanConfirmationVisible) {
         if (noModifiers && event.name === "escape") {
           hideLeanConfirmation();
@@ -584,6 +834,10 @@ export async function runStartMenu({
       if (noModifiers && event.name === "l") {
         if (ompLeanModeEnabled) void setOmpLeanMode(false);
         else showLeanConfirmation();
+        return;
+      }
+      if (noModifiers && event.name === "space") {
+        void showSkillPicker();
         return;
       }
       if (modeChangePending) return;

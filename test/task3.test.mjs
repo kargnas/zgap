@@ -684,7 +684,8 @@ test("L은 경고 확인 후에만 OMP LEAN을 켜고 끌 때는 즉시 저장�
   const confirmationFrame = setup.captureCharFrame();
   assert.deepEqual(writes, []);
   assert.match(confirmationFrame, /ENABLE OMP LEAN\?/);
-  assert.match(confirmationFrame, /Project extensions, skills, and rules will not load/);
+  assert.match(confirmationFrame, /Project extensions and rules will not load; only selected skills/);
+  assert.match(confirmationFrame, /may load/);
   assert.match(confirmationFrame, /Enter enable · Esc cancel/);
   assert.doesNotMatch(confirmationFrame, /OMP · LEAN/);
 
@@ -721,6 +722,89 @@ test("L은 경고 확인 후에만 OMP LEAN을 켜고 끌 때는 즉시 저장�
   assert.deepEqual(writes, [true, false]);
   assert.match(setup.captureCharFrame(), /Could not save OMP LEAN mode/);
   assert.doesNotMatch(setup.captureCharFrame(), /OMP · LEAN/);
+
+  await setup.mockInput.pressCtrlC();
+  await setup.mockInput.pressCtrlC();
+  assert.equal(await resultPromise, 130);
+});
+
+test("OMP LEAN 카드의 Space 선택창은 스킬을 체크하고 저장한다", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runStartMenu } = await import("../src/tui/menu.mjs");
+  const setup = await createTestRenderer({ width: 100, height: 24, kittyKeyboard: true });
+  t.after(() => setup.renderer.destroy());
+  const writes = [];
+  let loads = 0;
+  let saveFails = false;
+  const pressSpace = () => setup.renderer.keyInput.emit("keypress", {
+    eventType: "press",
+    name: "space",
+  });
+  const resultPromise = runStartMenu({
+    rendererFactory: async () => setup,
+    credentialState: "signed-in",
+    ompLeanMode: true,
+    ompLeanSkills: ["git"],
+    onOmpSkillsLoad: async () => {
+      loads += 1;
+      return [
+        { name: "git", source: "codex:user" },
+        { name: "playwright", source: "agents:user" },
+        { name: "ponytail", source: "claude:user" },
+      ];
+    },
+    onOmpLeanSkillsChange: async (skills) => {
+      if (saveFails) throw new Error("disk full");
+      writes.push(skills);
+    },
+    actions: { codex: async () => 0, claude: async () => 0, omp: async () => 0, sessions: async () => 0 },
+  });
+
+  await flushMenu(setup);
+  pressSpace();
+  await flushMenu(setup);
+  assert.equal(loads, 0);
+
+  await setup.mockInput.pressArrow("down");
+  pressSpace();
+  await flushMenu(setup);
+  const pickerFrame = setup.captureCharFrame();
+  assert.equal(loads, 1);
+  assert.match(pickerFrame, /OMP LEAN SKILLS/);
+  assert.match(pickerFrame, /> \[x\] git/);
+  assert.match(pickerFrame, /\[ \] playwright/);
+  assert.match(pickerFrame, /Space check/);
+
+  setup.resize(40, 10);
+  await flushMenu(setup);
+  const compactPickerFrame = setup.captureCharFrame();
+  assert.match(compactPickerFrame, /OMP LEAN SKILLS/);
+  assert.match(compactPickerFrame, /> \[x\] git/);
+  assert.match(compactPickerFrame, /Space check/);
+  setup.resize(100, 24);
+  await flushMenu(setup);
+
+  await setup.mockInput.pressArrow("down");
+  pressSpace();
+  await setup.mockInput.pressEnter();
+  await flushMenu(setup);
+  assert.deepEqual(writes, [["git", "playwright"]]);
+  assert.doesNotMatch(setup.captureCharFrame(), /OMP LEAN SKILLS/);
+
+  pressSpace();
+  await flushMenu(setup);
+  await setup.mockInput.pressEscape();
+  await flushMenu(setup);
+  assert.deepEqual(writes, [["git", "playwright"]]);
+
+  saveFails = true;
+  pressSpace();
+  await flushMenu(setup);
+  await setup.mockInput.pressEnter();
+  await flushMenu(setup);
+  assert.deepEqual(writes, [["git", "playwright"]]);
+  assert.match(setup.captureCharFrame(), /Could not save OMP LEAN skills/);
+  await setup.mockInput.pressEscape();
 
   await setup.mockInput.pressCtrlC();
   await setup.mockInput.pressCtrlC();
