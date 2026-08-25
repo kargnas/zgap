@@ -3,10 +3,15 @@ import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { readProxyConfig } from "./config.mjs";
 import { fetchModelCatalog } from "./catalog.mjs";
-import { credentialsPath, defaultConfigDir } from "./credentials.mjs";
+import { credentialsPath, defaultConfigDir, resolveAccessToken } from "./credentials.mjs";
 import { installOmpProviderCompat, requiredFlagFromArgv } from "./omp-provider-compat.mjs";
 
 const CLI_FILE = realpathSync(fileURLToPath(new URL("../bin/zgap.mjs", import.meta.url)));
+
+// One dedicated provider name keeps zgap models from masquerading as the official
+// `openai-codex`/`anthropic` providers, so OMP account-bound flows (usage reports,
+// auto-redeem, ChatGPT-account claims, official web search) never see proxy credentials.
+export const PROVIDER_NAME = "zzgg";
 
 function shellQuote(value) {
   return `'${value.replaceAll("'", "'\\''")}'`;
@@ -26,18 +31,14 @@ export function authTokenCommand(credentialFile, platform = process.platform) {
 
 const OMP_INPUT_MODALITIES = new Set(["text", "image"]);
 const OMP_REASONING_EFFORTS = new Set(["minimal", "low", "medium", "high", "xhigh", "max"]);
+const CODEX_API = "openai-codex-responses";
+const ANTHROPIC_API = "anthropic-messages";
 
 function normalizeProviderModels(models) {
   if (!Array.isArray(models)) throw new Error("OMP model catalog must be an array.");
 
-  const catalogs = {
-    "openai-codex": [],
-    anthropic: [],
-  };
-  const ids = {
-    "openai-codex": new Set(),
-    anthropic: new Set(),
-  };
+  const definitions = [];
+  const ids = new Set();
 
   for (const model of models) {
     if (model?.supported_in_api === false || model?.visibility === "hide") continue;
@@ -60,10 +61,15 @@ function normalizeProviderModels(models) {
       throw new Error(`OMP model catalog contains invalid supported_reasoning_levels for ${model.slug}.`);
     }
 
-    let provider = "openai-codex";
+    // Anthropic-family slugs speak the Messages protocol; every other slug is served
+    // through the proxy's Codex Responses endpoint (including third-party namespaces
+    // such as `openrouter/...` or `moonshot/...`, which the proxy translates upstream).
+    // Codex websockets and the OpenAI priority/fast service tier key off `api` and the
+    // `gpt-*`/`codex-*` model-id patterns, so both survive the dedicated provider name.
+    let api = CODEX_API;
     let id = model.slug;
     if (model.slug.startsWith("anthropic/")) {
-      provider = "anthropic";
+      api = ANTHROPIC_API;
       id = model.slug.slice("anthropic/".length);
     } else if (model.slug.startsWith("openai/")) {
       id = model.slug.slice("openai/".length);
@@ -71,10 +77,10 @@ function normalizeProviderModels(models) {
     if (id.length === 0) {
       throw new Error(`OMP model catalog contains a model with an invalid slug: ${model.slug}`);
     }
-    if (ids[provider].has(id)) {
-      throw new Error(`OMP model catalog contains duplicate provider model: ${provider}/${id}.`);
+    if (ids.has(id)) {
+      throw new Error(`OMP model catalog contains duplicate model id: ${id}.`);
     }
-    ids[provider].add(id);
+    ids.add(id);
 
     const input = [];
     for (const modality of model.input_modalities) {
@@ -98,26 +104,25 @@ function normalizeProviderModels(models) {
     const definition = {
       id,
       name: model.display_name,
+      api,
       reasoning: efforts.length > 0,
       input,
       contextWindow: model.context_window,
     };
     if (efforts.length > 0) {
       definition.thinking = {
-        mode: provider === "anthropic" ? "anthropic-adaptive" : "effort",
+        mode: api === ANTHROPIC_API ? "anthropic-adaptive" : "effort",
         efforts,
       };
       if (efforts.includes(model.default_reasoning_level)) {
         definition.thinking.defaultLevel = model.default_reasoning_level;
       }
     }
-    catalogs[provider].push(definition);
+    definitions.push(definition);
   }
 
-  for (const [provider, modelsForProvider] of Object.entries(catalogs)) {
-    if (modelsForProvider.length === 0) throw new Error(`OMP model catalog for ${provider} is empty.`);
-  }
-  return catalogs;
+  if (definitions.length === 0) throw new Error("OMP model catalog is empty.");
+  return definitions;
 }
 
 export function registerProxyProviders(pi, {
@@ -130,40 +135,76 @@ export function registerProxyProviders(pi, {
   terminate,
 }) {
   const apiKey = authTokenCommand(credentialFile, platform);
-  const catalogs = normalizeProviderModels(models);
+  const codexBaseUrl = `${origin}/v1/responses?omp_endpoint=/codex/responses`;
+  const providerModels = normalizeProviderModels(models).map((definition) => definition.api === ANTHROPIC_API
+    // Parity with the previous dedicated Anthropic registration: the proxy accepts
+    // either header, and direct Anthropic clients send both bearer and X-Api-Key.
+    ? { ...definition, baseUrl: origin, headers: { "X-Api-Key": apiKey } }
+    : { ...definition, baseUrl: codexBaseUrl });
   installOmpProviderCompat(pi, {
     requiredFlagName,
     env,
     terminate,
     providers: [
-      ["openai-codex", {
-        baseUrl: `${origin}/v1/responses?omp_endpoint=/codex/responses`,
-        api: "openai-codex-responses",
-        apiKey,
-        authHeader: true,
-        models: catalogs["openai-codex"],
-      }],
-      ["anthropic", {
+      [PROVIDER_NAME, {
         baseUrl: origin,
-        api: "anthropic-messages",
         apiKey,
         authHeader: true,
-        headers: { "X-Api-Key": apiKey },
-        models: catalogs.anthropic,
+        models: providerModels,
       }],
     ],
   });
+}
+
+const SEARXNG_ENVIRONMENT = [
+  "SEARXNG_ENDPOINT",
+  "SEARXNG_TOKEN",
+  "SEARXNG_BASIC_USERNAME",
+  "SEARXNG_BASIC_PASSWORD",
+];
+// Access tokens stay valid for hours; a 10-minute cadence refreshes long before expiry.
+const SEARXNG_TOKEN_REFRESH_MS = 10 * 60 * 1000;
+
+// OMP's SearXNG web-search provider re-reads SEARXNG_* from the environment on every
+// request, so a process-local injection routes `web_search` through the proxy's
+// authenticated `/searxng` passthrough without touching user configuration. This
+// replaces the OpenAI-account-bound Codex web search lost by the provider rename.
+export async function installProxySearch({
+  origin,
+  credentialFile,
+  env = process.env,
+  scheduleRefresh = setInterval,
+  resolveToken = resolveAccessToken,
+} = {}) {
+  // Any user-supplied SearXNG configuration wins over injection. Basic-auth values are
+  // included because OMP prefers Basic over bearer and a partial mix would break auth.
+  if (SEARXNG_ENVIRONMENT.some((name) => typeof env[name] === "string" && env[name].length > 0)) return null;
+  // Token before endpoint: a resolve failure must not leave the endpoint set without auth.
+  env.SEARXNG_TOKEN = await resolveToken({ credentialFile });
+  env.SEARXNG_ENDPOINT = `${origin}/searxng`;
+  const timer = scheduleRefresh(async () => {
+    try {
+      env.SEARXNG_TOKEN = await resolveToken({ credentialFile });
+    } catch {
+      // Keep the previous token; once it expires the proxy rejects the next search
+      // with a visible 401 instead of failing silently here on a transient error.
+    }
+  }, SEARXNG_TOKEN_REFRESH_MS);
+  timer?.unref?.();
+  return timer;
 }
 
 export default async function zgapProxy(pi) {
   const requiredFlagName = requiredFlagFromArgv(process.argv);
   const configDir = defaultConfigDir();
   const { origin } = await readProxyConfig(configDir);
+  const credentialFile = credentialsPath(configDir);
   const { models } = await fetchModelCatalog(configDir, "omp", origin);
   registerProxyProviders(pi, {
     origin,
-    credentialFile: credentialsPath(configDir),
+    credentialFile,
     requiredFlagName,
     models,
   });
+  await installProxySearch({ origin, credentialFile });
 }

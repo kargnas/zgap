@@ -1002,8 +1002,8 @@ import("node:fs").then(({ writeFileSync }) => writeFileSync(${JSON.stringify(man
   await assert.rejects(access(managementMarker), { code: "ENOENT" });
 });
 
-test("OMP extension은 기존 OpenAI와 Anthropic provider를 proxy로 재등록한다", async () => {
-  const { authTokenCommand, registerProxyProviders } = await import("../src/omp-provider-extension.mjs");
+test("OMP extension은 zzgg 단일 provider로 catalog 모델을 등록한다", async () => {
+  const { authTokenCommand, registerProxyProviders, PROVIDER_NAME } = await import("../src/omp-provider-extension.mjs");
   const flags = [];
   const registrations = [];
   const handlers = new Map();
@@ -1091,29 +1091,26 @@ test("OMP extension은 기존 OpenAI와 Anthropic provider를 proxy로 재등록
     },
   });
 
+  assert.equal(PROVIDER_NAME, "zzgg");
   assert.deepEqual(flags.map(({ name, options }) => ({ name, type: options.type })), [
     { name: requiredFlagName, type: "boolean" },
   ]);
   assert.deepEqual([...handlers.keys()].sort(), ["before_agent_start", "before_provider_request", "session_start"]);
-  assert.deepEqual(registrations.map(({ name }) => name), [
-    "openai-codex",
-    "openai-codex",
-    "anthropic",
-    "anthropic",
-  ]);
-  const openaiModels = registrations[0].config;
-  const openai = registrations[1].config;
-  const anthropicModels = registrations[2].config;
-  const anthropic = registrations[3].config;
-  assert.equal(Object.hasOwn(openaiModels, "models"), true);
-  assert.equal(Object.hasOwn(openai, "models"), false);
-  assert.equal(Object.hasOwn(anthropicModels, "models"), true);
-  assert.equal(Object.hasOwn(anthropic, "models"), false);
-  assert.equal(openai.baseUrl, `${origin}/v1/responses?omp_endpoint=/codex/responses`);
-  assert.equal(anthropic.baseUrl, origin);
+  assert.deepEqual(registrations.map(({ name }) => name), ["zzgg", "zzgg"]);
+  const zzggModels = registrations[0].config;
+  const zzgg = registrations[1].config;
+  assert.equal(Object.hasOwn(zzggModels, "models"), true);
+  assert.equal(Object.hasOwn(zzgg, "models"), false);
+  // The transport re-registration must not carry a provider baseUrl: it would be
+  // applied as an override to every model and destroy the per-model endpoints.
+  assert.equal(Object.hasOwn(zzgg, "baseUrl"), false);
+  assert.equal(zzggModels.baseUrl, origin);
+  const codexBaseUrl = `${origin}/v1/responses?omp_endpoint=/codex/responses`;
   const observedModelMetadata = (model) => ({
     id: model.id,
     name: model.name,
+    api: model.api,
+    baseUrl: model.baseUrl,
     input: model.input,
     contextWindow: model.contextWindow,
     reasoning: model.reasoning,
@@ -1123,10 +1120,12 @@ test("OMP extension은 기존 OpenAI와 Anthropic provider를 proxy로 재등록
       defaultLevel: model.thinking?.defaultLevel,
     },
   });
-  assert.deepEqual(openaiModels.models?.map(observedModelMetadata), [
+  assert.deepEqual(zzggModels.models?.map(observedModelMetadata), [
     {
       id: "catalog-openai",
       name: "OpenAI Proxy Model",
+      api: "openai-codex-responses",
+      baseUrl: codexBaseUrl,
       input: ["text", "image"],
       contextWindow: 131072,
       reasoning: true,
@@ -1137,8 +1136,24 @@ test("OMP extension은 기존 OpenAI와 Anthropic provider를 proxy로 재등록
       },
     },
     {
+      id: "catalog-anthropic",
+      name: "Anthropic Proxy Model",
+      api: "anthropic-messages",
+      baseUrl: origin,
+      input: ["text"],
+      contextWindow: 200000,
+      reasoning: true,
+      thinking: {
+        mode: "anthropic-adaptive",
+        efforts: ["minimal", "low", "high", "max"],
+        defaultLevel: "high",
+      },
+    },
+    {
       id: "third-party/catalog-third",
       name: "Third-party Proxy Model",
+      api: "openai-codex-responses",
+      baseUrl: codexBaseUrl,
       input: ["image", "text"],
       contextWindow: 262144,
       reasoning: true,
@@ -1149,29 +1164,14 @@ test("OMP extension은 기존 OpenAI와 Anthropic provider를 proxy로 재등록
       },
     },
   ]);
-  assert.deepEqual(anthropicModels.models?.map(observedModelMetadata), [
-    {
-      id: "catalog-anthropic",
-      name: "Anthropic Proxy Model",
-      input: ["text"],
-      contextWindow: 200000,
-      reasoning: true,
-      thinking: {
-        mode: "anthropic-adaptive",
-        efforts: ["minimal", "low", "high", "max"],
-        defaultLevel: "high",
-      },
-    },
-  ]);
   const expectedKey = authTokenCommand(credentialFile, "linux");
   assert.match(expectedKey, /^!/);
   assert.match(expectedKey, /auth-token/);
-  assert.equal(openai.apiKey, expectedKey);
-  assert.equal(anthropic.apiKey, expectedKey);
-  assert.equal(anthropic.authHeader, true);
-  assert.equal(anthropic.headers["X-Api-Key"], expectedKey);
-  assert.equal(openai.headers["X-Zgap-Provider-Override"], requiredFlagName);
-  assert.equal(anthropic.headers["X-Zgap-Provider-Override"], requiredFlagName);
+  assert.equal(zzgg.apiKey, expectedKey);
+  assert.equal(zzgg.authHeader, true);
+  const anthropicModel = zzggModels.models.find((model) => model.api === "anthropic-messages");
+  assert.equal(anthropicModel.headers["X-Api-Key"], expectedKey);
+  assert.equal(zzgg.headers["X-Zgap-Provider-Override"], requiredFlagName);
   assert.deepEqual(env, {
     ANTHROPIC_CUSTOM_HEADERS: "x-tenant: keep",
     PRESERVED: "yes",
@@ -1192,22 +1192,22 @@ test("OMP extension은 기존 OpenAI와 Anthropic provider를 proxy로 재등록
 
   const reasserted = [];
   const currentModel = {
-    id: "gpt-5.6-luna",
-    provider: "openai-codex",
+    id: "catalog-openai",
+    provider: "zzgg",
     api: "openai-codex-responses",
     baseUrl: "https://api.openai.com/v1",
   };
   const refreshedModel = {
     ...currentModel,
-    baseUrl: openai.baseUrl,
+    baseUrl: codexBaseUrl,
   };
   const canonicalTargetModels = [
     refreshedModel,
     {
-      id: "claude-sonnet-5",
-      provider: "anthropic",
+      id: "catalog-anthropic",
+      provider: "zzgg",
       api: "anthropic-messages",
-      baseUrl: anthropic.baseUrl,
+      baseUrl: origin,
     },
   ];
   let officialUsageCalls = 0;
@@ -1220,26 +1220,18 @@ test("OMP extension은 기존 OpenAI와 Anthropic provider를 proxy로 재등록
   const sessionRegistrySafety = {
     authStorage: sessionAuthStorage,
     getProviderBaseUrl(provider) {
-      if (provider === "openai-codex") return openai.baseUrl;
-      if (provider === "anthropic") return anthropic.baseUrl;
+      // OMP returns the first model-defined baseUrl for the provider.
+      if (provider === "zzgg") return codexBaseUrl;
       return undefined;
     },
     getProviderHeaders(provider) {
-      if (provider === "openai-codex") {
+      if (provider === "zzgg") {
         return { "X-Zgap-Provider-Override": requiredFlagName };
-      }
-      if (provider === "anthropic") {
-        return {
-          "X-Zgap-Provider-Override": requiredFlagName,
-          "X-Api-Key": "proxy-token",
-        };
       }
       return undefined;
     },
     hasCommandBackedApiKey(provider) {
-      if (provider === "openai-codex") return openai.apiKey === expectedKey;
-      if (provider === "anthropic") return anthropic.apiKey === expectedKey;
-      return false;
+      return provider === "zzgg" && zzgg.apiKey === expectedKey;
     },
   };
   await handlers.get("session_start")(
@@ -1264,34 +1256,21 @@ test("OMP extension은 기존 OpenAI와 Anthropic provider를 proxy로 재등록
     },
   );
   assert.deepEqual(sessionOperations, [
-    "register:openai-codex",
-    "register:openai-codex",
-    "register:anthropic",
-    "register:anthropic",
+    "register:zzgg",
+    "register:zzgg",
     "setModel",
   ]);
   assert.deepEqual(selectedModels, [refreshedModel]);
   assert.deepEqual(terminations, []);
   assert.deepEqual(await sessionAuthStorage.fetchUsageReports(), []);
   assert.equal(officialUsageCalls, 0);
-  assert.deepEqual(reasserted.map(({ name }) => name), [
-    "openai-codex",
-    "openai-codex",
-    "anthropic",
-    "anthropic",
-  ]);
+  assert.deepEqual(reasserted.map(({ name }) => name), ["zzgg", "zzgg"]);
   assert.equal(Object.hasOwn(reasserted[0].config, "models"), true);
   assert.equal(Object.hasOwn(reasserted[1].config, "models"), false);
-  assert.equal(Object.hasOwn(reasserted[2].config, "models"), true);
-  assert.equal(Object.hasOwn(reasserted[3].config, "models"), false);
-  assert.equal(reasserted[1].config.baseUrl, openai.baseUrl);
+  assert.equal(Object.hasOwn(reasserted[1].config, "baseUrl"), false);
   assert.equal(reasserted[1].config.apiKey, expectedKey);
-  assert.equal(reasserted[3].config.baseUrl, anthropic.baseUrl);
-  assert.equal(reasserted[3].config.apiKey, expectedKey);
-  assert.equal(reasserted[3].config.authHeader, true);
-  assert.equal(reasserted[3].config.headers["X-Api-Key"], expectedKey);
+  assert.equal(reasserted[1].config.authHeader, true);
   assert.equal(reasserted[1].config.headers["X-Zgap-Provider-Override"], requiredFlagName);
-  assert.equal(reasserted[3].config.headers["X-Zgap-Provider-Override"], requiredFlagName);
   await assertDisabledUsage(reasserted);
 
   const secondHandlers = new Map();
@@ -1347,9 +1326,9 @@ test("OMP extension은 기존 OpenAI와 Anthropic provider를 proxy로 재등록
   };
   const unsafeFallbackModel = {
     id: "unsafe-claude",
-    provider: "anthropic",
+    provider: "zzgg",
     api: "anthropic-messages",
-    baseUrl: anthropic.baseUrl,
+    baseUrl: origin,
     transport: "pi-native",
   };
   await handlers.get("session_start")(
@@ -1389,43 +1368,29 @@ test("OMP extension은 기존 OpenAI와 Anthropic provider를 proxy로 재등록
   assert.equal(sessionOperations.filter((operation) => operation === "setModel").length, 1);
   terminations.length = 0;
 
-  const providerConfigs = new Map(registrations.map(({ name, config }) => [name, config]));
-  const requestHeaders = new Map([
-    ["openai-codex", {
-      Authorization: "Bearer proxy-token",
-    }],
-    ["anthropic", {
-      Authorization: "Bearer proxy-token",
-      "X-Api-Key": "proxy-token",
-    }],
-  ]);
-  const providerHeaders = new Map([
-    ["openai-codex", {
-      "X-Zgap-Provider-Override": requiredFlagName,
-    }],
-    ["anthropic", {
-      "X-Zgap-Provider-Override": requiredFlagName,
-      "X-Api-Key": "proxy-token",
-    }],
-  ]);
+  const codexRequestHeaders = { Authorization: "Bearer proxy-token" };
+  const anthropicRequestHeaders = {
+    Authorization: "Bearer proxy-token",
+    "X-Api-Key": "proxy-token",
+  };
   const guardedRegistry = {
     getProviderBaseUrl(provider) {
-      return providerConfigs.get(provider)?.baseUrl;
+      if (provider === "zzgg") return codexBaseUrl;
+      return undefined;
     },
     getProviderHeaders(provider) {
-      return providerHeaders.get(provider);
+      if (provider === "zzgg") {
+        return { "X-Zgap-Provider-Override": requiredFlagName };
+      }
+      return undefined;
     },
     hasCommandBackedApiKey(provider) {
-      return providerConfigs.get(provider)?.apiKey === expectedKey;
+      return provider === "zzgg" && zzgg.apiKey === expectedKey;
     },
     async getApiKey() {
       return "proxy-token";
     },
   };
-  const canonicalApis = new Map([
-    ["openai-codex", "openai-codex-responses"],
-    ["anthropic", "anthropic-messages"],
-  ]);
   const restoreAmbientProviderEnvironment = () => {
     env.CLAUDE_CODE_USE_FOUNDRY = "1";
     env.FOUNDRY_BASE_URL = "https://foundry.example";
@@ -1444,33 +1409,39 @@ test("OMP extension은 기존 OpenAI와 Anthropic provider를 proxy로 재등록
     assert.equal(env.PRESERVED, "yes");
   };
   const beforeProviderRequest = handlers.get("before_provider_request");
-  for (const provider of ["openai-codex", "anthropic"]) {
-    const config = providerConfigs.get(provider);
+  const validRequestModels = [
+    {
+      provider: "zzgg",
+      api: "openai-codex-responses",
+      baseUrl: codexBaseUrl,
+      headers: codexRequestHeaders,
+    },
+    {
+      provider: "zzgg",
+      api: "anthropic-messages",
+      baseUrl: origin,
+      headers: anthropicRequestHeaders,
+    },
+  ];
+  for (const model of validRequestModels) {
     restoreAmbientProviderEnvironment();
     await beforeProviderRequest(
       { type: "before_provider_request", payload: {} },
-      {
-        model: {
-          provider,
-          api: canonicalApis.get(provider),
-          baseUrl: config.baseUrl,
-          headers: requestHeaders.get(provider),
-        },
-        modelRegistry: guardedRegistry,
-      },
+      { model, modelRegistry: guardedRegistry },
     );
     assertAmbientProviderEnvironmentNeutralized();
   }
   assert.deepEqual(terminations, []);
 
+  // Anthropic api on the Codex baseUrl (and vice versa) is a routing violation.
   await beforeProviderRequest(
     { type: "before_provider_request", payload: {} },
     {
       model: {
-        provider: "anthropic",
-        api: canonicalApis.get("anthropic"),
+        provider: "zzgg",
+        api: "anthropic-messages",
         baseUrl: "https://api.anthropic.com",
-        headers: requestHeaders.get("anthropic"),
+        headers: anthropicRequestHeaders,
       },
       modelRegistry: guardedRegistry,
     },
@@ -1480,42 +1451,36 @@ test("OMP extension은 기존 OpenAI와 Anthropic provider를 proxy로 재등록
   assert.equal(terminations[0].includes(expectedKey), false);
   assert.equal(terminations[0].includes(credentialFile), false);
 
-  const markerlessRegistry = {
-    ...guardedRegistry,
-    getProviderHeaders(provider) {
-      const headers = providerHeaders.get(provider);
-      return Object.fromEntries(
-        Object.entries(headers ?? {}).filter(([name]) => name !== "X-Zgap-Provider-Override"),
-      );
-    },
-  };
-
   await beforeProviderRequest(
     { type: "before_provider_request", payload: {} },
     {
       model: {
-        provider: "openai-codex",
-        api: canonicalApis.get("openai-codex"),
-        baseUrl: openai.baseUrl,
-        headers: { Authorization: "Bearer proxy-token" },
+        provider: "zzgg",
+        api: "anthropic-messages",
+        baseUrl: codexBaseUrl,
+        headers: anthropicRequestHeaders,
       },
-      modelRegistry: markerlessRegistry,
+      modelRegistry: guardedRegistry,
     },
   );
   assert.equal(terminations.length, 2);
-  assert.equal(terminations[1].includes(expectedKey), false);
-  assert.equal(terminations[1].includes(credentialFile), false);
 
+  const markerlessRegistry = {
+    ...guardedRegistry,
+    getProviderHeaders() {
+      return {};
+    },
+  };
   await beforeProviderRequest(
     { type: "before_provider_request", payload: {} },
     {
       model: {
-        provider: "openai-codex",
-        api: canonicalApis.get("openai-codex"),
-        baseUrl: openai.baseUrl,
-        headers: { Authorization: "Bearer wrong-token" },
+        provider: "zzgg",
+        api: "openai-codex-responses",
+        baseUrl: codexBaseUrl,
+        headers: codexRequestHeaders,
       },
-      modelRegistry: guardedRegistry,
+      modelRegistry: markerlessRegistry,
     },
   );
   assert.equal(terminations.length, 3);
@@ -1524,9 +1489,23 @@ test("OMP extension은 기존 OpenAI와 Anthropic provider를 proxy로 재등록
     { type: "before_provider_request", payload: {} },
     {
       model: {
-        provider: "anthropic",
-        api: canonicalApis.get("anthropic"),
-        baseUrl: anthropic.baseUrl,
+        provider: "zzgg",
+        api: "openai-codex-responses",
+        baseUrl: codexBaseUrl,
+        headers: { Authorization: "Bearer wrong-token" },
+      },
+      modelRegistry: guardedRegistry,
+    },
+  );
+  assert.equal(terminations.length, 4);
+
+  await beforeProviderRequest(
+    { type: "before_provider_request", payload: {} },
+    {
+      model: {
+        provider: "zzgg",
+        api: "anthropic-messages",
+        baseUrl: origin,
         headers: {
           Authorization: "Bearer proxy-token",
           "X-Api-Key": "wrong-token",
@@ -1535,7 +1514,7 @@ test("OMP extension은 기존 OpenAI와 Anthropic provider를 proxy로 재등록
       modelRegistry: guardedRegistry,
     },
   );
-  assert.equal(terminations.length, 4);
+  assert.equal(terminations.length, 5);
   for (const message of terminations.slice(2)) {
     assert.equal(message.includes(expectedKey), false);
     assert.equal(message.includes(credentialFile), false);
@@ -1553,50 +1532,106 @@ test("OMP extension은 기존 OpenAI와 Anthropic provider를 proxy로 재등록
       },
     },
   );
-  assert.equal(terminations.length, 4);
+  assert.equal(terminations.length, 5);
 
   const beforeAgentStart = handlers.get("before_agent_start");
-  const safeOpenaiModel = {
-    provider: "openai-codex",
-    api: canonicalApis.get("openai-codex"),
-    baseUrl: openai.baseUrl,
-    headers: requestHeaders.get("openai-codex"),
-  };
+  const safeCodexModel = validRequestModels[0];
   restoreAmbientProviderEnvironment();
   await beforeAgentStart(
     { type: "before_agent_start", prompt: "hello", systemPrompt: [] },
-    { model: safeOpenaiModel, modelRegistry: guardedRegistry },
+    { model: safeCodexModel, modelRegistry: guardedRegistry },
   );
   assertAmbientProviderEnvironmentNeutralized();
-  assert.equal(terminations.length, 4);
-
-  await beforeAgentStart(
-    { type: "before_agent_start", prompt: "hello", systemPrompt: [] },
-    {
-      model: { ...safeOpenaiModel, transport: "pi-native" },
-      modelRegistry: guardedRegistry,
-    },
-  );
   assert.equal(terminations.length, 5);
 
   await beforeAgentStart(
     { type: "before_agent_start", prompt: "hello", systemPrompt: [] },
     {
-      model: {
-        provider: "anthropic",
-        api: "openai-responses",
-        baseUrl: anthropic.baseUrl,
-        headers: requestHeaders.get("anthropic"),
-      },
+      model: { ...safeCodexModel, transport: "pi-native" },
       modelRegistry: guardedRegistry,
     },
   );
   assert.equal(terminations.length, 6);
-  for (const message of terminations.slice(4)) {
+  for (const message of terminations.slice(5)) {
     assert.equal(message.includes(expectedKey), false);
     assert.equal(message.includes(credentialFile), false);
     assert.equal(message.includes("proxy-token"), false);
   }
+});
+
+test("OMP extension은 SearXNG proxy 환경을 사용자 설정이 없을 때만 주입한다", async () => {
+  const { installProxySearch } = await import("../src/omp-provider-extension.mjs");
+  const origin = "https://proxy.example.test";
+  const credentialFile = "/tmp/zgap credentials.json";
+
+  // 사용자 SearXNG 설정(부분 설정 포함)이 있으면 주입하지 않는다.
+  for (const preset of [
+    { SEARXNG_ENDPOINT: "https://search.user.example" },
+    { SEARXNG_TOKEN: "user-token" },
+    { SEARXNG_BASIC_USERNAME: "user" },
+    { SEARXNG_BASIC_PASSWORD: "pass" },
+  ]) {
+    const env = { ...preset };
+    const timer = await installProxySearch({
+      origin,
+      credentialFile,
+      env,
+      scheduleRefresh: () => {
+        throw new Error("must not schedule refresh when user config exists");
+      },
+      resolveToken: async () => {
+        throw new Error("must not resolve token when user config exists");
+      },
+    });
+    assert.equal(timer, null);
+    assert.deepEqual(env, preset);
+  }
+
+  // 설정이 없으면 endpoint와 bearer token을 주입하고 주기 갱신을 등록한다.
+  const env = { PRESERVED: "yes" };
+  const scheduled = [];
+  let tokenCalls = 0;
+  const timer = await installProxySearch({
+    origin,
+    credentialFile,
+    env,
+    scheduleRefresh(callback, intervalMs) {
+      scheduled.push({ callback, intervalMs });
+      return { unref() { scheduled.at(-1).unreffed = true; } };
+    },
+    async resolveToken(options) {
+      assert.equal(options.credentialFile, credentialFile);
+      tokenCalls += 1;
+      if (tokenCalls === 2) throw new Error("transient refresh failure");
+      return `token-${tokenCalls}`;
+    },
+  });
+  assert.notEqual(timer, null);
+  assert.equal(env.SEARXNG_ENDPOINT, `${origin}/searxng`);
+  assert.equal(env.SEARXNG_TOKEN, "token-1");
+  assert.equal(env.PRESERVED, "yes");
+  assert.equal(scheduled.length, 1);
+  assert.equal(scheduled[0].intervalMs, 10 * 60 * 1000);
+  assert.equal(scheduled[0].unreffed, true);
+
+  // 갱신 실패는 기존 토큰을 유지하고, 다음 성공 갱신이 토큰을 교체한다.
+  await scheduled[0].callback();
+  assert.equal(env.SEARXNG_TOKEN, "token-1");
+  await scheduled[0].callback();
+  assert.equal(env.SEARXNG_TOKEN, "token-3");
+
+  // token resolve 실패 시 endpoint를 설정하지 않은 채 실패한다.
+  const failEnv = {};
+  await assert.rejects(installProxySearch({
+    origin,
+    credentialFile,
+    env: failEnv,
+    scheduleRefresh: () => ({ unref() {} }),
+    resolveToken: async () => {
+      throw new Error("session expired");
+    },
+  }), /session expired/);
+  assert.equal(failEnv.SEARXNG_ENDPOINT, undefined);
 });
 
 test("omp Windows auth helper는 경로를 PowerShell encoded command로 전달한다", async () => {

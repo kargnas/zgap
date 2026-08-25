@@ -183,8 +183,12 @@ function registerProviders(registerProvider, registrations) {
     }
     const { models, ...providerConfig } = config;
     registerProvider(name, { ...providerConfig, models });
-    // OMP 18.0.3 returns after model overlays, so provider headers and routing need a separate registration.
-    registerProvider(name, providerConfig);
+    // OMP 18.0.3 returns after model overlays, so provider headers and routing need a
+    // separate registration. It must not carry a baseUrl: a provider-level baseUrl is
+    // applied as a transport override to every model and would clobber the per-model
+    // baseUrls (Codex query endpoint vs Anthropic origin) set by the model overlays.
+    const { baseUrl: _modelOwnedBaseUrl, ...transportConfig } = providerConfig;
+    registerProvider(name, transportConfig);
   }
 }
 
@@ -199,15 +203,50 @@ function headerValue(headers, name) {
   return found;
 }
 
+// One provider now mixes wire protocols, so the expected transport is keyed by each
+// model's `api` (Codex Responses vs Anthropic Messages), not by the provider name.
+function expectedProviderTargets(registrations) {
+  const targets = {};
+  for (const [id, config] of registrations) {
+    const apis = {};
+    for (const model of config.models ?? []) {
+      const api = model.api ?? config.api;
+      const baseUrl = model.baseUrl ?? config.baseUrl;
+      if (typeof api !== "string" || typeof baseUrl !== "string") {
+        throw new Error(PROVIDER_OVERRIDE_FAILURE);
+      }
+      if (apis[api] !== undefined && apis[api] !== baseUrl) {
+        throw new Error(PROVIDER_OVERRIDE_FAILURE);
+      }
+      apis[api] = baseUrl;
+    }
+    if (Object.keys(apis).length === 0) {
+      if (typeof config.api !== "string" || typeof config.baseUrl !== "string") {
+        throw new Error(PROVIDER_OVERRIDE_FAILURE);
+      }
+      apis[config.api] = config.baseUrl;
+    }
+    targets[id] = { apis, baseUrls: new Set(Object.values(apis)) };
+  }
+  return targets;
+}
+
+function validTargetModel(model, expected) {
+  const expectedBaseUrl = expected.apis[model.api];
+  return expectedBaseUrl !== undefined
+    && model.transport === undefined
+    && model.baseUrl === expectedBaseUrl;
+}
+
 async function validProviderRequest(ctx, expectedProviders, requiredFlagName) {
   const { model, modelRegistry } = ctx;
   const provider = model.provider;
   const expected = expectedProviders[provider];
   if (
-    model.api !== expected.api
-    || model.transport !== undefined
-    || model.baseUrl !== expected.baseUrl
-    || modelRegistry.getProviderBaseUrl(provider) !== expected.baseUrl
+    !validTargetModel(model, expected)
+    // getProviderBaseUrl returns the first model-defined baseUrl, so with mixed
+    // per-model endpoints any member of the expected set proves override ownership.
+    || !expected.baseUrls.has(modelRegistry.getProviderBaseUrl(provider))
     || !modelRegistry.hasCommandBackedApiKey(provider)
     || headerValue(modelRegistry.getProviderHeaders(provider), "x-zgap-provider-override") !== requiredFlagName
   ) return false;
@@ -215,7 +254,7 @@ async function validProviderRequest(ctx, expectedProviders, requiredFlagName) {
   const resolvedKey = await modelRegistry.getApiKey(model);
   if (typeof resolvedKey !== "string" || resolvedKey.trim().length === 0) return false;
   if (headerValue(model.headers, "authorization") !== `Bearer ${resolvedKey}`) return false;
-  if (provider === "anthropic" && headerValue(model.headers, "x-api-key") !== resolvedKey) return false;
+  if (model.api === "anthropic-messages" && headerValue(model.headers, "x-api-key") !== resolvedKey) return false;
   return true;
 }
 
@@ -225,16 +264,12 @@ function validTargetCatalog(modelRegistry, expectedProviders, requiredFlagName) 
     const expected = expectedProviders[model.provider];
     if (!expected) continue;
     seen.add(model.provider);
-    if (
-      model.api !== expected.api
-      || model.transport !== undefined
-      || model.baseUrl !== expected.baseUrl
-    ) return false;
+    if (!validTargetModel(model, expected)) return false;
   }
   for (const provider of seen) {
     const expected = expectedProviders[provider];
     if (
-      modelRegistry.getProviderBaseUrl(provider) !== expected.baseUrl
+      !expected.baseUrls.has(modelRegistry.getProviderBaseUrl(provider))
       || !modelRegistry.hasCommandBackedApiKey(provider)
       || headerValue(modelRegistry.getProviderHeaders(provider), "x-zgap-provider-override") !== requiredFlagName
     ) return false;
@@ -269,11 +304,15 @@ export function installOmpProviderCompat(pi, {
     return;
   }
 
-  const registrations = compatRegistrations(providers, requiredFlagName);
-  const expectedProviders = Object.fromEntries(registrations.map(([id, config]) => [id, {
-    api: config.api,
-    baseUrl: config.baseUrl,
-  }]));
+  let registrations;
+  let expectedProviders;
+  try {
+    registrations = compatRegistrations(providers, requiredFlagName);
+    expectedProviders = expectedProviderTargets(registrations);
+  } catch {
+    failClosed();
+    return;
+  }
   const targetProviders = new Set(Object.keys(expectedProviders));
 
   registerProviders((name, config) => pi.registerProvider(name, config), registrations);
