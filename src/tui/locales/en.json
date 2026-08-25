@@ -82,7 +82,7 @@
   "ompLeanSkillsUnknownError": "Unknown error",
   "ompLeanSkillsEmpty": "No OMP skills found",
   "ompLeanSkillsMissingSource": "missing",
-  "ompLeanSkillsHint": "↑↓ move · Space check · Enter save · Esc cancel · {{count}} selected",
+  "ompLeanSkillsHint": "↑↓ move · Space check · c clear · Enter save · Esc cancel · {{count}} selected",
   "ompLeanSkillsCancelHint": "Esc cancel",
   "ompLeanSkillsSavingHint": "Saving selection",
   "hint": "Arrows move · Tab SAFE/YOLO · L OMP LEAN · Enter select · ^C×2/Esc×2 quit",

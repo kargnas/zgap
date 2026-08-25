@@ -802,6 +802,7 @@ export async function runStartMenu({
         else if (event.name === "end") skillPickerIndex = availableSkills.length - 1;
         else if (event.name === "pageup") skillPickerIndex -= skillPickerVisibleRows();
         else if (event.name === "pagedown") skillPickerIndex += skillPickerVisibleRows();
+        else if (event.name === "c") pendingLeanSkills.clear();
         else if (event.name === "space" && availableSkills[skillPickerIndex]) {
           const name = availableSkills[skillPickerIndex].name;
           if (pendingLeanSkills.has(name)) pendingLeanSkills.delete(name);

@@ -68,6 +68,10 @@ test("OMP lean skills preserve exact unique names and legacy files", async (t) =
   await writeOmpLeanSkills(["alpha", "beta", "alpha"], configDir);
   assert.deepEqual(await readOmpLeanSkills(configDir), ["alpha", "beta"]);
   assert.equal(await readFile(preferencesFile, "utf8"), '{"dangerousMode":false,"ompLeanMode":true,"ompLeanSkills":["alpha","beta"]}\n');
+
+  await writeOmpLeanSkills([], configDir);
+  assert.deepEqual(await readOmpLeanSkills(configDir), []);
+  assert.equal(await readFile(preferencesFile, "utf8"), '{"dangerousMode":false,"ompLeanMode":true,"ompLeanSkills":[]}\n');
 });
 
 test("launch mode preferences reject malformed or unknown records", async (t) => {

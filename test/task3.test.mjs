@@ -728,7 +728,7 @@ test("L은 경고 확인 후에만 OMP LEAN을 켜고 끌 때는 즉시 저장�
   assert.equal(await resultPromise, 130);
 });
 
-test("OMP LEAN 카드의 Space 선택창은 스킬을 체크하고 저장한다", async (t) => {
+test("OMP LEAN 스킬 선택창은 선택을 저장하고 전체 해제한다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runStartMenu } = await import("../src/tui/menu.mjs");
   const setup = await createTestRenderer({ width: 100, height: 24, kittyKeyboard: true });
@@ -739,6 +739,10 @@ test("OMP LEAN 카드의 Space 선택창은 스킬을 체크하고 저장한다"
   const pressSpace = () => setup.renderer.keyInput.emit("keypress", {
     eventType: "press",
     name: "space",
+  });
+  const pressC = () => setup.renderer.keyInput.emit("keypress", {
+    eventType: "press",
+    name: "c",
   });
   const resultPromise = runStartMenu({
     rendererFactory: async () => setup,
@@ -793,16 +797,30 @@ test("OMP LEAN 카드의 Space 선택창은 스킬을 체크하고 저장한다"
 
   pressSpace();
   await flushMenu(setup);
-  await setup.mockInput.pressEscape();
+  const reopenedPickerFrame = setup.captureCharFrame();
+  assert.match(reopenedPickerFrame, /\[x\] git/);
+  assert.match(reopenedPickerFrame, /\[x\] playwright/);
+  pressC();
   await flushMenu(setup);
-  assert.deepEqual(writes, [["git", "playwright"]]);
+  const clearedPickerFrame = setup.captureCharFrame();
+  assert.match(clearedPickerFrame, /\[ \] git/);
+  assert.match(clearedPickerFrame, /\[ \] playwright/);
+  assert.match(clearedPickerFrame, /0 selected/);
+  assert.match(clearedPickerFrame, /c clear/);
+  await setup.mockInput.pressEnter();
+  await flushMenu(setup);
+  assert.deepEqual(writes, [["git", "playwright"], []]);
 
   saveFails = true;
   pressSpace();
   await flushMenu(setup);
+  const reopenedClearedPickerFrame = setup.captureCharFrame();
+  assert.match(reopenedClearedPickerFrame, /> \[ \] git/);
+  assert.match(reopenedClearedPickerFrame, /\[ \] playwright/);
+  pressSpace();
   await setup.mockInput.pressEnter();
   await flushMenu(setup);
-  assert.deepEqual(writes, [["git", "playwright"]]);
+  assert.deepEqual(writes, [["git", "playwright"], []]);
   assert.match(setup.captureCharFrame(), /Could not save OMP LEAN skills/);
   await setup.mockInput.pressEscape();
 
