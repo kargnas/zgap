@@ -811,6 +811,49 @@ test("OMP LEAN 카드의 Space 선택창은 스킬을 체크하고 저장한다"
   assert.equal(await resultPromise, 130);
 });
 
+test("OMP LEAN 스킬 선택창은 긴 목록에서도 제목과 안내 영역을 보존한다", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runStartMenu } = await import("../src/tui/menu.mjs");
+  const setup = await createTestRenderer({ width: 100, height: 24, kittyKeyboard: true });
+  t.after(() => setup.renderer.destroy());
+  const skills = Array.from({ length: 30 }, (_, index) => ({
+    name: `skill-${String(index).padStart(2, "0")}`,
+    source: "test:user",
+  }));
+  const resultPromise = runStartMenu({
+    rendererFactory: async () => setup,
+    credentialState: "signed-in",
+    ompLeanMode: true,
+    onOmpSkillsLoad: async () => skills,
+    actions: { codex: async () => 0, claude: async () => 0, omp: async () => 0, sessions: async () => 0 },
+  });
+
+  await flushMenu(setup);
+  await setup.mockInput.pressArrow("down");
+  setup.renderer.keyInput.emit("keypress", { eventType: "press", name: "space" });
+  await flushMenu(setup);
+
+  const assertRegions = (frame) => {
+    const lines = frame.split("\n");
+    const titleRow = lines.findIndex((line) => line.includes("OMP LEAN SKILLS"));
+    const firstSkillRow = lines.findIndex((line) => line.includes("> [ ] skill-00"));
+    const hintRow = lines.findIndex((line) => line.includes("Space check"));
+    assert.ok(titleRow >= 0, frame);
+    assert.ok(firstSkillRow > titleRow, frame);
+    assert.ok(hintRow > firstSkillRow, frame);
+  };
+
+  assertRegions(setup.captureCharFrame());
+  setup.resize(40, 10);
+  await flushMenu(setup);
+  assertRegions(setup.captureCharFrame());
+
+  await setup.mockInput.pressEscape();
+  await setup.mockInput.pressCtrlC();
+  await setup.mockInput.pressCtrlC();
+  assert.equal(await resultPromise, 130);
+});
+
 test("dangerous mode 저장 실패는 SAFE 상태와 오류 안내를 유지한다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runStartMenu } = await import("../src/tui/menu.mjs");

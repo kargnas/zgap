@@ -419,6 +419,8 @@ export async function runStartMenu({
       content: t("ompLeanSkillsTitle"),
       fg: "#67E8F9",
       attributes: TextAttributes.BOLD,
+      height: 1,
+      flexShrink: 0,
       selectable: true,
     });
     const skillPickerList = new TextRenderable(renderer, {
@@ -430,7 +432,9 @@ export async function runStartMenu({
     const skillPickerHint = new TextRenderable(renderer, {
       content: t("ompLeanSkillsHint"),
       fg: "#94A3B8",
+      height: 1,
       maxHeight: 2,
+      flexShrink: 0,
       selectable: true,
     });
     skillPickerDialog.add(skillPickerTitle);
@@ -498,6 +502,7 @@ export async function runStartMenu({
       skillPickerDialog.height = compact ? "100%" : Math.min(20, Math.max(10, height - 4));
       skillPickerDialog.paddingX = compact ? 1 : 2;
       skillPickerDialog.paddingY = compact ? 0 : 1;
+      skillPickerHint.height = compact ? 2 : 1;
       skillPickerHint.maxHeight = compact ? 2 : 1;
       // Short terminals have no spare row after status, mode, actions, and the quit hint.
       infoArea.visible = updateStatus.content !== "" && !compact;
@@ -508,7 +513,11 @@ export async function runStartMenu({
       if (skillPickerVisible) renderSkillPicker();
     };
     applyResponsiveLayout(renderer.width, renderer.height);
-    const skillPickerVisibleRows = () => Math.max(1, renderer.height - (renderer.height <= 12 ? 4 : 8));
+    const skillPickerVisibleRows = () => {
+      const compact = renderer.width <= COMPACT_WIDTH || renderer.height <= 12 || (actionGrid && (renderer.width <= 80 || renderer.height <= 18));
+      const dialogHeight = compact ? renderer.height : Math.min(20, Math.max(10, renderer.height - 4));
+      return Math.max(1, dialogHeight - (compact ? 5 : 6));
+    };
     const stopSkillSpinner = () => {
       if (skillSpinnerTimer !== null) clearInterval(skillSpinnerTimer);
       skillSpinnerTimer = null;
