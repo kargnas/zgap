@@ -21,7 +21,7 @@ The first proxy-backed command creates `config.yml` when it is missing. The file
 
 Codex, Claude Code, and OMP are currently supported. Existing local configuration and session history remain in their normal locations. `zgap omp` loads its provider override only in the launched OMP process: the server model catalog and context-window metadata populate the `openai-codex` and `anthropic` providers, their requests use the configured proxy, direct official usage checks for those providers are disabled, and a regular `omp` process remains unchanged. The standalone `zgap omp usage` command is rejected.
 
-Existing OMP extensions continue to load in the zgap child. A required extension handshake aborts startup before a session can run if the proxy override cannot load.
+Existing OMP extensions continue to load in the zgap child. A required extension handshake aborts startup before a session can run if the proxy override cannot load. The child also skips OMP's first-run setup wizard via `OMP_SKIP_SETUP=1` because the proxy already supplies its providers and models; exporting `OMP_SKIP_SETUP` yourself takes precedence.
 
 `zgap omp` supports launch and ACP sessions. Run OMP management commands such as `models`, `config`, and `plugin` with `omp` directly.
 
