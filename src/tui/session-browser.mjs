@@ -404,6 +404,8 @@ export async function runSessionBrowser({
     let tabProvider = "all";
     let selectedIndex = 0;
     let selectedKey = null;
+    // Partial scans can insert newer sessions above the first partial row, so untouched initial focus stays position-based.
+    let preserveSelectionIdentity = false;
     let viewportStart = 0;
     let showHelp = false;
     let showPreview = false;
@@ -488,12 +490,12 @@ export async function runSessionBrowser({
       : null);
     const filteredSessions = () => sessionFilter(sessions, { scope, roots, agent, provider: tabProvider });
     const keepSelection = (values) => {
-      if (selectedKey) {
+      if (preserveSelectionIdentity && selectedKey) {
         const restored = values.findIndex((session) => sessionKey(session) === selectedKey);
         if (restored >= 0) selectedIndex = restored;
       }
       selectedIndex = Math.max(0, Math.min(selectedIndex, Math.max(0, values.length - 1)));
-      selectedKey = values[selectedIndex] ? sessionKey(values[selectedIndex]) : null;
+      selectedKey = preserveSelectionIdentity && values[selectedIndex] ? sessionKey(values[selectedIndex]) : null;
       const count = visibleRows();
       if (selectedIndex < viewportStart) viewportStart = selectedIndex;
       if (selectedIndex >= viewportStart + count) viewportStart = selectedIndex - count + 1;
@@ -710,6 +712,7 @@ export async function runSessionBrowser({
     };
     const select = (index) => {
       const values = filteredSessions();
+      preserveSelectionIdentity = true;
       selectedIndex = Math.max(0, Math.min(Math.max(0, values.length - 1), index));
       selectedKey = values[selectedIndex] ? sessionKey(values[selectedIndex]) : null;
       render();
@@ -858,7 +861,12 @@ export async function runSessionBrowser({
               convertLoading = false;
               convertError = null;
               // Sessions mutated above, so recompute the key now to land the cursor back on the same row.
-              selectedKey = convertReturnSession ? sessionKey(convertReturnSession) : null;
+              if (convertReturnSession) {
+                preserveSelectionIdentity = true;
+                selectedKey = sessionKey(convertReturnSession);
+              } else {
+                selectedKey = null;
+              }
               convertReturnSession = null;
               showNotice(t("sessionsProviderConverted", { count: toConvert.length, provider: displayText(target) }));
             })

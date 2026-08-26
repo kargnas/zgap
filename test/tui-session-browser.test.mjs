@@ -154,6 +154,85 @@ test("session browser는 로딩 중 부분 결과를 즉시 렌더링하고 이�
   assert.equal(await result, 0);
   assert.equal(selectedTitle, "Add session switcher");
 });
+test("명시적 이동 전에는 커서 위치를 유지하고 이동 후에는 선택 세션을 보존한다", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
+  const setup = await createTestRenderer({ width: 100, height: 16 });
+  t.after(() => setup.renderer.destroy());
+  const loading = deferred();
+  let onUpdate;
+  const first = { ...sessions[0], id: "first", cwd: "/repo", title: "First" };
+  const second = { ...sessions[0], id: "second", cwd: "/repo", title: "Second" };
+  const newer = { ...sessions[0], id: "newer", cwd: "/repo", title: "Newer" };
+  const newest = { ...sessions[0], id: "newest", cwd: "/repo", title: "Newest" };
+
+  const result = runSessionBrowser({
+    rendererFactory: async () => setup,
+    discoverScope: async () => ({ roots: ["/repo"] }),
+    sessionLoader: async ({ onUpdate: update }) => {
+      onUpdate = update;
+      onUpdate([first, second]);
+      return loading.promise;
+    },
+  });
+
+  try {
+    await flush(setup);
+    const initialFrame = setup.captureCharFrame();
+    assert.match(initialFrame, /›\s+\[ \] CODEX · zgap {2}First/);
+
+    onUpdate([newer, first, second]);
+    const initialInsertionFrame = await waitForFrame(setup, (frame) => frame.includes("Newer"));
+    assert.match(initialInsertionFrame, /›\s+\[ \] CODEX · zgap {2}Newer/);
+    assert.doesNotMatch(initialInsertionFrame, /›\s+\[ \] CODEX · zgap {2}First/);
+
+    setup.mockInput.pressArrow("down");
+    const navigatedFrame = await waitForFrame(setup, (frame) => /›\s+\[ \] CODEX · zgap {2}First/.test(frame));
+    assert.match(navigatedFrame, /›\s+\[ \] CODEX · zgap {2}First/);
+
+    onUpdate([newest, newer, first, second]);
+    const refreshedFrame = await waitForFrame(setup, (frame) => frame.includes("[2]zgap 4") && /›\s+\[ \] CODEX · zgap {2}First/.test(frame));
+    assert.match(refreshedFrame, /›\s+\[ \] CODEX · zgap {2}First/);
+  } finally {
+    loading.resolve([newest, newer, first, second]);
+    await flush(setup);
+    await setup.mockInput.pressBackspace();
+    await result;
+  }
+});
+test("최초 로딩 완료 시에도 커서는 같은 목록 위치에 남는다", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
+  const setup = await createTestRenderer({ width: 100, height: 16 });
+  t.after(() => setup.renderer.destroy());
+  const loading = deferred();
+  const first = { ...sessions[0], id: "complete-first", cwd: "/repo", title: "First" };
+  const second = { ...sessions[0], id: "complete-second", cwd: "/repo", title: "Second" };
+  const newer = { ...sessions[0], id: "complete-newer", cwd: "/repo", title: "Newer" };
+
+  const result = runSessionBrowser({
+    rendererFactory: async () => setup,
+    discoverScope: async () => ({ roots: ["/repo"] }),
+    sessionLoader: async ({ onUpdate }) => {
+      onUpdate([first, second]);
+      return loading.promise;
+    },
+  });
+
+  try {
+    await flush(setup);
+    const initialFrame = setup.captureCharFrame();
+    assert.match(initialFrame, /›\s+\[ \] CODEX · zgap {2}First/);
+
+    loading.resolve([newer, first, second]);
+    const readyFrame = await waitForFrame(setup, (frame) => frame.includes("[2]zgap 3") && !frame.includes("Loading sessions"));
+    assert.match(readyFrame, /›\s+\[ \] CODEX · zgap {2}Newer/);
+    assert.doesNotMatch(readyFrame, /›\s+\[ \] CODEX · zgap {2}First/);
+  } finally {
+    await setup.mockInput.pressBackspace();
+    await result;
+  }
+});
 
 test("로딩 중 체크하면 선택 안내가 스피너보다 우선한다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
