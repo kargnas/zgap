@@ -486,19 +486,39 @@ test("session resume은 선택한 agent의 정확한 id와 저장된 디렉터�
   const root = await tempDir(t);
   const codexCwd = path.join(root, "codex");
   const claudeCwd = path.join(root, "claude");
-  await mkdir(codexCwd, { recursive: true });
-  await mkdir(claudeCwd, { recursive: true });
+  const ompCwd = path.join(root, "omp");
+  await Promise.all([codexCwd, claudeCwd, ompCwd].map((directory) => mkdir(directory, { recursive: true })));
   const calls = [];
   const runners = {
     codexRunner: async (args, options) => { calls.push({ agent: "codex", args, options }); return 11; },
     claudeRunner: async (args, options) => { calls.push({ agent: "claude", args, options }); return 12; },
+    ompRunner: async (args, options) => { calls.push({ agent: "omp", args, options }); return 13; },
   };
 
   assert.equal(await cli.resumeSession({ agent: "codex", id: "codex-id", cwd: codexCwd }, "/config", { ...runners, dangerousMode: true }), 11);
   assert.equal(await cli.resumeSession({ agent: "claude", id: "claude-id", cwd: claudeCwd }, "/config", { ...runners, dangerousMode: true }), 12);
+  assert.equal(await cli.resumeSession({ agent: "omp", id: "exact-omp-id", cwd: ompCwd }, "/config", {
+    ...runners,
+    origin: "https://proxy.example.test",
+    dangerousMode: true,
+    leanMode: true,
+    ompLeanSkills: ["git", "testing"],
+  }), 13);
   assert.deepEqual(calls, [
     { agent: "codex", args: ["resume", "codex-id"], options: { configDir: "/config", cwd: codexCwd, dangerousMode: true } },
     { agent: "claude", args: ["--resume", "claude-id"], options: { configDir: "/config", cwd: claudeCwd, dangerousMode: true } },
+    {
+      agent: "omp",
+      args: ["--resume=exact-omp-id", `--cwd=${ompCwd}`],
+      options: {
+        configDir: "/config",
+        cwd: ompCwd,
+        origin: "https://proxy.example.test",
+        dangerousMode: true,
+        leanMode: true,
+        ompLeanSkills: ["git", "testing"],
+      },
+    },
   ]);
 });
 

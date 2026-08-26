@@ -30,8 +30,11 @@ const BACK_TO_START_MENU = Symbol("back-to-start-menu");
 export async function resumeSession(session, configDir, {
   origin,
   dangerousMode = false,
+  leanMode = false,
+  ompLeanSkills = [],
   codexRunner = runCodex,
   claudeRunner = runClaude,
+  ompRunner = runOmp,
 } = {}) {
   // spawn() reports a deleted cwd as ENOENT, which the runners would misdiagnose as a
   // missing agent CLI; old sessions from removed checkouts need their own message.
@@ -49,6 +52,12 @@ export async function resumeSession(session, configDir, {
     if (origin) options.origin = origin;
     if (dangerousMode) options.dangerousMode = true;
     return claudeRunner(["--resume", session.id], options);
+  }
+  if (session?.agent === "omp") {
+    const options = { configDir, cwd: session.cwd, leanMode, ompLeanSkills };
+    if (origin) options.origin = origin;
+    if (dangerousMode) options.dangerousMode = true;
+    return ompRunner([`--resume=${session.id}`, `--cwd=${session.cwd}`], options);
   }
   throw new Error(`Unsupported session agent: ${session?.agent ?? "unknown"}`);
 }
@@ -131,11 +140,21 @@ export async function main({
     return sessionBrowser({
       cwd,
       onSelect: async (session) => {
-        const [{ origin }, dangerousMode] = await Promise.all([
+        const [{ origin }, dangerousMode, leanMode, ompLeanSkills] = await Promise.all([
           configReader(configDir),
           dangerousModeReader(configDir),
+          ompLeanModeReader(configDir),
+          ompLeanSkillsReader(configDir),
         ]);
-        return resumeSession(session, configDir, { origin, dangerousMode, codexRunner, claudeRunner });
+        return resumeSession(session, configDir, {
+          origin,
+          dangerousMode,
+          leanMode,
+          ompLeanSkills,
+          codexRunner,
+          claudeRunner,
+          ompRunner,
+        });
       },
     });
   }
@@ -205,8 +224,11 @@ export async function main({
                 return resumeSession(session, configDir, {
                   origin: proxyConfig.origin,
                   dangerousMode,
+                  leanMode: ompLeanMode,
+                  ompLeanSkills,
                   codexRunner,
                   claudeRunner,
+                  ompRunner,
                 });
               },
             });
