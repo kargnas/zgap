@@ -49,6 +49,29 @@ function emptyPreview() {
   return { turns: [] };
 }
 
+function firstAssistantLine(value) {
+  const text = String(value ?? "");
+  let start = 0;
+  while (start <= text.length) {
+    let end = start;
+    while (end < text.length && text[end] !== "\r" && text[end] !== "\n") end += 1;
+    const cleaned = stripTerminalControls(text.slice(start, end)).replace(/\s+/g, " ").trim();
+    if (cleaned) return cleaned;
+    if (end >= text.length) break;
+    start = text[end] === "\r" && text[end + 1] === "\n" ? end + 2 : end + 1;
+  }
+  return null;
+}
+
+function latestAssistantLineFromPreview(value) {
+  const turns = Array.isArray(value?.turns) ? value.turns : [];
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    const line = firstAssistantLine(turns[index]?.assistant);
+    if (line) return line;
+  }
+  return null;
+}
+
 function normalizePreview(value) {
   const normalizePair = (pair) => {
     if (!pair || typeof pair !== "object") return null;
@@ -81,9 +104,10 @@ function isInjectedUserContext(value) {
   return text.startsWith("# AGENTS.md instructions for ") || INJECTED_TAG_RE.test(text);
 }
 
-async function readConversationPreview(pathname) {
+async function readConversationPreview(pathname, { includeLatestAssistantLine = false } = {}) {
   const turns = [];
   let pending = null;
+  let latestAssistantLine = null;
   const lines = createInterface({ input: createReadStream(pathname, { encoding: "utf8" }), crlfDelay: Infinity });
   for await (const line of lines) {
     let event;
@@ -104,10 +128,12 @@ async function readConversationPreview(pathname) {
       pending = { user: text, assistant: null };
     } else if (pending) {
       pending.assistant = text;
+      latestAssistantLine = firstAssistantLine(message.text) ?? latestAssistantLine;
     }
   }
   if (pending && (pending.assistant || turns.length === 0)) turns.push(pending);
-  return normalizePreview({ turns });
+  const preview = normalizePreview({ turns });
+  return includeLatestAssistantLine ? { preview, latestAssistantLine } : preview;
 }
 
 function normalizeRecord(record, agent) {
@@ -385,14 +411,15 @@ export async function loadSessionDetails(session) {
     return {
       turnCount: preview.turns.length,
       fileSize: 0,
+      latestAssistantLine: latestAssistantLineFromPreview(session?.preview),
       preview,
     };
   }
-  const [preview, fileStat] = await Promise.all([
-    readConversationPreview(pathname),
+  const [{ preview, latestAssistantLine }, fileStat] = await Promise.all([
+    readConversationPreview(pathname, { includeLatestAssistantLine: true }),
     stat(pathname),
   ]);
-  return { turnCount: preview.turns.length, fileSize: fileStat.size, preview };
+  return { turnCount: preview.turns.length, fileSize: fileStat.size, latestAssistantLine, preview };
 }
 
 function hasConversationPreview(preview) {

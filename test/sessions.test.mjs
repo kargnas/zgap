@@ -624,6 +624,7 @@ test("session details reports completed turns and exact JSONL byte size", async 
   }), {
     turnCount: 2,
     fileSize: Buffer.byteLength(contents),
+    latestAssistantLine: "last answer",
     preview: {
       turns: [
         { user: "first question", assistant: "first answer" },
@@ -631,4 +632,43 @@ test("session details reports completed turns and exact JSONL byte size", async 
       ],
     },
   });
+});
+test("session details derives the cleaned first line of the latest valid assistant", async (t) => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "zgap-session-assistant-line-"));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const rolloutPath = path.join(home, "conversation.jsonl");
+  const contents = [
+    { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "first question" }] } },
+    { type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "prior answer" }] } },
+    { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "latest question" }] } },
+    { type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "\n\u001b[2K\u001b[31mFirst   visible   line\u001b[0m\nsecond line" }] } },
+    { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "unanswered tail" }] } },
+  ].map((event) => JSON.stringify(event)).join("\n");
+  await writeFile(rolloutPath, contents);
+
+  assert.deepEqual(await sessions.loadSessionDetails({
+    preview: { turns: [] },
+    previewLocator: { type: "jsonl", path: rolloutPath },
+  }), {
+    turnCount: 2,
+    fileSize: Buffer.byteLength(contents),
+    latestAssistantLine: "First visible line",
+    preview: {
+      turns: [
+        { user: "first question", assistant: "prior answer" },
+        { user: "latest question", assistant: "First visible line second line" },
+      ],
+    },
+  });
+});
+
+test("session details derives an assistant line from an in-memory preview or null", async () => {
+  assert.equal((await sessions.loadSessionDetails({
+    preview: { turns: [
+      { user: "latest user", assistant: "\n\u001b[32mIn-memory   answer\u001b[0m\nsecond" },
+    ] },
+  })).latestAssistantLine, "In-memory answer");
+  assert.equal((await sessions.loadSessionDetails({
+    preview: { turns: [{ user: "unanswered", assistant: null }] },
+  })).latestAssistantLine, null);
 });
