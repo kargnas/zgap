@@ -1130,6 +1130,9 @@ test("OMP extension은 zzgg 단일 provider로 catalog 모델을 등록한다", 
     FOUNDRY_BASE_URL: "https://foundry.example",
     ANTHROPIC_CUSTOM_HEADERS: "x-tenant: keep, Authorization: Bearer wrong\nX-Api-Key: wrong",
     PRESERVED: "yes",
+    // runOmp이 주입하는 스크립트 런타임 경로. OMP 바이너리 안에서는 process.execPath로
+    // 대신할 수 없으므로 provider 등록이 이 값을 요구한다.
+    ZGAP_RUNTIME: "/usr/bin/zgap-runtime",
   };
   await registerProxyProviders({
     registerFlag(name, options) {
@@ -1231,7 +1234,8 @@ test("OMP extension은 zzgg 단일 provider로 catalog 모델을 등록한다", 
       },
     },
   ]);
-  const expectedKey = authTokenCommand(credentialFile, "linux");
+  const expectedKey = authTokenCommand(credentialFile, "linux", env);
+  assert.ok(expectedKey.includes("/usr/bin/zgap-runtime"));
   assert.match(expectedKey, /^!/);
   assert.match(expectedKey, /auth-token/);
   assert.equal(zzgg.apiKey, expectedKey);
@@ -1242,6 +1246,7 @@ test("OMP extension은 zzgg 단일 provider로 catalog 모델을 등록한다", 
   assert.deepEqual(env, {
     ANTHROPIC_CUSTOM_HEADERS: "x-tenant: keep",
     PRESERVED: "yes",
+    ZGAP_RUNTIME: "/usr/bin/zgap-runtime",
   });
 
   const assertDisabledUsage = async (actualRegistrations) => {
@@ -1355,7 +1360,7 @@ test("OMP extension은 zzgg 단일 provider로 catalog 모델을 등록한다", 
     origin,
     credentialFile,
     platform: "linux",
-    env: {},
+    env: { ZGAP_RUNTIME: "/usr/bin/zgap-runtime" },
     models: catalogModels,
     requiredFlagName,
     terminate(message) {
@@ -1704,7 +1709,7 @@ test("OMP extension은 SearXNG proxy 환경을 사용자 설정이 없을 때만
 test("omp Windows auth helper는 경로를 PowerShell encoded command로 전달한다", async () => {
   const { authTokenCommand } = await import("../src/omp-provider-extension.mjs");
   const credentialFile = "C:\\Users\\O'Neil\\%TOKEN%\\credentials.json";
-  const command = authTokenCommand(credentialFile, "win32");
+  const command = authTokenCommand(credentialFile, "win32", { ZGAP_RUNTIME: "C:\\Program Files\\bun\\bun.exe" });
   const encoded = command.split(" ").at(-1);
   const script = Buffer.from(encoded, "base64").toString("utf16le");
 

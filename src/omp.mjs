@@ -101,12 +101,13 @@ export async function runOmp(args, {
   };
 
   try {
-    // The provider extension already supplies credentials and the model catalog, so OMP's
-    // first-run setup wizard would only re-ask what zgap owns. Skip it for this child only
-    // and leave a user-provided OMP_SKIP_SETUP untouched.
-    const env = process.env.OMP_SKIP_SETUP === undefined
-      ? { ...process.env, OMP_SKIP_SETUP: "1" }
-      : process.env;
+    // ZGAP_RUNTIME: the provider extension runs inside OMP, whose `process.execPath` is
+    // the OMP single-file binary, so it cannot derive a script runtime for the key command.
+    // OMP_SKIP_SETUP: the extension already supplies credentials and the model catalog, so
+    // OMP's first-run wizard would only re-ask what zgap owns. Skip it for this child only
+    // and leave a user-provided value untouched.
+    const env = { ...process.env, ZGAP_RUNTIME: process.execPath };
+    if (env.OMP_SKIP_SETUP === undefined) env.OMP_SKIP_SETUP = "1";
     const ompPath = await resolveOmpExecutable({ env, cwd });
     abortIfSignaled();
     await resolveAccessToken({ credentialFile: credentialsPath(configDir) });

@@ -17,9 +17,21 @@ function shellQuote(value) {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
+// OMP ships as a Bun single-file executable, so inside the extension `process.execPath`
+// is the OMP binary itself and running it would relaunch OMP instead of the zgap CLI.
+// runOmp passes its own runtime path in ZGAP_RUNTIME so the key command always names a
+// real script runtime.
+export function runtimeExecutable(env = process.env) {
+  const runtime = env.ZGAP_RUNTIME;
+  if (typeof runtime !== "string" || runtime.length === 0) {
+    throw new Error("zgap runtime path is missing; run OMP through `zgap omp`.");
+  }
+  return runtime;
+}
+
 // OMP re-runs command-backed keys on auth retries, so credential rotation cannot leave a stale token in memory.
-export function authTokenCommand(credentialFile, platform = process.platform) {
-  const args = [process.execPath, CLI_FILE, "auth-token", credentialFile];
+export function authTokenCommand(credentialFile, platform = process.platform, env = process.env) {
+  const args = [runtimeExecutable(env), CLI_FILE, "auth-token", credentialFile];
   if (platform === "win32") {
     // EncodedCommand prevents cmd.exe from expanding metacharacters in credential paths.
     const quote = (value) => `'${value.replaceAll("'", "''")}'`;
@@ -134,7 +146,7 @@ export function registerProxyProviders(pi, {
   env = process.env,
   terminate,
 }) {
-  const apiKey = authTokenCommand(credentialFile, platform);
+  const apiKey = authTokenCommand(credentialFile, platform, env);
   const codexBaseUrl = `${origin}/v1/responses?omp_endpoint=/codex/responses`;
   const providerModels = normalizeProviderModels(models).map((definition) => definition.api === ANTHROPIC_API
     // Parity with the previous dedicated Anthropic registration: the proxy accepts
