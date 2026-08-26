@@ -65,7 +65,7 @@ function conversationMessage(event) {
   if (event?.type === "response_item" && payload?.type === "message") {
     return { role: payload.role, text: contentText(payload.content) };
   }
-  if ((event?.type === "user" || event?.type === "assistant") && event.message?.role) {
+  if (["user", "assistant", "message"].includes(event?.type) && event.message?.role) {
     return { role: event.message.role, text: contentText(event.message.content) };
   }
   return null;
@@ -213,6 +213,12 @@ async function readBoundedJsonl(pathname, agent) {
       if (typeof event?.cwd === "string") result.cwd ||= event.cwd;
       if (typeof event?.projectPath === "string") result.cwd ||= event.projectPath;
       if (typeof event?.sessionId === "string") result.id = event.sessionId;
+      if (event?.type === "session") {
+        if (typeof event.id === "string") result.id = event.id;
+        if (typeof event.title === "string") result.aiTitle ||= event.title;
+      }
+      if (event?.type === "title" && typeof event.title === "string") result.aiTitle = event.title;
+      if (event?.type === "title_change" && typeof event.title === "string") result.aiTitle = event.title;
       if (event?.type === "ai-title") result.aiTitle = event.aiTitle || result.aiTitle;
       if (event?.type === "custom-title") result.aiTitle = event.customTitle || event.title || result.aiTitle;
       if (event?.type === "response_item" && payload?.type === "message" && payload.role === "user") {
@@ -223,8 +229,12 @@ async function readBoundedJsonl(pathname, agent) {
         const prompt = contentText(event.message.content);
         if (!isInjectedUserContext(prompt)) result.firstPrompt ||= prompt;
       }
+      if (event?.type === "message" && event.message?.role === "user") {
+        const prompt = contentText(event.message.content);
+        if (!isInjectedUserContext(prompt)) result.firstPrompt ||= prompt;
+      }
       if (event?.isSidechain) result.isSidechain = true;
-      result.updatedAt = Math.max(result.updatedAt ?? 0, asNumber(event.timestamp ?? payload.timestamp ?? event.modified));
+      result.updatedAt = Math.max(result.updatedAt ?? 0, asNumber(event.timestamp), asNumber(event.updatedAt), asNumber(payload.timestamp), asNumber(event.modified));
     }
     if (result.isSidechain || pathname.includes(`${path.sep}subagents${path.sep}`)) return null;
     const normalized = normalizeRecord(result, agent);
@@ -342,6 +352,27 @@ async function readCodexFallback(codexHome, onRecords) {
   return output;
 }
 
+async function readOmpDefault(agentDir, onRecords) {
+  const sessionsRoot = path.join(agentDir, "sessions");
+  let projects;
+  try { projects = await readdir(sessionsRoot, { withFileTypes: true }); } catch { return []; }
+  // Direct project JSONL files are resumable sessions; nested sibling directories contain tool/subagent logs.
+  const output = [];
+  for (const project of projects) {
+    if (!project.isDirectory()) continue;
+    let entries;
+    try { entries = await readdir(path.join(sessionsRoot, project.name), { withFileTypes: true }); } catch { continue; }
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(".jsonl")) continue;
+      const record = await readBoundedJsonl(path.join(sessionsRoot, project.name, entry.name), "omp");
+      if (!record) continue;
+      output.push(record);
+      onRecords?.(output);
+    }
+  }
+  return output;
+}
+
 export async function loadSessionPreview(session) {
   const pathname = session?.previewLocator?.type === "jsonl" ? session.previewLocator.path : "";
   return pathname ? readConversationPreview(pathname) : normalizePreview(session?.preview);
@@ -426,8 +457,10 @@ export async function listSessions(options = {}) {
   const roots = allScope ? [] : await discoverRepositoryScope(cwd, options);
   const codexHome = options.codexHome ?? process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex");
   const claudeHome = options.claudeHome ?? path.join(os.homedir(), ".claude");
+  const ompAgentDir = options.ompAgentDir ?? process.env.PI_CODING_AGENT_DIR ?? path.join(os.homedir(), ".omp", "agent");
   let codexRecords = [];
   let claudeRecords = [];
+  let ompRecords = [];
   let activePaths = new Set();
   // Partial emits reuse normalized objects so the TUI's per-session detail cache stays warm across updates.
   const normalizedCache = new WeakMap();
@@ -438,7 +471,11 @@ export async function listSessions(options = {}) {
     return normalizedCache.get(record);
   };
   const assemble = () => {
-    const values = [...codexRecords.map((record) => normalizeAny(record, "codex")).filter(Boolean), ...claudeRecords.map((record) => normalizeAny(record, "claude")).filter(Boolean)];
+    const values = [
+      ...codexRecords.map((record) => normalizeAny(record, "codex")).filter(Boolean),
+      ...claudeRecords.map((record) => normalizeAny(record, "claude")).filter(Boolean),
+      ...ompRecords.map((record) => normalizeAny(record, "omp")).filter(Boolean),
+    ];
     const visible = values.filter((session) => allScope || roots.some((root) => contains(root, session.cwd)));
     const normalizedActivePaths = new Set([...activePaths].map((pathname) => path.resolve(pathname)));
     for (const session of visible) {
@@ -462,7 +499,7 @@ export async function listSessions(options = {}) {
     lastEmit = timestamp;
     emitNow();
   };
-  // The three sources are independent IO; running them in parallel keeps a slow lsof or JSONL walk from blocking the list.
+  // The four sources are independent IO; running them in parallel keeps one slow scan from blocking the list.
   await Promise.all([
     (async () => {
       try { codexRecords = options.readCodex ? await options.readCodex() : await readCodexDefault(codexHome); } catch { codexRecords = []; }
@@ -481,9 +518,17 @@ export async function listSessions(options = {}) {
     })(),
     (async () => {
       try {
+        ompRecords = options.readOmp
+          ? await options.readOmp()
+          : await readOmpDefault(ompAgentDir, (records) => { ompRecords = records; emitThrottled(); });
+      } catch { ompRecords = []; }
+      emitNow();
+    })(),
+    (async () => {
+      try {
         activePaths = options.readActiveSessionPaths
           ? await options.readActiveSessionPaths()
-          : options.readCodex || options.readClaude || options.codexHome || options.claudeHome
+          : options.readCodex || options.readClaude || options.readOmp || options.codexHome || options.claudeHome || options.ompAgentDir
             ? new Set()
             : await readActiveSessionPaths();
       } catch {

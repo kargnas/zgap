@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdtemp, mkdir, writeFile, rm, utimes } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { test } from "./harness.mjs";
 
 const sessions = await import("../src/sessions.mjs");
+const execFileAsync = promisify(execFile);
 
 test("session title normalizes whitespace and prioritizes title, prompt, then id", () => {
   assert.equal(sessions.formatSessionTitle("  hello\n  world  "), "hello world");
@@ -32,6 +35,7 @@ test("Claude ai title과 first prompt를 모두 정규화한다", async () => {
       { sessionId: "title", projectPath: "/repo", aiTitle: "\u001b[31mAI title\u001b[0m" },
       { sessionId: "prompt", projectPath: "/repo", firstPrompt: "\u001b]0;prompt\u0007First command" },
     ],
+    readOmp: async () => [],
   });
   assert.deepEqual(result.map(({ id, title }) => ({ id, title })), [
     { id: "prompt", title: "First command" },
@@ -58,6 +62,7 @@ test("listSessions reads Codex sqlite and Claude index records", async (t) => {
     repositoryRoots: [root],
     readCodex: async () => [{ id: "c1", model_provider: "agp", cwd: root, title: "  Codex  title ", updated_at: 10 }],
     readClaude: async () => [{ sessionId: "a1", projectPath: root, firstPrompt: " first\n command ", modified: "2026-01-01T00:00:00Z" }],
+    readOmp: async () => [],
   });
   assert.deepEqual(result, [
     { agent: "claude", provider: null, id: "a1", cwd: root, title: "first command", preview: { turns: [] }, updatedAt: Date.parse("2026-01-01T00:00:00Z") },
@@ -75,6 +80,7 @@ test("listSessions는 열린 JSONL과 일치하는 세션만 실행 중으로 �
       { id: "idle", model_provider: "openai", cwd: "/repo", title: "Idle", previewPath: "/sessions/idle.jsonl", updated_at: 1 },
     ],
     readClaude: async () => [],
+    readOmp: async () => [],
     readActiveSessionPaths: async () => new Set([activePath]),
   });
 
@@ -105,6 +111,7 @@ test("No prompt title은 첫 사용자 명령으로 대체한다", async () => {
       first_user_message: "actual first command",
     }],
     readClaude: async () => [],
+    readOmp: async () => [],
   });
   assert.equal(result[0]?.title, "actual first command");
 });
@@ -121,6 +128,7 @@ test("listSessions는 소스가 끝날 때마다 onUpdate로 부분 결과를 �
       await claudeGate;
       return [{ sessionId: "a1", projectPath: "/repo", firstPrompt: "claude", modified: 20 }];
     },
+    readOmp: async () => [],
     onUpdate: (partial) => {
       updates.push(partial.map(({ id }) => id));
       releaseClaude();
@@ -138,6 +146,7 @@ test("malformed records are isolated and repository containment is segment-safe"
     repositoryRoots: ["/repo"],
     readCodex: async () => [null, { id: "inside", cwd: "/repo/sub", model_provider: "x", updated_at: 1 }, { id: "outside", cwd: "/repo-other", model_provider: "x", updated_at: 2 }],
     readClaude: async () => { throw new Error("bad source"); },
+    readOmp: async () => [],
   });
   assert.deepEqual(values.map(({ id }) => id), ["inside"]);
 });
@@ -152,7 +161,7 @@ test("Codex fallback recursively aggregates one nested JSONL session", async (t)
     JSON.stringify({ type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "first command" }] } }),
     JSON.stringify({ type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "second command" }] } }),
   ].join("\n"));
-  const result = await sessions.listSessions({ codexHome: home, claudeHome: "/missing", all: true });
+  const result = await sessions.listSessions({ codexHome: home, claudeHome: "/missing", ompAgentDir: "/missing", all: true });
   const session = result.find(({ id }) => id === "nested");
   assert.deepEqual(session, {
     agent: "codex", provider: "agp", id: "nested", cwd: "/repo", title: "first command",
@@ -175,7 +184,7 @@ test("Claude JSONL ai-title wins over first user prompt and excludes subagents",
     JSON.stringify({ type: "custom-title", title: "AI title" }),
   ].join("\n"));
   await writeFile(path.join(project, "subagents", "child.jsonl"), JSON.stringify({ cwd: "/repo", type: "user", message: { role: "user", content: "hidden" } }));
-  const result = await sessions.listSessions({ codexHome: "/missing", claudeHome: home, all: true });
+  const result = await sessions.listSessions({ codexHome: "/missing", claudeHome: home, ompAgentDir: "/missing", all: true });
   const session = result.find(({ id }) => id === "main");
   assert.deepEqual(session, {
     agent: "claude", provider: null, id: "main", cwd: "/repo", title: "AI title", preview: {
@@ -198,7 +207,7 @@ test("Claude JSONL은 local command metadata를 건너뛰고 첫 사용자 명�
     JSON.stringify({ cwd: "/repo", type: "user", message: { role: "user", content: "real command" } }),
   ].join("\n"));
 
-  const result = await sessions.listSessions({ codexHome: "/missing", claudeHome: home, all: true });
+  const result = await sessions.listSessions({ codexHome: "/missing", claudeHome: home, ompAgentDir: "/missing", all: true });
   assert.equal(result.find(({ id }) => id === "main")?.title, "real command");
 });
 
@@ -217,6 +226,7 @@ test("repo scope reads Claude project directory encoded from a related worktree 
     cwd: "/Users/example/worktrees/zgap/feature",
     codexHome: "/missing",
     claudeHome: home,
+    ompAgentDir: "/missing",
     repositoryRoots: [root, "/Users/example/worktrees/zgap/feature"],
   });
 
@@ -247,11 +257,114 @@ test("repo scope encodes every non-alphanumeric path character like Claude Code"
     cwd: root,
     codexHome: "/missing",
     claudeHome: home,
+    ompAgentDir: "/missing",
     repositoryRoots: [root],
   });
 
   assert.equal(result.length, 1);
   assert.equal(result[0].title, "underscore repo prompt");
+});
+
+test("OMP 목록은 최상위 세션만 읽고 현재 제목과 미리보기를 정규화한다", async (t) => {
+  const agentDir = await mkdtemp(path.join(os.tmpdir(), "zgap-omp-"));
+  t.after(() => rm(agentDir, { recursive: true, force: true }));
+  const projectDir = path.join(agentDir, "sessions", "-repo");
+  const nestedDir = path.join(projectDir, "tools");
+  await mkdir(nestedDir, { recursive: true });
+  const sessionPath = path.join(projectDir, "timestamp_wrong-file-id.jsonl");
+  await writeFile(sessionPath, [
+    { type: "title", v: 1, title: "  Current\n title  ", timestamp: "2026-08-26T00:00:05Z", updatedAt: "2026-08-26T00:00:10Z", pad: "" },
+    { type: "session", version: 3, id: "exact-omp-id", title: "Header title", timestamp: "2026-08-26T00:00:00Z", cwd: "/repo" },
+    { type: "message", id: "u1", parentId: null, timestamp: "2026-08-26T00:00:01Z", message: { role: "user", content: "First question" } },
+    { type: "message", id: "a1", parentId: "u1", timestamp: "2026-08-26T00:00:02Z", message: { role: "assistant", content: [{ type: "text", text: "First answer" }] } },
+    { type: "thinking_level_change", id: "t1", parentId: "a1", timestamp: "2026-08-26T00:00:03Z", level: "high" },
+    { type: "title_change", id: "t2", parentId: "a1", timestamp: "2026-08-26T00:00:04Z", title: "Later title", source: "user" },
+  ].map((event) => JSON.stringify(event)).join("\n"));
+  await writeFile(path.join(nestedDir, "nested.jsonl"), [
+    { type: "session", version: 3, id: "nested-child", timestamp: "2026-08-26T00:00:00Z", cwd: "/repo" },
+    { type: "message", id: "u2", parentId: null, timestamp: "2026-08-26T00:00:01Z", message: { role: "user", content: "Must stay hidden" } },
+  ].map((event) => JSON.stringify(event)).join("\n"));
+  const activeTime = new Date("2100-01-01T00:00:00Z");
+  await utimes(sessionPath, activeTime, activeTime);
+
+  const result = await sessions.listSessions({
+    cwd: "/repo",
+    repositoryRoots: ["/repo"],
+    codexHome: "/missing",
+    claudeHome: "/missing",
+    ompAgentDir: agentDir,
+  });
+
+  assert.equal(result.length, 1);
+  assert.deepEqual(result[0], {
+    agent: "omp",
+    provider: null,
+    id: "exact-omp-id",
+    cwd: "/repo",
+    title: "Later title",
+    preview: { turns: [] },
+    previewLocator: { type: "jsonl", path: sessionPath },
+    updatedAt: Date.parse("2026-08-26T00:00:10Z"),
+    active: true,
+  });
+  assert.deepEqual(await sessions.loadSessionPreview(result[0]), {
+    turns: [{ user: "First question", assistant: "First answer" }],
+  });
+});
+
+test("주입한 다른 세션 소스와 별개로 ambient OMP 세션을 검색한다", async (t) => {
+  const agentDir = await mkdtemp(path.join(os.tmpdir(), "zgap-omp-ambient-"));
+  t.after(() => rm(agentDir, { recursive: true, force: true }));
+  const projectDir = path.join(agentDir, "sessions", "-repo");
+  await mkdir(projectDir, { recursive: true });
+  await writeFile(path.join(projectDir, "ambient.jsonl"), [
+    { type: "session", version: 3, id: "ambient-omp", timestamp: "2026-08-26T00:00:00Z", cwd: "/repo" },
+    { type: "message", id: "u1", parentId: null, timestamp: "2026-08-26T00:00:01Z", message: { role: "user", content: "Ambient OMP" } },
+  ].map((event) => JSON.stringify(event)).join("\n"));
+  const moduleUrl = new URL("../src/sessions.mjs", import.meta.url).href;
+  const script = `
+    const { listSessions } = await import(${JSON.stringify(moduleUrl)});
+    const result = await listSessions({
+      cwd: "/repo",
+      all: true,
+      readCodex: async () => [{ id: "injected-codex", model_provider: "test", cwd: "/repo", title: "Injected", updated_at: 1 }],
+      readClaude: async () => [],
+    });
+    console.log(JSON.stringify(result.map(({ agent, id }) => ({ agent, id }))));
+  `;
+
+  const { stdout } = await execFileAsync(process.execPath, ["-e", script], {
+    env: { ...process.env, PI_CODING_AGENT_DIR: agentDir },
+  });
+
+  assert.deepEqual(JSON.parse(stdout), [
+    { agent: "omp", id: "ambient-omp" },
+    { agent: "codex", id: "injected-codex" },
+  ]);
+});
+
+test("listSessions는 OMP 부분 결과를 기존 소스와 함께 전달한다", async () => {
+  const updates = [];
+  let releaseClaude;
+  const claudeGate = new Promise((resolve) => { releaseClaude = resolve; });
+  queueMicrotask(() => releaseClaude());
+  const result = await sessions.listSessions({
+    cwd: "/repo",
+    all: true,
+    readCodex: async () => [],
+    readClaude: async () => {
+      await claudeGate;
+      return [{ sessionId: "claude", projectPath: "/repo", firstPrompt: "Claude", modified: 20 }];
+    },
+    readOmp: async () => [{ id: "omp", cwd: "/repo", title: "OMP", updatedAt: 10 }],
+    onUpdate: (partial) => {
+      updates.push(partial.map(({ id }) => id));
+      releaseClaude();
+    },
+  });
+
+  assert.deepEqual(updates[0], ["omp"]);
+  assert.deepEqual(result.map(({ id }) => id), ["claude", "omp"]);
 });
 
 test("Claude titles skip injected slash-command and teammate messages", async (t) => {
@@ -265,7 +378,7 @@ test("Claude titles skip injected slash-command and teammate messages", async (t
     JSON.stringify({ type: "user", sessionId: "one", cwd: "/repo", message: { role: "user", content: "typed by a human" } }),
   ].join("\n"));
 
-  const result = await sessions.listSessions({ codexHome: "/missing", claudeHome: home, all: true });
+  const result = await sessions.listSessions({ codexHome: "/missing", claudeHome: home, ompAgentDir: "/missing", all: true });
   assert.equal(result.find(({ id }) => id === "one")?.title, "typed by a human");
 });
 
@@ -286,7 +399,7 @@ test("JSONL preview keeps completed user/assistant turns and drops an unanswered
     { type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "latest answer" }] } },
     { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "unanswered tail" }] } },
   ].map((event) => JSON.stringify(event)).join("\n"));
-  const result = await sessions.listSessions({ codexHome: home, claudeHome: "/missing", all: true });
+  const result = await sessions.listSessions({ codexHome: home, claudeHome: "/missing", ompAgentDir: "/missing", all: true });
   assert.deepEqual(await sessions.loadSessionPreview(result.find(({ id }) => id === "conversation")), {
     turns: [
       { user: "first user", assistant: "first answer" },
@@ -306,7 +419,7 @@ test("Claude JSONL preview skips command metadata and tool-only events", async (
     { type: "assistant", sessionId: "conversation", cwd: "/repo", message: { role: "assistant", content: [{ type: "text", text: "real answer" }] } },
     { type: "assistant", sessionId: "conversation", cwd: "/repo", message: { role: "assistant", content: [{ type: "tool_use", name: "Read" }] } },
   ].map((event) => JSON.stringify(event)).join("\n"));
-  const result = await sessions.listSessions({ codexHome: "/missing", claudeHome: home, all: true });
+  const result = await sessions.listSessions({ codexHome: "/missing", claudeHome: home, ompAgentDir: "/missing", all: true });
   assert.deepEqual(await sessions.loadSessionPreview(result.find(({ id }) => id === "conversation")), {
     turns: [{ user: "real question", assistant: "real answer" }],
   });
@@ -336,7 +449,7 @@ test("Codex SQLite lists metadata without scanning JSONL and loads preview on de
     { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "Archived question" }] } },
   ].map((event) => JSON.stringify(event)).join("\n"));
 
-  const result = await sessions.listSessions({ codexHome: home, claudeHome: "/missing", all: true });
+  const result = await sessions.listSessions({ codexHome: home, claudeHome: "/missing", ompAgentDir: "/missing", all: true });
   const sqliteSession = result.find(({ id }) => id === "sqlite-session");
   assert.deepEqual(sqliteSession, {
     agent: "codex", provider: "agp", id: "sqlite-session", cwd: "/repo", title: "SQLite title",
