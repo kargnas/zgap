@@ -32,7 +32,6 @@
 - Run a focused suite with `bun test test/task3.test.mjs` or `bun test test/zgap.test.mjs`.
 - Check the executable help with `bun bin/zgap.mjs --help`.
 - Use Bun for package installation and scripts. Do not use npm, pnpm, or yarn to change dependencies or lockfiles.
-- `zgap update` runs `bun update -g zgap`, which reinstalls every top-level package in the global manifest, not just zgap. A sibling package installed there is restored to its manifest version, silently reverting an update that package applied to itself.
 
 ## Runtime and Modules
 
@@ -48,7 +47,7 @@
 
 ## Child Agent Runtime
 
-- OMP ships through two channels that overwrite the same `dist/cli.js`: the npm package (a `#!/usr/bin/env bun` script) and `omp update` (a Bun single-file executable from GitHub releases). zgap must work under both; never require one channel or pin an OMP version.
+- OMP on PATH is either a `#!/usr/bin/env bun` script or a Bun single-file executable. Treat both as valid targets and never assume one form.
 - Never derive a script runtime from `process.execPath` inside a child agent. Under the single-file executable it resolves to the agent binary, so running it relaunches the agent instead of the zgap CLI and yields an empty credential. `runOmp` passes its own runtime in `ZGAP_RUNTIME` for this reason.
 - Verify credential-command and launch changes against both OMP forms. The npm script alone does not prove the single-file executable works.
 
