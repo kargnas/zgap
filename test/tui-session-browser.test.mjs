@@ -324,7 +324,7 @@ test("session browser는 OMP 행을 표시하고 agent 필터에서 선택한다
 test("session browser는 C안의 agent, provider, 선택 색상을 표시한다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
-  const setup = await createTestRenderer({ width: 100, height: 20 });
+  const setup = await createTestRenderer({ width: 100, height: 24 });
   t.after(() => setup.renderer.destroy());
 
   const result = runSessionBrowser({
@@ -534,7 +534,7 @@ test("c는 체크 없이는 안내를 보여주고 체크된 세션으로 변환
 test("혼합 provider 체크는 target과 같은 세션을 제외한 개수로 변환한다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
-  const setup = await createTestRenderer({ width: 72, height: 14 });
+  const setup = await createTestRenderer({ width: 72, height: 20 });
   t.after(() => setup.renderer.destroy());
   const converted = [];
   const sourceSessions = [
@@ -629,7 +629,7 @@ test("변환 후 커서는 변환 직전에 있던 행에 남는다", async (t) 
 test("변환 후 다른 scope 캐시를 비워 stale provider 목록을 막는다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
-  const setup = await createTestRenderer({ width: 72, height: 12 });
+  const setup = await createTestRenderer({ width: 72, height: 16 });
   t.after(() => setup.renderer.destroy());
   const loads = [];
   const makeSession = (over) => ({ agent: "codex", cwd: "/repo", updatedAt: sessions[0].updatedAt, ...over });
@@ -700,7 +700,7 @@ test("변환 실패는 변환 화면에 오류를 보여주고 선택을 유지�
 test("session browser는 Page Up/Down, Home, End로 목록을 이동한다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
-  const setup = await createTestRenderer({ width: 100, height: 12 });
+  const setup = await createTestRenderer({ width: 100, height: 16 });
   t.after(() => setup.renderer.destroy());
   const navigationSessions = Array.from({ length: 7 }, (_, index) => ({
     ...sessions[0],
@@ -718,7 +718,7 @@ test("session browser는 Page Up/Down, Home, End로 목록을 이동한다", asy
 
   setup.mockInput.pressKey("\x1b[6~");
   await flush(setup);
-  assert.match(setup.captureCharFrame(), /›\s+\[ \] CODEX · zgap {2}Session 4/);
+  assert.match(setup.captureCharFrame(), /›\s+\[ \] CODEX · zgap {2}Session 3/);
 
   setup.mockInput.pressKey("\x1b[5~");
   await flush(setup);
@@ -985,10 +985,94 @@ test("session browser는 실행 중인 Codex 세션을 미리보기에서 Enter 
   assert.equal(selected, true);
 });
 
+test("session browser shows latest assistant lines and dotted inter-session dividers", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
+  const setup = await createTestRenderer({ width: 60, height: 14 });
+  t.after(() => setup.renderer.destroy());
+  const firstDetails = deferred();
+  const secondDetails = deferred();
+  const calls = [];
+  const first = { ...sessions[0], cwd: "/repo", title: "First title", preview: { turns: [{ user: "latest user", assistant: "old assistant" }] } };
+  const second = { ...sessions[1], cwd: "/repo", title: "Second title", preview: { turns: [{ user: "second user", assistant: "second old" }] } };
+  const result = runSessionBrowser({
+    rendererFactory: async () => setup,
+    discoverScope: async () => ({ roots: ["/repo"] }),
+    sessionLoader: async () => [first, second],
+    detailsLoader: async (session) => {
+      calls.push(session.id);
+      return session.id === first.id ? firstDetails.promise : secondDetails.promise;
+    },
+  });
+  await flush(setup);
+  let frame = setup.captureCharFrame();
+  assert.match(frame, /A …/);
+  firstDetails.resolve({ turnCount: 1, fileSize: 0, latestAssistantLine: "First assistant", preview: first.preview });
+  secondDetails.resolve({ turnCount: 1, fileSize: 0, latestAssistantLine: "Second assistant", preview: second.preview });
+  await waitForFrame(setup, (value) => value.includes("A First assistant") && value.includes("A Second assistant"));
+  frame = setup.captureCharFrame();
+  const lines = frame.split("\n");
+  const firstTitleIndex = lines.findIndex((line) => line.includes("First title"));
+  assert.deepEqual(lines.slice(firstTitleIndex, firstTitleIndex + 3).map((line) => line.trim()), [
+    "›   [ ] CODEX · zgap  First title",
+    "A First assistant",
+    "└ repo · 2026-08-14 00:00 · 1t · 0 B",
+  ]);
+  assert.match(lines[firstTitleIndex + 3].trim(), /^·+$/);
+  assert.equal(lines[firstTitleIndex + 4].trim(), "[ ] CODEX · openai  Second title");
+  assert.match(frame, /A First assistant/);
+  assert.match(frame, /A Second assistant/);
+  assert.equal(lines.filter((line) => line.trim().startsWith("···")).length, 1);
+  assert.equal(lines.at(-1)?.trim().startsWith("···"), false);
+  assert.doesNotMatch(frame, /A old assistant|A latest user|A First title|A Second title/);
+  assert.deepEqual(calls, [first.id, second.id]);
+  assert.equal(lines.every((line) => Bun.stringWidth(line) <= 60), true);
+  const spanLines = setup.captureSpans().lines;
+  const spans = spanLines.flatMap((line) => line.spans);
+  const rgba = (color) => Array.from(color.buffer);
+  const selectedTitle = spanLines.find((line) => line.spans.some((span) => span.text.includes("First title"))).spans.find((span) => span.text.includes("First title"));
+  const selectedAssistant = spanLines.find((line) => line.spans.some((span) => span.text.includes("First assistant"))).spans.find((span) => span.text.includes("First assistant"));
+  const selectedMetadataLine = spanLines.find((line) => line.spans.some((span) => span.text.includes("└")));
+  const divider = spans.find((span) => span.text.includes("···"));
+  assert.deepEqual(rgba(selectedTitle.bg), [39, 23, 8, 255]);
+  assert.deepEqual(rgba(selectedAssistant.bg), [39, 23, 8, 255]);
+  assert.equal(selectedMetadataLine.spans.some((span) => Array.from(span.bg.buffer).join(",") === "39,23,8,255"), true);
+  assert.notDeepEqual(rgba(divider.bg), [39, 23, 8, 255]);
+  assert.deepEqual(rgba(selectedAssistant.fg), [148, 163, 184, 255]);
+  await setup.mockInput.pressBackspace();
+  assert.equal(await result, 0);
+});
+test("session browser shows a dash for missing or failed assistant details", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
+  const setup = await createTestRenderer({ width: 60, height: 14 });
+  t.after(() => setup.renderer.destroy());
+  const sessionsWithDetails = [
+    { ...sessions[0], cwd: "/repo", id: "missing", title: "Missing assistant" },
+    { ...sessions[1], cwd: "/repo", id: "failed", title: "Failed assistant" },
+  ];
+  const result = runSessionBrowser({
+    rendererFactory: async () => setup,
+    discoverScope: async () => ({ roots: ["/repo"] }),
+    sessionLoader: async () => sessionsWithDetails,
+    detailsLoader: async (session) => session.id === "failed"
+      ? Promise.reject(new Error("details unavailable"))
+      : { turnCount: 0, fileSize: 0, latestAssistantLine: null },
+  });
+  await flush(setup);
+  await waitForFrame(setup, (frame) => frame.includes("A —") && frame.includes("n/a"));
+  const frame = setup.captureCharFrame();
+  assert.equal(frame.split("\n").filter((line) => line.trim() === "A —").length, 2);
+  assert.match(frame, /n\/a/);
+  assert.doesNotMatch(frame, /A Missing assistant|A Failed assistant/);
+  await setup.mockInput.pressBackspace();
+  assert.equal(await result, 0);
+});
+
 test("session browser는 최근 상대 시간과 오래된 정확한 시간을 표시한다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
-  const setup = await createTestRenderer({ width: 100, height: 16 });
+  const setup = await createTestRenderer({ width: 100, height: 20 });
   t.after(() => setup.renderer.destroy());
   const details = deferred();
   const previewCalls = [];
@@ -1115,12 +1199,11 @@ test("session browser는 한글 제목을 행 너비 안에서 줄인다", async
   assert.equal(await result, 0);
 });
 
-test("session browser는 작은 terminal에서 두 session row를 표시하고 viewport를 이동한다", async (t) => {
+test("session browser uses a four-row stride for compact viewport navigation", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
   const setup = await createTestRenderer({ width: 40, height: 10 });
   t.after(() => setup.renderer.destroy());
-
   const result = runSessionBrowser({
     rendererFactory: async () => setup,
     discoverScope: async () => ({ roots: ["/repo"] }),
@@ -1131,23 +1214,21 @@ test("session browser는 작은 terminal에서 두 session row를 표시하고 v
     ],
   });
   await flush(setup);
-
+  const assertFrame = (frame, present, absent) => {
+    assert.match(frame, new RegExp(present));
+    for (const value of absent) assert.doesNotMatch(frame, new RegExp(value));
+    assert.equal(frame.split("\n").every((line) => Bun.stringWidth(line) <= 40), true);
+  };
   let frame = setup.captureCharFrame();
-  assert.match(frame, /SESSIONS/);
-  assert.match(frame, /First session/);
-  assert.match(frame, /Second session/);
-  assert.doesNotMatch(frame, /Third session/);
-  assert.doesNotMatch(frame, /\d{1,2}\/\d{1,2}\/\d{2}/);
-  assert.match(frame, /\[s repo\] \[a all\] \[1\]All/);
-
-  setup.mockInput.pressArrow("down");
+  assertFrame(frame, "First session", ["Second session", "Third session"]);
   setup.mockInput.pressArrow("down");
   await flush(setup);
   frame = setup.captureCharFrame();
-  assert.match(frame, /Second session/);
-  assert.doesNotMatch(frame, /First session/);
-  assert.match(frame, /Third session/);
-
+  assertFrame(frame, "Second session", ["First session", "Third session"]);
+  setup.mockInput.pressArrow("down");
+  await flush(setup);
+  frame = setup.captureCharFrame();
+  assertFrame(frame, "Third session", ["First session", "Second session"]);
   await setup.mockInput.pressBackspace();
   assert.equal(await result, 0);
 });

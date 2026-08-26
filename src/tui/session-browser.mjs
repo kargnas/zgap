@@ -139,6 +139,7 @@ function rowText(session, detailsState, selected, language, width, compact, curr
   const sourceWidth = Bun.stringWidth(agent) + (provider ? Bun.stringWidth(` · ${provider}`) : 0);
   const rowWidth = Math.max(1, width - 3);
   const metaPrefix = "  └ ";
+  const assistantPrefix = "        A ";
   const time = timestampLabel(session.updatedAt, language, currentTime);
   const turnCount = Number.isSafeInteger(detailsState?.turnCount)
     ? compact ? `${detailsState.turnCount}t` : t("sessionsTurnCount", { count: detailsState.turnCount })
@@ -166,6 +167,10 @@ function rowText(session, detailsState, selected, language, width, compact, curr
   const checkboxColor = checkState === "converted" || checkState === "checked" ? COLORS.green : COLORS.meta;
   const titleLimit = Math.max(4, rowWidth - sourceWidth - 10);
   const title = truncateText(displayText(session.title), titleLimit);
+  const assistant = detailsState?.error ? "—" : detailsState
+    ? displayText(detailsState.latestAssistantLine || "—")
+    : "…";
+  const assistantText = truncateText(assistant, Math.max(1, rowWidth - Bun.stringWidth(assistantPrefix)));
   const background = selected ? COLORS.amberBackground : undefined;
   const providerChunk = provider
     ? [
@@ -187,6 +192,10 @@ function rowText(session, detailsState, selected, language, width, compact, curr
     chunk("  ", COLORS.text, background),
     chunk(title, COLORS.text, background),
     chunk(" ".repeat(Math.max(0, rowWidth - firstLineWidth)), COLORS.text, background),
+    chunk("\n", COLORS.text, background),
+    chunk(assistantPrefix, COLORS.chip, background),
+    chunk(assistantText, COLORS.chip, background),
+    chunk(" ".repeat(Math.max(0, rowWidth - Bun.stringWidth(assistantPrefix) - Bun.stringWidth(assistantText))), COLORS.chip, background),
     chunk(`\n${metaPrefix}`, COLORS.meta, background),
     ...metaParts.flatMap((part, index) => [
       ...(index > 0 ? [chunk(" · ", COLORS.meta, background)] : []),
@@ -462,7 +471,7 @@ export async function runSessionBrowser({
     root.add(hint);
     renderer.root.add(root);
 
-    const visibleRows = () => Math.max(1, Math.floor((renderer.height - 6) / 2));
+    const visibleRows = () => Math.max(1, Math.floor(((renderer.height - 6) + 1) / 4));
     const providerTabs = () => {
       const counts = new Map();
       for (const session of sessionFilter(sessions, { scope, roots })) {
@@ -641,8 +650,11 @@ export async function runSessionBrowser({
       }
       const count = visibleRows();
       const visibleSessions = values.slice(viewportStart, viewportStart + count);
-      list.content = joinStyledText(visibleSessions
-        .map((session, index) => rowText(session, detailCache.get(session), viewportStart + index === selectedIndex, language, renderer.width, compact, now(), t, spinnerMode === "active" ? ACTIVE_SESSION_SPINNER.frames[spinnerIndex] : ACTIVE_SESSION_SPINNER.frames[0], checkStateFor(session))));
+      const rows = visibleSessions.map((session, index) => rowText(session, detailCache.get(session), viewportStart + index === selectedIndex, language, renderer.width, compact, now(), t, spinnerMode === "active" ? ACTIVE_SESSION_SPINNER.frames[spinnerIndex] : ACTIVE_SESSION_SPINNER.frames[0], checkStateFor(session)));
+      list.content = new StyledText(rows.flatMap((row, index) => [
+        ...(index > 0 ? [chunk(`\n  ${"·".repeat(Math.max(1, renderer.width - 5))}\n`, COLORS.meta)] : []),
+        ...row.chunks,
+      ]));
       list.fg = "#E2E8F0";
       renderer.requestRender();
       for (const session of visibleSessions) {
@@ -651,6 +663,7 @@ export async function runSessionBrowser({
           detailCache.set(session, {
             turnCount: Number.isSafeInteger(details?.turnCount) ? details.turnCount : 0,
             fileSize: Number.isFinite(details?.fileSize) ? details.fileSize : 0,
+            latestAssistantLine: typeof details?.latestAssistantLine === "string" ? details.latestAssistantLine : null,
             preview: details?.preview,
           });
           if (!cleaned) render();
