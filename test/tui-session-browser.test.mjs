@@ -280,6 +280,47 @@ test("session browser는 scope, agent, 숫자 provider tab을 적용한다", asy
   assert.equal(await result, 0);
 });
 
+test("session browser는 OMP 행을 표시하고 agent 필터에서 선택한다", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
+  const setup = await createTestRenderer({ width: 100, height: 20 });
+  t.after(() => setup.renderer.destroy());
+  const ompSession = {
+    agent: "omp",
+    provider: null,
+    id: "omp-one",
+    cwd: "/repo",
+    title: "Resume OMP work",
+    preview: { turns: [] },
+    updatedAt: Date.parse("2026-08-26T00:00:00Z"),
+  };
+  let selected;
+
+  const result = runSessionBrowser({
+    rendererFactory: async () => setup,
+    cwd: "/repo",
+    discoverScope: async () => ({ roots: ["/repo"] }),
+    sessionLoader: async () => [ompSession],
+    onSelect: async (session) => { selected = session; return 19; },
+  });
+  await flush(setup);
+  let frame = setup.captureCharFrame();
+  assert.match(frame, /OMP\s+Resume OMP work/);
+  assert.doesNotMatch(frame.split("\n").find((line) => line.includes("OMP")), /\[ \]/);
+
+  setup.mockInput.pressKey("a");
+  setup.mockInput.pressKey("a");
+  setup.mockInput.pressKey("a");
+  await flush(setup);
+  frame = setup.captureCharFrame();
+  assert.match(frame, /\[a omp\]/);
+  assert.match(frame, /Resume OMP work/);
+
+  setup.mockInput.pressEnter();
+  assert.equal(await result, 19);
+  assert.equal(selected, ompSession);
+});
+
 test("session browser는 C안의 agent, provider, 선택 색상을 표시한다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");

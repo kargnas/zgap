@@ -13,7 +13,7 @@ import cliSpinners from "cli-spinners";
 import { convertCodexSessionProviders, discoverRepositoryScope, filterSessions, listSessions, loadSessionDetails, loadSessionPreview, stripTerminalControls } from "../sessions.mjs";
 import { loadMenuTranslator } from "./menu.mjs";
 
-const AGENTS = ["all", "codex", "claude"];
+const AGENTS = ["all", "codex", "claude", "omp"];
 const COMPACT_WIDTH = 60;
 const EXACT_TIME_AFTER_MS = 3 * 60 * 60_000;
 // Digit keys 1-9 select provider tabs, so at most eight provider tabs follow the All tab.
@@ -121,6 +121,7 @@ function knownCodexProviders(sessions) {
 function agentColor(agent) {
   if (agent === "CODEX") return COLORS.amber;
   if (agent === "CLAUDE") return COLORS.rose;
+  if (agent === "OMP") return COLORS.blue;
   return COLORS.text;
 }
 
