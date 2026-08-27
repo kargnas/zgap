@@ -87,12 +87,13 @@ async function tempDir(t) {
   return directory;
 }
 
-async function runCli(args, env) {
+async function runCli(args, env, stdin) {
   const child = spawn(nodePath, [cliPath, ...args], { env });
   let stdout = "";
   let stderr = "";
   child.stdout.on("data", (chunk) => { stdout += chunk; });
   child.stderr.on("data", (chunk) => { stderr += chunk; });
+  if (stdin !== undefined) child.stdin.end(stdin);
   const [code, signal] = await once(child, "exit");
   return { code, signal, stdout, stderr };
 }
@@ -174,8 +175,67 @@ test("심볼릭 링크로 실행해도 CLI main이 시작된다", async (t) => {
   child.stdout.on("data", (chunk) => { stdout += chunk; });
   const [code] = await once(child, "exit");
   assert.equal(code, 0);
-  assert.match(stdout, /zgap login/);
+  assert.match(stdout, /zgap login\s+Choose OAuth or API key/);
+  assert.match(stdout, /zgap login oauth\s+Sign in through browser OAuth/);
+  assert.match(stdout, /zgap login api\s+Configure a static proxy API key/);
   assert.match(stdout, /each supported agent's normal local configuration and history/);
+});
+
+test("login api 명령은 stdin의 key만 0600 credential로 저장한다", async (t) => {
+  const root = await tempDir(t);
+  const configRoot = path.join(root, "config");
+  const credentialPath = path.join(configRoot, "zgap", "credentials.json");
+  const apiKey = "sk-test-static-key";
+
+  const result = await runCli(["login", "api"], {
+    ...process.env,
+    XDG_CONFIG_HOME: configRoot,
+  }, `${apiKey}\n`);
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(result.stdout, "Static API key configured.\n");
+  assert.equal(result.stdout.includes(apiKey), false);
+  assert.equal(result.stderr.includes(apiKey), false);
+  assert.deepEqual(JSON.parse(await readFile(credentialPath, "utf8")), { api_key: apiKey });
+  assert.equal((await stat(credentialPath)).mode & 0o777, 0o600);
+});
+
+test("login api 명령은 key를 argv로 받지 않는다", async (t) => {
+  const root = await tempDir(t);
+  const configRoot = path.join(root, "config");
+  const credentialPath = path.join(configRoot, "zgap", "credentials.json");
+  const apiKey = "sk-test-static-key";
+
+  const result = await runCli(["login", "api", apiKey], {
+    ...process.env,
+    XDG_CONFIG_HOME: configRoot,
+  });
+
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /accepts only `oauth` or `api`/);
+  assert.equal(result.stdout.includes(apiKey), false);
+  assert.equal(result.stderr.includes(apiKey), false);
+  await assert.rejects(access(credentialPath), { code: "ENOENT" });
+});
+
+test("API key TTY 입력은 화면에 key를 출력하지 않고 raw mode를 복원한다", async () => {
+  const { PassThrough } = await import("node:stream");
+  const { readApiKey } = await import("../src/api-key.mjs");
+  const input = new PassThrough();
+  const output = new PassThrough();
+  const rawModes = [];
+  let rendered = "";
+  input.isTTY = true;
+  input.isRaw = false;
+  input.setRawMode = (enabled) => { input.isRaw = enabled; rawModes.push(enabled); };
+  output.on("data", (chunk) => { rendered += chunk; });
+
+  const apiKeyPromise = readApiKey({ input, output });
+  input.write("sk-test-static-key\r");
+
+  assert.equal(await apiKeyPromise, "sk-test-static-key");
+  assert.equal(rendered, "API key: \n");
+  assert.deepEqual(rawModes, [true, false]);
 });
 
 test("Codex PATH의 빈 항목은 현재 디렉터리를 사용하고 실행 가능한 디렉터리는 건너뛴다", async (t) => {

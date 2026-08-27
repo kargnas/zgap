@@ -5,7 +5,9 @@ import {
   readCredentialFile,
   readCredentialState,
   decodeAccessTokenProfile,
+  saveApiKey,
 } from "./credentials.mjs";
+import { readApiKey } from "./api-key.mjs";
 import { login } from "./login.mjs";
 import { runCodex } from "./codex.mjs";
 import { runClaude } from "./claude.mjs";
@@ -22,7 +24,7 @@ import {
   writeOmpLeanSkills,
 } from "./preferences.mjs";
 import { checkForGlobalUpdate, updateGlobalInstall } from "./install.mjs";
-import { runStartMenu } from "./tui/menu.mjs";
+import { runLoginMenu, runStartMenu } from "./tui/menu.mjs";
 import { runSessionBrowser } from "./tui/session-browser.mjs";
 
 const BACK_TO_START_MENU = Symbol("back-to-start-menu");
@@ -64,7 +66,9 @@ export async function resumeSession(session, configDir, {
 
 function printHelp() {
   console.log(`Usage:
-  zgap login             Sign in to the configured proxy
+  zgap login             Choose OAuth or API key
+  zgap login oauth       Sign in through browser OAuth
+  zgap login api         Configure a static proxy API key
   zgap logout            Sign out on this device
   zgap codex [args...]   Run Codex through the configured proxy
   zgap claude [args...]  Run Claude through the configured proxy
@@ -80,6 +84,10 @@ export async function main({
   configDir = defaultConfigDir(),
   credentialStateReader = readCredentialState,
   credentialReader = readCredentialFile,
+  apiKeyReader = readApiKey,
+  apiKeySaver = saveApiKey,
+  loginRunner = login,
+  loginMenu = runLoginMenu,
   startMenu = runStartMenu,
   sessionBrowser = runSessionBrowser,
   updateChecker = checkForGlobalUpdate,
@@ -94,17 +102,37 @@ export async function main({
   codexRunner = runCodex,
   claudeRunner = runClaude,
   ompRunner = runOmp,
+  log = console.log,
   cwd = process.cwd(),
 } = {}) {
   const [command, ...args] = argv;
-  if (command === "login") {
-    const { origin } = await configReader(configDir);
-    await login({ configDir, origin });
-    return 0;
-  }
+  const runLoginCommand = async (loginArgs, knownProxyConfig) => {
+    if (loginArgs.length > 1 || (loginArgs.length === 1 && !["oauth", "api"].includes(loginArgs[0]))) {
+      throw new Error("`zgap login` accepts only `oauth` or `api`.");
+    }
+    let proxyConfig = knownProxyConfig;
+    let method = loginArgs[0];
+    if (method === undefined) {
+      proxyConfig ??= await configReader(configDir);
+      method = await loginMenu({ host: proxyConfig.host, origin: proxyConfig.origin });
+    }
+    if (typeof method === "number") return method;
+    if (method === "oauth") {
+      const origin = proxyConfig?.origin ?? (await configReader(configDir)).origin;
+      await loginRunner({ configDir, origin });
+      return 0;
+    }
+    if (method === "api") {
+      await apiKeySaver({ configDir, apiKey: await apiKeyReader() });
+      log("Static API key configured.");
+      return 0;
+    }
+    throw new Error("Login menu returned an invalid authentication method.");
+  };
+  if (command === "login") return runLoginCommand(args);
   if (command === "logout") {
     await logout({ configDir });
-    console.log("Logged out.");
+    log("Logged out.");
     return 0;
   }
   if (command === "codex") {
@@ -205,7 +233,7 @@ export async function main({
           ompLeanSkills = skills;
         },
         actions: {
-          login: () => login({ configDir, origin: proxyConfig.origin }),
+          login: () => runLoginCommand([], proxyConfig),
           codex: () => codexRunner([], { configDir, origin: proxyConfig.origin, dangerousMode }),
           claude: () => claudeRunner([], { configDir, origin: proxyConfig.origin, dangerousMode }),
           omp: () => ompRunner([], {
