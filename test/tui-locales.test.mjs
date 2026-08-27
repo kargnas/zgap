@@ -15,8 +15,8 @@ test("영어와 한국어 locale은 같은 메뉴 key를 제공하고 40x10에�
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runStartMenu } = await import("../src/tui/menu.mjs");
   const locales = [
-    ["en", [["signed-in", "user@example.com", "CODEX"], ["expired", "Session expired", "Login again"], ["signed-out", "Not signed in", "Login"]]],
-    ["ko", [["signed-in", "user@example.com", "CODEX"], ["expired", "세션 만료", "다시 로그인"], ["signed-out", "로그인 필요", "로그인"]]],
+    ["en", [["signed-in", "user@example.com", "CODEX"], ["api-key", "API key", "CODEX"], ["expired", "Session expired", "Login again"], ["signed-out", "Not signed in", "Login"]]],
+    ["ko", [["signed-in", "user@example.com", "CODEX"], ["api-key", "API 키", "CODEX"], ["expired", "세션 만료", "다시 로그인"], ["signed-out", "로그인 필요", "로그인"]]],
   ];
   const localeDir = path.join(repoDir, "src", "tui", "locales");
   assert.deepEqual((await readdir(localeDir)).sort(), ["en.json", "ko.json"]);
@@ -47,7 +47,7 @@ test("영어와 한국어 locale은 같은 메뉴 key를 제공하고 40x10에�
       assert.match(frame, /SAFE.*YOLO/, `${locale} ${credentialState} mode rail clipped`);
       const normalizedFrame = frame.replaceAll(/\s+/g, " ").replaceAll("/ ", "/");
       assert.ok(normalizedFrame.includes(modeHint), `${locale} ${credentialState} mode hint clipped`);
-      if (credentialState === "signed-in") {
+      if (credentialState === "signed-in" || credentialState === "api-key") {
         assert.match(frame, /Claude/, `${locale} Claude action clipped`);
         assert.doesNotMatch(frame, /Signed in|로그인됨/, `${locale} legacy status remains`);
       }
@@ -59,4 +59,31 @@ test("영어와 한국어 locale은 같은 메뉴 key를 제공하고 40x10에�
       assert.equal(await resultPromise, 130);
     }
   }
+});
+
+test("로그인 메뉴는 OAuth와 API key를 표시하고 API 선택 시 renderer를 정리한다", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runLoginMenu } = await import("../src/tui/menu.mjs");
+  const setup = await createTestRenderer({ width: 40, height: 10 });
+  t.after(() => setup.renderer.destroy());
+  let destroyed = 0;
+  const originalDestroy = setup.renderer.destroy.bind(setup.renderer);
+  setup.renderer.destroy = () => { destroyed += 1; return originalDestroy(); };
+
+  const resultPromise = runLoginMenu({
+    rendererFactory: async () => setup,
+    language: "en",
+  });
+  await flushMenu(setup);
+  const frame = setup.captureCharFrame();
+  assert.match(frame, /Browser OAuth/);
+  assert.match(frame, /API key/);
+  const hintLine = frame.split("\n").find((line) => line.includes("↑↓"));
+  assert.ok(hintLine, "compact login hint missing");
+  assert.doesNotMatch(hintLine, /[╭╮╰╯─│]/, "compact login hint overlaps a card border");
+
+  await setup.mockInput.pressArrow("down");
+  await setup.mockInput.pressEnter();
+  assert.equal(await resultPromise, "api");
+  assert.equal(destroyed, 1);
 });

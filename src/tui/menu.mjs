@@ -63,10 +63,22 @@ export async function loadMenuTranslator(language = process.env.LANG) {
 }
 
 function menuContent(credentialState, accountProfile, t, host) {
-  if (credentialState === "signed-in") {
+  if (credentialState === "login-method") {
     return {
-      status: accountProfile?.email ?? t("accountUnavailable"),
-      statusColor: accountProfile ? "#86EFAC" : "#F87171",
+      status: t("login"),
+      statusColor: "#67E8F9",
+      actions: [
+        { name: "oauth", label: t("loginOAuth"), description: t("loginOAuthDescription") },
+        { name: "api", label: t("loginApi"), description: t("loginApiDescription") },
+      ],
+    };
+  }
+
+  if (credentialState === "signed-in" || credentialState === "api-key") {
+    const hasAccountProfile = credentialState === "signed-in" && accountProfile;
+    return {
+      status: credentialState === "api-key" ? t("apiKey") : accountProfile?.email ?? t("accountUnavailable"),
+      statusColor: credentialState === "api-key" || hasAccountProfile ? "#86EFAC" : "#F87171",
       actions: [
         { name: "codex", label: t("codex"), description: t("codexDescription", { host }) },
         { name: "claude", label: t("claude"), description: t("claudeDescription", { host }) },
@@ -75,6 +87,7 @@ function menuContent(credentialState, accountProfile, t, host) {
       ],
     };
   }
+
   if (credentialState === "expired") {
     return {
       status: t("sessionExpired"),
@@ -147,6 +160,7 @@ export async function runStartMenu({
     renderer = setup?.renderer ?? setup;
     const t = await loadMenuTranslator(language);
     const content = menuContent(credentialState, accountProfile, t, host);
+    const loginMethodMenu = credentialState === "login-method";
     let settled = false;
     let resolveResult;
     let rejectResult;
@@ -225,6 +239,7 @@ export async function runStartMenu({
     const proxyStatus = new TextRenderable(renderer, {
       content: `● ${t("proxyChecking")}`,
       fg: "#64748B",
+      visible: !loginMethodMenu,
       selectable: true,
     });
     const statusArea = new BoxRenderable(renderer, {
@@ -284,7 +299,7 @@ export async function runStartMenu({
       alignItems: "stretch",
       gap: content.actions.length > 2 ? 0 : (content.actions.length > 1 ? 1 : 0),
     });
-    const actionGrid = content.actions.length >= 4;
+    const actionGrid = !loginMethodMenu && content.actions.length >= 4;
     let actionColumns = 1;
     // Compact single-row cards drop the Enter suffix so all agent labels fit narrow terminals.
     const labelFor = (item, compact = false) => {
@@ -451,6 +466,10 @@ export async function runStartMenu({
 
     const updateMenuHint = () => {
       const compact = renderer.width <= COMPACT_WIDTH || renderer.height <= 12 || (actionGrid && (renderer.width <= 80 || renderer.height <= 18));
+      if (loginMethodMenu) {
+        hint.content = t(compact ? "loginMethodCompactHint" : "loginMethodHint");
+        return;
+      }
       const skillsShortcut = selectedIndex === ompActionIndex && ompLeanModeEnabled;
       hint.content = t(compact
         ? skillsShortcut ? "compactHintLean" : "compactHint"
@@ -472,11 +491,11 @@ export async function runStartMenu({
       statusArea.paddingRight = compact ? 0 : 1;
       centerArea.alignItems = compact ? "stretch" : "center";
       modeArea.height = compact ? 1 : 2;
-      modeHint.visible = !compact;
+      modeHint.visible = !loginMethodMenu && !compact;
       // With 4+ agent cards the stacked column no longer fits a 24-row terminal
       // next to the mode rail, so non-compact layouts wrap cards in two columns too.
       const grid = compact ? content.actions.length > 1 : actionGrid;
-      actionColumns = grid ? (compact ? content.actions.length : 2) : 1;
+      actionColumns = loginMethodMenu ? 1 : grid ? (compact ? content.actions.length : 2) : 1;
       actionRow.flexDirection = grid ? "row" : "column";
       actionRow.flexWrap = grid ? "wrap" : "nowrap";
       actionRow.width = compact ? "100%" : (actionGrid ? "88%" : "70%");
@@ -591,6 +610,13 @@ export async function runStartMenu({
       updateDangerousMode();
     };
     const updateDangerousMode = (saveFailed = false) => {
+      if (loginMethodMenu) {
+        modeRail.content = t("loginMethodTitle");
+        modeRail.fg = "#F8FAFC";
+        modeHint.visible = false;
+        updateMenuHint();
+        return;
+      }
       const track = dangerousModeEnabled ? "○━━━━━━━━━━━━●" : "●━━━━━━━━━━━━○";
       modeRail.content = `${t("dangerousModeSafe")}  ${track}  ${t("dangerousModeYolo")}`;
       modeRail.fg = dangerousModeEnabled ? "#F87171" : "#86EFAC";
@@ -742,7 +768,7 @@ export async function runStartMenu({
         }
       }
     };
-    void updateProxyStatus();
+    if (!loginMethodMenu) void updateProxyStatus();
     if (updateChecker !== undefined) {
       Promise.resolve()
         .then(() => updateChecker({ signal: updateAbortController.signal }))
@@ -836,15 +862,15 @@ export async function runStartMenu({
         }
         return;
       }
-      if (noModifiers && event.name === "tab") {
+      if (!loginMethodMenu && noModifiers && event.name === "tab") {
         void setDangerousMode(!dangerousModeEnabled);
         return;
       }
-      if (noModifiers && event.name === "l") {
+      if (!loginMethodMenu && noModifiers && event.name === "l") {
         void setOmpLeanMode(!ompLeanModeEnabled);
         return;
       }
-      if (noModifiers && event.name === "space") {
+      if (!loginMethodMenu && noModifiers && event.name === "space") {
         void showSkillPicker();
         return;
       }
@@ -871,4 +897,16 @@ export async function runStartMenu({
     cleanup();
     throw error;
   }
+}
+
+export function runLoginMenu(options = {}) {
+  return runStartMenu({
+    ...options,
+    credentialState: "login-method",
+    updateChecker: undefined,
+    actions: {
+      oauth: async () => "oauth",
+      api: async () => "api",
+    },
+  });
 }
