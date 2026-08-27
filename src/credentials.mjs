@@ -38,6 +38,13 @@ function validEncodedSegment(segment) {
 const SAFE_CLAIM_RE = /^(?!.*[\u0000-\u001F\u007F-\u009F])[\s\S]+$/;
 function safeClaim(value, maxLength) { return typeof value === "string" && value.length > 0 && value.length <= maxLength && SAFE_CLAIM_RE.test(value); }
 
+function validApiKey(value) {
+  return typeof value === "string"
+    && value.length > 0
+    && value.length <= MAX_ACCESS_TOKEN_SIZE
+    && /^[\x21-\x7E]+$/.test(value);
+}
+
 function validHttpsOrigin(value) {
   try {
     const parsed = new URL(value);
@@ -94,6 +101,12 @@ export async function writePrivateJson(target, value) {
 
 function normalizeCredential(parsed) {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const keys = Object.keys(parsed);
+  if (keys.length === 1 && Object.hasOwn(parsed, "api_key")) {
+    return validApiKey(parsed.api_key) ? { kind: "api-key", apiKey: parsed.api_key } : null;
+  }
+  if (Object.hasOwn(parsed, "api_key")) return null;
+
   const accessExpiresAt = Date.parse(parsed.access_expires_at);
   const refreshExpiresAt = Date.parse(parsed.refresh_expires_at);
   let origin;
@@ -113,7 +126,7 @@ function normalizeCredential(parsed) {
     || !Number.isFinite(accessExpiresAt)
     || !Number.isFinite(refreshExpiresAt)
   ) return null;
-  return { ...parsed, accessExpiresAt, refreshExpiresAt };
+  return { ...parsed, kind: "oauth", accessExpiresAt, refreshExpiresAt };
 }
 
 export async function readCredentialFile(target) {
@@ -121,7 +134,7 @@ export async function readCredentialFile(target) {
   try {
     parsed = JSON.parse(await readFile(target, "utf8"));
   } catch (error) {
-    if (error?.code === "ENOENT") throw new Error("Not logged in. Run `zgap login` first.");
+    if (error?.code === "ENOENT") throw new Error("No zgap credentials configured. Run `zgap login`.");
     throw new Error(`Cannot read zgap credentials: ${error.message}`);
   }
   const credential = normalizeCredential(parsed);
@@ -146,6 +159,7 @@ export async function readCredentialState({ credentialFile, now = Date.now } = {
   }
   const credential = normalizeCredential(parsed);
   if (!credential) return "signed-out";
+  if (credential.kind === "api-key") return "api-key";
   return credential.refreshExpiresAt <= now() ? "expired" : "signed-in";
 }
 
@@ -223,6 +237,63 @@ export async function withCredentialLock(credentialFile, operation) {
   }
 }
 
+function oauthAttemptFile(credentialFile) {
+  return `${credentialFile}.oauth-attempt`;
+}
+
+function oauthAttemptContents(attemptId) {
+  return `${JSON.stringify({ attempt_id: attemptId })}\n`;
+}
+
+async function readOAuthAttempt(credentialFile) {
+  try {
+    return await readFile(oauthAttemptFile(credentialFile), "utf8");
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+export async function beginOAuthCredential(credentialFile) {
+  const attemptId = randomBytes(16).toString("hex");
+  await mkdir(path.dirname(credentialFile), { recursive: true, mode: 0o700 });
+  await withCredentialLock(credentialFile, () => writePrivateJson(
+    oauthAttemptFile(credentialFile),
+    { attempt_id: attemptId },
+  ));
+  return attemptId;
+}
+
+export async function commitOAuthCredential(credentialFile, attemptId, credential) {
+  await withCredentialLock(credentialFile, async () => {
+    if (await readOAuthAttempt(credentialFile) !== oauthAttemptContents(attemptId)) {
+      throw new Error("OAuth login was superseded by a newer credential change.");
+    }
+    // Claim the attempt before writing so a failed write cannot later revive this completed login.
+    await rm(oauthAttemptFile(credentialFile), { force: true });
+    await writePrivateJson(credentialFile, credential);
+  });
+}
+
+export async function cancelOAuthCredential(credentialFile, attemptId) {
+  await withCredentialLock(credentialFile, async () => {
+    if (await readOAuthAttempt(credentialFile) === oauthAttemptContents(attemptId)) {
+      await rm(oauthAttemptFile(credentialFile), { force: true });
+    }
+  });
+}
+
+export async function saveApiKey({ configDir = defaultConfigDir(), apiKey } = {}) {
+  if (!validApiKey(apiKey)) throw new Error("Invalid API key.");
+  const credentialFile = credentialsPath(configDir);
+  await mkdir(configDir, { recursive: true, mode: 0o700 });
+  await withCredentialLock(credentialFile, async () => {
+    // A later explicit API-key choice owns the credential even if an earlier browser flow finishes afterward.
+    await rm(oauthAttemptFile(credentialFile), { force: true });
+    await writePrivateJson(credentialFile, { api_key: apiKey });
+  });
+}
+
 export async function logout({ configDir = defaultConfigDir() } = {}) {
   const credentialFile = credentialsPath(configDir);
   try {
@@ -231,8 +302,11 @@ export async function logout({ configDir = defaultConfigDir() } = {}) {
     if (error?.code === "ENOENT") return;
     throw error;
   }
-  // Wait for an active token rotation, then delete its final credential so logout cannot be undone by that refresh.
-  await withCredentialLock(credentialFile, () => rm(credentialFile, { force: true }));
+  // Invalidate pending browser login before deleting so a late token response cannot sign the user back in.
+  await withCredentialLock(credentialFile, async () => {
+    await rm(oauthAttemptFile(credentialFile), { force: true });
+    await rm(credentialFile, { force: true });
+  });
 }
 
 export async function resolveAccessToken({
@@ -242,11 +316,13 @@ export async function resolveAccessToken({
   requestTimeoutMs = REQUEST_TIMEOUT_MS,
 } = {}) {
   const current = await readCredentialFile(credentialFile);
+  if (current.kind === "api-key") return current.apiKey;
   if (current.accessExpiresAt - now() > REFRESH_START_MS) return current.access_token;
 
   return withCredentialLock(credentialFile, async () => {
     // 다른 Codex process가 lock을 잡고 먼저 rotation했으면 새 파일을 그대로 쓴다.
     const credential = await readCredentialFile(credentialFile);
+    if (credential.kind === "api-key") return credential.apiKey;
     const timestamp = now();
     const accessRemainingMs = credential.accessExpiresAt - timestamp;
     if (accessRemainingMs > REFRESH_START_MS) return credential.access_token;

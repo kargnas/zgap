@@ -7,7 +7,15 @@ import {
   REQUEST_TIMEOUT_MS,
 } from "./constants.mjs";
 import { readProxyConfig } from "./config.mjs";
-import { credentialsPath, decodeAccessTokenProfile, defaultConfigDir, deviceIdFor, writePrivateJson } from "./credentials.mjs";
+import {
+  beginOAuthCredential,
+  cancelOAuthCredential,
+  commitOAuthCredential,
+  credentialsPath,
+  decodeAccessTokenProfile,
+  defaultConfigDir,
+  deviceIdFor,
+} from "./credentials.mjs";
 import { readSystemInfo } from "./system-info.mjs";
 
 function defaultOpenBrowser(url) {
@@ -31,8 +39,8 @@ export async function login({
 } = {}) {
   // config.yml is the only host for OAuth, stored credentials, and later refresh.
   const resolvedOrigin = origin ?? (await readProxyConfig(configDir)).origin;
-  const deviceId = await deviceIdFor(configDir);
-  const systemInfo = await readSystemInfo();
+  const credentialFile = credentialsPath(configDir);
+  const credentialAttempt = await beginOAuthCredential(credentialFile);
   const verifier = randomBytes(32).toString("base64url");
   const challenge = createHash("sha256").update(verifier).digest("base64url");
   const deadline = Date.now() + timeoutMs;
@@ -70,6 +78,8 @@ export async function login({
     }
   };
   const flow = async () => {
+    const deviceId = await deviceIdFor(configDir);
+    const systemInfo = await readSystemInfo();
     const authorizationResponse = await request("/cli/oauth/device_authorization", {
       client_id: CLIENT_ID,
       code_challenge: challenge,
@@ -150,7 +160,7 @@ export async function login({
 
     ensureWithinDeadline();
     const current = now();
-    await writePrivateJson(credentialsPath(configDir), {
+    await commitOAuthCredential(credentialFile, credentialAttempt, {
       access_expires_at: new Date(current + token.expires_in * 1000).toISOString(),
       access_token: token.access_token,
       device_id: deviceId,
@@ -159,6 +169,11 @@ export async function login({
       refresh_token: token.refresh_token,
     });
   };
-  await flow();
+  try {
+    await flow();
+  } catch (error) {
+    await cancelOAuthCredential(credentialFile, credentialAttempt);
+    throw error;
+  }
   log("Logged in. Run `zgap codex`.");
 }

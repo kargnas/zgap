@@ -212,6 +212,8 @@ test("서버 catalog의 중복 slug는 Codex 실행 전에 중단한다", async 
 test("login은 디바이스 승인 대기와 slow_down을 폴링하고 token pair를 저장한다", async (t) => {
   const root = await tempDir(t);
   const configDir = path.join(root, "config", "zgap");
+  await mkdir(configDir, { recursive: true });
+  await writeFile(path.join(configDir, "credentials.json"), JSON.stringify({ api_key: "sk-test-static-key" }), { mode: 0o600 });
   const home = path.join(root, "home");
   const codexHome = path.join(home, ".codex");
   await mkdir(codexHome, { recursive: true });
@@ -252,8 +254,20 @@ test("login은 디바이스 승인 대기와 slow_down을 폴링하고 token pai
     return responses.shift();
   };
 
+  const credentialFile = path.join(configDir, "credentials.json");
+  const { withCredentialLock } = await import("../src/credentials.mjs");
+  let releaseCredentialLock;
+  let markCredentialLockReady;
+  const credentialLockReady = new Promise((resolve) => { markCredentialLockReady = resolve; });
+  const credentialLockRelease = new Promise((resolve) => { releaseCredentialLock = resolve; });
+  const heldCredentialLock = withCredentialLock(credentialFile, async () => {
+    markCredentialLockReady();
+    await credentialLockRelease;
+  });
+  await credentialLockReady;
+
   const { login } = await import("../src/login.mjs");
-  await login({
+  const loginPromise = login({
     configDir,
     now: () => Date.parse("2026-08-11T00:00:00.000Z"),
     timeoutMs: 60_000,
@@ -264,6 +278,14 @@ test("login은 디바이스 승인 대기와 slow_down을 폴링하고 token pai
       openUrl = url;
     },
   });
+  const loginWhileLocked = await Promise.race([
+    loginPromise.then(() => "completed"),
+    delay(25, "blocked"),
+  ]);
+  releaseCredentialLock();
+  await heldCredentialLock;
+  if (loginWhileLocked === "blocked") await loginPromise;
+  assert.equal(loginWhileLocked, "blocked");
 
   assert.equal(requests[0].url, `${origin}/cli/oauth/device_authorization`);
   assert.deepEqual(requests[0].body, {
@@ -309,6 +331,106 @@ test("login은 디바이스 승인 대기와 slow_down을 폴링하고 token pai
   assert.equal((await stat(credentialPath)).mode & 0o777, 0o600);
 
   assert.equal(await readFile(path.join(codexHome, "config.toml"), "utf8"), originalCodexConfig);
+});
+
+test("늦게 완료된 OAuth login은 이후 API key 선택을 덮어쓰지 않는다", async (t) => {
+  const root = await tempDir(t);
+  const configDir = path.join(root, "config", "zgap");
+  const origin = "https://ai-proxy.zz.gg";
+  const apiKey = "sk-test-newer-static-key";
+  let releaseTokenResponse;
+  let markTokenRequested;
+  const tokenResponseRelease = new Promise((resolve) => { releaseTokenResponse = resolve; });
+  const tokenRequested = new Promise((resolve) => { markTokenRequested = resolve; });
+  let requestIndex = 0;
+
+  const { login } = await import("../src/login.mjs");
+  const loginPromise = login({
+    configDir,
+    origin,
+    timeoutMs: 60_000,
+    log() {},
+    openBrowser: async () => {},
+    sleep: async () => {},
+    fetchImpl: async () => {
+      requestIndex += 1;
+      if (requestIndex === 1) {
+        return new Response(JSON.stringify({
+          device_code: "device-code",
+          user_code: "ABCD-EFGH",
+          verification_uri: `${origin}/console/cli-auth`,
+          verification_uri_complete: `${origin}/console/cli-auth?device_code=device-code&user_code=ABCD-EFGH`,
+          expires_in: 600,
+          interval: 1,
+        }), { status: 200 });
+      }
+      markTokenRequested();
+      await tokenResponseRelease;
+      return new Response(JSON.stringify({
+        access_token: ACCESS_NEW,
+        expires_in: 86_400,
+        refresh_expires_in: 345_600,
+        refresh_token: REFRESH_NEW,
+        token_type: "Bearer",
+      }), { status: 200 });
+    },
+  });
+
+  await tokenRequested;
+  const { readCredentialFile, saveApiKey } = await import("../src/credentials.mjs");
+  await saveApiKey({ configDir, apiKey });
+  releaseTokenResponse();
+
+  await assert.rejects(loginPromise, /superseded by a newer credential change/);
+  assert.deepEqual(await readCredentialFile(path.join(configDir, "credentials.json")), {
+    kind: "api-key",
+    apiKey,
+  });
+});
+
+test("이전 OAuth 취소는 새 OAuth 시도의 marker를 지우지 않는다", async (t) => {
+  const root = await tempDir(t);
+  const credentialFile = path.join(root, "credentials.json");
+  const {
+    beginOAuthCredential,
+    cancelOAuthCredential,
+    commitOAuthCredential,
+    readCredentialFile,
+  } = await import("../src/credentials.mjs");
+  const olderAttempt = await beginOAuthCredential(credentialFile);
+  const newerAttempt = await beginOAuthCredential(credentialFile);
+
+  await cancelOAuthCredential(credentialFile, olderAttempt);
+  await commitOAuthCredential(credentialFile, newerAttempt, {
+    access_expires_at: "2099-01-02T00:00:00.000Z",
+    access_token: ACCESS_NEW,
+    device_id: "d".repeat(43),
+    origin: "https://ai-proxy.zz.gg",
+    refresh_expires_at: "2099-01-05T00:00:00.000Z",
+    refresh_token: REFRESH_NEW,
+  });
+
+  const credential = await readCredentialFile(credentialFile);
+  assert.equal(credential.kind, "oauth");
+  assert.equal(credential.access_token, ACCESS_NEW);
+  await assert.rejects(access(`${credentialFile}.oauth-attempt`), { code: "ENOENT" });
+});
+
+test("logout은 진행 중 OAuth를 무효화해 늦은 저장을 거부한다", async (t) => {
+  const root = await tempDir(t);
+  const configDir = path.join(root, "config", "zgap");
+  const credentialFile = path.join(configDir, "credentials.json");
+  const { beginOAuthCredential, commitOAuthCredential, logout } = await import("../src/credentials.mjs");
+  const attempt = await beginOAuthCredential(credentialFile);
+
+  await logout({ configDir });
+
+  await assert.rejects(
+    () => commitOAuthCredential(credentialFile, attempt, { unreachable: true }),
+    /superseded by a newer credential change/,
+  );
+  await assert.rejects(access(credentialFile), { code: "ENOENT" });
+  await assert.rejects(access(`${credentialFile}.oauth-attempt`), { code: "ENOENT" });
 });
 
 test("login은 설정 origin으로 인증하고 그 origin을 credential에 저장한다", async (t) => {
@@ -1804,7 +1926,7 @@ if (process.argv[2] === "--version") { process.stdout.write("omp/18.0.3\\n"); pr
     PATH: `${fakeBin}${path.delimiter}${process.env.PATH}`,
   });
   assert.equal(result.code, 1);
-  assert.match(result.stderr, /Not logged in\. Run `zgap login` first\./);
+  assert.match(result.stderr, /No zgap credentials configured\. Run `zgap login`\./);
   await assert.rejects(access(marker), { code: "ENOENT" });
 });
 
@@ -1844,6 +1966,23 @@ test("auth-token은 전체 CLI 모듈 없이 credential 경로만 실행한다",
 
   assert.equal(code, 0, stderr);
   assert.equal(stdout, ACCESS_OLD);
+});
+
+test("auth-token은 정적 API key를 refresh 없이 그대로 출력한다", async (t) => {
+  const root = await tempDir(t);
+  const credentialPath = path.join(root, "credentials.json");
+  const apiKey = "sk-test-static-key";
+  await writeFile(credentialPath, JSON.stringify({ api_key: apiKey }), { mode: 0o600 });
+
+  const child = spawn(process.execPath, [cliPath, "auth-token", credentialPath]);
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (chunk) => { stdout += chunk; });
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  const [code] = await once(child, "exit");
+
+  assert.equal(code, 0, stderr);
+  assert.equal(stdout, apiKey);
 });
 
 test("auth-token은 만료 임박 access를 한 번만 refresh하고 rotation 결과를 원자 저장한다", async (t) => {
@@ -2037,21 +2176,46 @@ test("auth-token은 refresh 요청이 멈추면 lock 만료 전에 중단한다"
   );
 });
 
-test("기존 API-key credential 파일은 재로그인을 요구한다", async (t) => {
+test("정적 API key credential은 만료나 network 없이 그대로 사용한다", async (t) => {
   const root = await tempDir(t);
   const credentialPath = path.join(root, "credentials.json");
-  await writeFile(credentialPath, JSON.stringify({ access_token: "sk-agp-u-old" }), { mode: 0o600 });
-  const { resolveAccessToken } = await import("../src/credentials.mjs");
-  await assert.rejects(
-    () => resolveAccessToken({ credentialFile: credentialPath }),
-    /Invalid zgap credentials\. Run `zgap login` again\./,
-  );
+  const apiKey = "sk-test-static-key";
+  await writeFile(credentialPath, JSON.stringify({ api_key: apiKey }), { mode: 0o600 });
+  const { readCredentialFile, readCredentialState, resolveAccessToken } = await import("../src/credentials.mjs");
+  const credential = await readCredentialFile(credentialPath);
+
+  assert.equal(credential.kind, "api-key");
+  assert.equal(credential.apiKey, apiKey);
+  assert.equal(await readCredentialState({ credentialFile: credentialPath }), "api-key");
+  assert.equal(await resolveAccessToken({
+    credentialFile: credentialPath,
+    fetchImpl: async () => { throw new Error("static key must not refresh"); },
+  }), apiKey);
 });
 
-test("credential 상태는 refresh session의 유효성만으로 로그인 상태를 구분한다", async (t) => {
+test("정적 API key credential은 빈 값과 혼합된 shape를 거부한다", async (t) => {
+  const root = await tempDir(t);
+  const { readCredentialFile, readCredentialState } = await import("../src/credentials.mjs");
+  const invalidCredentials = [
+    { api_key: "" },
+    { api_key: "bad key" },
+    { api_key: "sk-test-static-key", extra: true },
+    { api_key: "sk-test-static-key", access_token: ACCESS_OLD },
+  ];
+
+  for (const [index, credential] of invalidCredentials.entries()) {
+    const credentialPath = path.join(root, `${index}.json`);
+    await writeFile(credentialPath, JSON.stringify(credential), { mode: 0o600 });
+    await assert.rejects(() => readCredentialFile(credentialPath), /Invalid zgap credentials/);
+    assert.equal(await readCredentialState({ credentialFile: credentialPath }), "signed-out");
+  }
+});
+
+test("credential 상태는 OAuth 만료와 정적 API key를 구분한다", async (t) => {
   const root = await tempDir(t);
   const signedInFile = path.join(root, "signed-in.json");
   const expiredFile = path.join(root, "expired.json");
+  const apiKeyFile = path.join(root, "api-key.json");
   const invalidFile = path.join(root, "invalid.json");
   const invalidShapeFile = path.join(root, "invalid-shape.json");
   const unreadablePath = path.join(root, "directory");
@@ -2071,10 +2235,12 @@ test("credential 상태는 refresh session의 유효성만으로 로그인 상�
   }), { mode: 0o600 });
   await writeFile(invalidFile, "not-json", { mode: 0o600 });
   await writeFile(invalidShapeFile, "null", { mode: 0o600 });
+  await writeFile(apiKeyFile, JSON.stringify({ api_key: "sk-test-static-key" }), { mode: 0o600 });
   await mkdir(unreadablePath);
   const { readCredentialState } = await import("../src/credentials.mjs");
 
   assert.equal(await readCredentialState({ credentialFile: signedInFile, now: () => now }), "signed-in");
+  assert.equal(await readCredentialState({ credentialFile: apiKeyFile, now: () => now }), "api-key");
   assert.equal(await readCredentialState({ credentialFile: expiredFile, now: () => now }), "expired");
   assert.equal(await readCredentialState({ credentialFile: path.join(root, "missing.json"), now: () => now }), "signed-out");
   assert.equal(await readCredentialState({ credentialFile: invalidFile, now: () => now }), "signed-out");
