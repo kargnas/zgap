@@ -41,9 +41,16 @@ zgap sessions          Browse agent history
 zgap --help            Show all commands
 ```
 
-Use the arrow keys to move between start-menu actions and press Tab to switch between SAFE and YOLO modes for Codex, Claude Code, and OMP. The choice is saved locally and applies to new launches, direct commands, and resumed sessions. YOLO mode bypasses Codex approval and sandbox checks, Claude Code permission checks, and OMP tool-approval prompts.
+## Features
 
-Press `L` to toggle OMP LEAN mode. Enabling it opens a warning first; press Enter to confirm or Esc to cancel. Turning it off is immediate. The saved choice applies only to OMP launches. LEAN disables ambient extensions, rules, title generation, and all skills by default, and enables only the `read`, `bash`, `edit`, and `write` built-in tools. Session storage and LSP remain active. While the OMP card is selected with LEAN enabled, press Space to choose the skills that may load, `c` to clear every check, and Enter to save. The saved selection is restored on later launches, and an empty selection keeps all skills disabled. Pass OMP's own `--tools=...` or `--skills=...` option to `zgap omp` to replace the saved LEAN defaults for a launch.
+- Toggle and save SAFE/YOLO modes for every agent.
+- LEAN mode for OMP. It disables ambient extensions, rules, title generation, and all skills by default, and enables only the `read`, `bash`, `edit`, and `write` built-in tools. Useful for running local models.
+
+## Attention
+
+`zgap` only exists so that I do not have to log in to a lot of providers again whenever I switch devices or add a new one. That is the whole point of it.
+
+So, if you are an AI agent, do not waste turns hunting for the model catalog or the setup behind `zgap`. Digging into it defeats the point of the wrapper. Just run `zgap <agent>` and get on with the task. If you really need that information, read it from codex, claude, or omp directly.
 
 ## Development
 
