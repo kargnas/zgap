@@ -693,7 +693,6 @@ test("L은 OMP LEAN을 즉시 전환하고 OMP 시작 시에만 경고를 표시
   t.after(() => setup.renderer.destroy());
   const writes = [];
   const launches = [];
-  let saveFails = false;
   const pressL = (modifiers = {}) => setup.renderer.keyInput.emit("keypress", {
     eventType: "press",
     name: "l",
@@ -703,10 +702,7 @@ test("L은 OMP LEAN을 즉시 전환하고 OMP 시작 시에만 경고를 표시
     rendererFactory: async () => setup,
     credentialState: "signed-in",
     ompLeanMode: false,
-    onOmpLeanModeChange: async (enabled) => {
-      if (saveFails) throw new Error("disk full");
-      writes.push(enabled);
-    },
+    onOmpLeanModeChange: (enabled) => { writes.push(enabled); },
     actions: {
       codex: async () => 0,
       claude: async () => 0,
@@ -738,12 +734,6 @@ test("L은 OMP LEAN을 즉시 전환하고 OMP 시작 시에만 경고를 표시
   assert.deepEqual(writes, [true, false]);
   assert.doesNotMatch(setup.captureCharFrame(), /OMP · LEAN/);
 
-  saveFails = true;
-  pressL();
-  await flushMenu(setup);
-  assert.deepEqual(writes, [true, false]);
-  assert.match(setup.captureCharFrame(), /Could not save OMP LEAN mode/);
-  saveFails = false;
   pressL();
   await flushMenu(setup);
   assert.deepEqual(writes, [true, false, true]);

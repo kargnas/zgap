@@ -126,7 +126,7 @@ export async function runStartMenu({
   ompLeanMode = false,
   ompLeanSkills = [],
   onDangerousModeChange = async () => { throw new Error("Missing dangerous mode persistence handler."); },
-  onOmpLeanModeChange = async () => { throw new Error("Missing OMP lean mode persistence handler."); },
+  onOmpLeanModeChange = () => {},
   onOmpSkillsLoad = async () => { throw new Error("Missing OMP skill loader."); },
   onOmpLeanSkillsChange = async () => { throw new Error("Missing OMP lean skills persistence handler."); },
 } = {}) {
@@ -642,31 +642,18 @@ export async function runStartMenu({
         modeChangePending = false;
       }
     };
-    const updateOmpLeanMode = (saveFailed = false) => {
+    const updateOmpLeanMode = () => {
       if (ompActionIndex < 0) return;
       fullLabels[ompActionIndex] = labelFor(content.actions[ompActionIndex]);
       compactLabels[ompActionIndex] = labelFor(content.actions[ompActionIndex], true);
       applyResponsiveLayout(renderer.width, renderer.height);
-      if (saveFailed) {
-        modeHint.content = t("ompLeanModeSaveFailed");
-        modeHint.fg = "#F87171";
-      } else {
-        updateDangerousMode();
-      }
+      updateDangerousMode();
     };
-    const setOmpLeanMode = async (enabled) => {
+    const setOmpLeanMode = (enabled) => {
       if (modeChangePending || enabled === ompLeanModeEnabled || ompActionIndex < 0) return;
-      modeChangePending = true;
-      try {
-        await onOmpLeanModeChange(enabled);
-        if (cleaned) return;
-        ompLeanModeEnabled = enabled;
-        updateOmpLeanMode();
-      } catch {
-        if (!cleaned) updateOmpLeanMode(true);
-      } finally {
-        modeChangePending = false;
-      }
+      onOmpLeanModeChange(enabled);
+      ompLeanModeEnabled = enabled;
+      updateOmpLeanMode();
     };
     const showLeanWarning = () => {
       leanWarningVisible = true;

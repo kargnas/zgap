@@ -76,7 +76,6 @@
   "dangerousModeYolo": "YOLO",
   "dangerousModeSelectHint": "Tab switches SAFE/YOLO · L toggles OMP LEAN",
   "dangerousModeSaveFailed": "Could not save YOLO mode",
-  "ompLeanModeSaveFailed": "Could not save OMP LEAN mode",
   "ompLeanWarningTitle": "OMP LEAN ACTIVE",
   "ompLeanWarningBody": "Project extensions and rules will not load; only selected skills may load.",
   "ompLeanWarningDetails": "Only read, bash, edit, and write stay available. Title generation is off; sessions and LSP stay on.",

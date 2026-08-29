@@ -76,7 +76,6 @@
   "dangerousModeYolo": "YOLO",
   "dangerousModeSelectHint": "Tab으로 SAFE/YOLO 전환 · L로 OMP LEAN 전환",
   "dangerousModeSaveFailed": "YOLO 모드를 저장하지 못했습니다",
-  "ompLeanModeSaveFailed": "OMP LEAN 모드를 저장하지 못했습니다",
   "ompLeanWarningTitle": "OMP LEAN 활성화됨",
   "ompLeanWarningBody": "프로젝트 확장과 규칙은 불러오지 않으며, 선택한 스킬만 불러올 수 있습니다.",
   "ompLeanWarningDetails": "read, bash, edit, write 도구만 사용합니다. 제목 생성은 끄고 세션과 LSP는 유지합니다.",
