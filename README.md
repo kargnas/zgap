@@ -44,7 +44,7 @@ zgap --help            Show all commands
 ## Features
 
 - Toggle and save SAFE/YOLO modes for every agent.
-- LEAN mode for OMP. It disables ambient extensions, rules, title generation, and all skills by default, and enables only the `read`, `bash`, `edit`, and `write` built-in tools. Useful for running local models.
+- LEAN mode for OMP starts OFF on every launch and is enabled only for the current run with `L`. It disables ambient extensions, rules, title generation, and all skills by default, and enables only the `read`, `bash`, `edit`, and `write` built-in tools. Selected LEAN skills remain saved for the next activation.
 
 ## Attention
 
