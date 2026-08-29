@@ -12,66 +12,51 @@ async function tempDir(t) {
 
 test("launch mode preferences default to false when preferences.json is absent", async (t) => {
   const configDir = await tempDir(t);
-  const { readDangerousMode, readOmpLeanMode, readOmpLeanSkills } = await import("../src/preferences.mjs");
+  const { readDangerousMode, readOmpLeanSkills } = await import("../src/preferences.mjs");
 
   assert.equal(await readDangerousMode(configDir), false);
-  assert.equal(await readOmpLeanMode(configDir), false);
   assert.deepEqual(await readOmpLeanSkills(configDir), []);
 });
 
-test("launch mode writers preserve the other preference", async (t) => {
+test("launch mode writers preserve the other preferences", async (t) => {
   const configDir = await tempDir(t);
   const preferencesFile = path.join(configDir, "preferences.json");
   const {
     readDangerousMode,
-    readOmpLeanMode,
+    readOmpLeanSkills,
     writeDangerousMode,
-    writeOmpLeanMode,
+    writeOmpLeanSkills,
   } = await import("../src/preferences.mjs");
 
   await writeDangerousMode(true, configDir);
   assert.equal(await readDangerousMode(configDir), true);
-  assert.equal(await readOmpLeanMode(configDir), false);
   assert.equal(await readFile(preferencesFile, "utf8"), '{"dangerousMode":true}\n');
 
-  await writeOmpLeanMode(true, configDir);
+  await writeOmpLeanSkills(["alpha"], configDir);
   assert.equal(await readDangerousMode(configDir), true);
-  assert.equal(await readOmpLeanMode(configDir), true);
-  assert.equal(await readFile(preferencesFile, "utf8"), '{"dangerousMode":true,"ompLeanMode":true}\n');
+  assert.deepEqual(await readOmpLeanSkills(configDir), ["alpha"]);
+  assert.equal(await readFile(preferencesFile, "utf8"), '{"dangerousMode":true,"ompLeanSkills":["alpha"]}\n');
 
   await writeDangerousMode(false, configDir);
-  assert.equal(await readOmpLeanMode(configDir), true);
-  assert.equal(await readFile(preferencesFile, "utf8"), '{"dangerousMode":false,"ompLeanMode":true}\n');
+  assert.deepEqual(await readOmpLeanSkills(configDir), ["alpha"]);
+  assert.equal(await readFile(preferencesFile, "utf8"), '{"dangerousMode":false,"ompLeanSkills":["alpha"]}\n');
 });
 
-test("legacy dangerous mode preference defaults OMP lean mode to false", async (t) => {
-  const configDir = await tempDir(t);
-  const preferencesFile = path.join(configDir, "preferences.json");
-  const { readDangerousMode, readOmpLeanMode, writeOmpLeanMode } = await import("../src/preferences.mjs");
-  await writeFile(preferencesFile, '{"dangerousMode":true}\n');
-
-  assert.equal(await readDangerousMode(configDir), true);
-  assert.equal(await readOmpLeanMode(configDir), false);
-
-  await writeOmpLeanMode(true, configDir);
-  assert.equal(await readFile(preferencesFile, "utf8"), '{"dangerousMode":true,"ompLeanMode":true}\n');
-});
-
-test("OMP lean skills preserve exact unique names and legacy files", async (t) => {
+test("OMP lean skills preserve exact unique names and existing preferences", async (t) => {
   const configDir = await tempDir(t);
   const preferencesFile = path.join(configDir, "preferences.json");
   const { readOmpLeanSkills, writeOmpLeanSkills } = await import("../src/preferences.mjs");
 
-  await writeFile(preferencesFile, '{"dangerousMode":false,"ompLeanMode":true}\n');
+  await writeFile(preferencesFile, '{"dangerousMode":false}\n');
   assert.deepEqual(await readOmpLeanSkills(configDir), []);
 
   await writeOmpLeanSkills(["alpha", "beta", "alpha"], configDir);
   assert.deepEqual(await readOmpLeanSkills(configDir), ["alpha", "beta"]);
-  assert.equal(await readFile(preferencesFile, "utf8"), '{"dangerousMode":false,"ompLeanMode":true,"ompLeanSkills":["alpha","beta"]}\n');
+  assert.equal(await readFile(preferencesFile, "utf8"), '{"dangerousMode":false,"ompLeanSkills":["alpha","beta"]}\n');
 
   await writeOmpLeanSkills([], configDir);
   assert.deepEqual(await readOmpLeanSkills(configDir), []);
-  assert.equal(await readFile(preferencesFile, "utf8"), '{"dangerousMode":false,"ompLeanMode":true,"ompLeanSkills":[]}\n');
+  assert.equal(await readFile(preferencesFile, "utf8"), '{"dangerousMode":false,"ompLeanSkills":[]}\n');
 });
 
 test("launch mode preferences reject malformed or unknown records", async (t) => {
@@ -83,11 +68,10 @@ test("launch mode preferences reject malformed or unknown records", async (t) =>
     "not json",
     "{}",
     '{"dangerousMode":"yes"}',
-    '{"dangerousMode":false,"ompLeanMode":"yes"}',
     '{"dangerousMode":false,"ompLeanSkills":["ok",""]}',
     '{"dangerousMode":false,"ompLeanSkills":["ok","ok"]}',
     '{"dangerousMode":false,"ompLeanSkills":[1]}',
-    '{"dangerousMode":false,"ompLeanMode":false,"extra":true}',
+    '{"dangerousMode":false,"extra":true}',
     "null",
     "[]",
   ]) {

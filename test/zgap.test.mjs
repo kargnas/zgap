@@ -1052,7 +1052,7 @@ test("claude가 PATH에 없으면 명확한 오류를 반환한다", async () =>
   assert.match(result.stderr, /Claude CLI is not installed or not in PATH/);
 });
 
-test("start menu의 OMP action은 저장된 lean skill과 변경 hook을 전달한다", async () => {
+test("start menu의 OMP action은 저장된 lean skill과 현재 실행의 lean mode를 전달한다", async () => {
   const { main } = await import("../src/cli.mjs");
   let menuOptions;
   let ompOptions;
@@ -1062,11 +1062,12 @@ test("start menu의 OMP action은 저장된 lean skill과 변경 hook을 전달�
     configReader: async () => ({ host: "proxy.example.test", origin: "https://proxy.example.test" }),
     credentialStateReader: async () => "signed-out",
     dangerousModeReader: async () => false,
-    ompLeanModeReader: async () => true,
     ompSkillsLoader: async () => [{ name: "alpha", source: "test:user" }],
     ompLeanSkillsReader: async () => ["alpha"],
     startMenu: async (options) => {
       menuOptions = options;
+      assert.equal(options.ompLeanMode, false);
+      await options.onOmpLeanModeChange(true);
       await options.actions.omp();
       return 0;
     },
@@ -1077,8 +1078,8 @@ test("start menu의 OMP action은 저장된 lean skill과 변경 hook을 전달�
   });
   assert.equal(result, 0);
   assert.deepEqual(menuOptions.ompLeanSkills, ["alpha"]);
-  assert.equal(menuOptions.ompLeanMode, true);
   assert.deepEqual(await menuOptions.onOmpSkillsLoad(), [{ name: "alpha", source: "test:user" }]);
+  assert.equal(ompOptions.leanMode, true);
   assert.deepEqual(ompOptions.ompLeanSkills, ["alpha"]);
   await menuOptions.onOmpLeanSkillsChange(["beta"]);
   await menuOptions.actions.omp();
@@ -1194,10 +1195,10 @@ process.exitCode = 5;
   );
   assert.deepEqual(safeInvocation.argv.slice(-2), ["--print", "hello"]);
 
-  await writeFile(path.join(configDir, "preferences.json"), '{"dangerousMode":false,"ompLeanMode":true}\n');
-  const leanResult = await runCli(["omp", "--print", "hello"], cliEnv);
-  assert.equal(leanResult.code, 5, leanResult.stderr);
-  const leanInvocation = JSON.parse(leanResult.stdout);
+  await writeFile(path.join(configDir, "preferences.json"), '{"dangerousMode":false,"ompLeanSkills":["alpha","beta"]}\n');
+  const savedSkillsResult = await runCli(["omp", "--print", "hello"], cliEnv);
+  assert.equal(savedSkillsResult.code, 5, savedSkillsResult.stderr);
+  const savedSkillsInvocation = JSON.parse(savedSkillsResult.stdout);
   const leanArgs = [
     "--no-extensions",
     "--no-skills",
@@ -1205,20 +1206,10 @@ process.exitCode = 5;
     "--no-title",
     "--tools=read,bash,edit,write",
   ];
-  const leanArgsStart = leanInvocation.argv.indexOf(leanArgs[0]);
-  assert.notEqual(leanArgsStart, -1);
-  assert.deepEqual(leanInvocation.argv.slice(leanArgsStart, leanArgsStart + leanArgs.length), leanArgs);
-  assert.equal(leanInvocation.argv.includes("--no-session"), false);
-  assert.equal(leanInvocation.argv.includes("--no-lsp"), false);
-  assert.equal(leanInvocation.argv.includes("--auto-approve"), false);
-  assert.deepEqual(leanInvocation.argv.slice(-2), ["--print", "hello"]);
-
-  await writeFile(path.join(configDir, "preferences.json"), '{"dangerousMode":false,"ompLeanMode":true,"ompLeanSkills":["alpha","beta"]}\n');
-  const selectedSkillsResult = await runCli(["omp", "--print", "hello"], cliEnv);
-  assert.equal(selectedSkillsResult.code, 5, selectedSkillsResult.stderr);
-  const selectedSkillsInvocation = JSON.parse(selectedSkillsResult.stdout);
-  assert.equal(selectedSkillsInvocation.argv.includes("--no-skills"), false);
-  assert.equal(selectedSkillsInvocation.argv.includes("--skills=alpha,beta"), true);
+  assert.equal(leanArgs.some((arg) => savedSkillsInvocation.argv.includes(arg)), false);
+  assert.equal(savedSkillsInvocation.argv.includes("--skills=alpha,beta"), false);
+  assert.equal(savedSkillsInvocation.argv.includes("--auto-approve"), false);
+  assert.deepEqual(savedSkillsInvocation.argv.slice(-2), ["--print", "hello"]);
 
   const explicitSkillsResult = await runCli(["omp", "--skills=custom", "--print", "hello"], cliEnv);
   assert.equal(explicitSkillsResult.code, 5, explicitSkillsResult.stderr);

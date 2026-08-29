@@ -397,19 +397,17 @@ test("시작 메뉴의 dangerous mode 변경은 저장 후 같은 프로세스�
   });
 });
 
-test("시작 메뉴의 OMP LEAN 변경은 저장 후 같은 프로세스의 OMP 실행에만 적용한다", async () => {
+test("시작 메뉴의 OMP LEAN 변경은 현재 OMP 실행에만 적용하고 저장하지 않는다", async (t) => {
   const { main } = await import("../src/cli.mjs");
-  const writes = [];
+  const configDir = await tempDir(t);
   let launch;
 
   const result = await main({
     argv: [],
-    configDir: "/tmp/zgap-config",
+    configDir,
     credentialStateReader: async () => "signed-out",
     configReader: async () => ({ host: "ai-proxy.zz.gg", origin: "https://ai-proxy.zz.gg" }),
     dangerousModeReader: async () => false,
-    ompLeanModeReader: async () => false,
-    ompLeanModeWriter: async (enabled) => { writes.push(enabled); },
     ompRunner: async (args, options) => { launch = { args, options }; return 25; },
     startMenu: async (options) => {
       assert.equal(options.ompLeanMode, false);
@@ -419,14 +417,38 @@ test("시작 메뉴의 OMP LEAN 변경은 저장 후 같은 프로세스의 OMP 
   });
 
   assert.equal(result, 25);
-  assert.deepEqual(writes, [true]);
   assert.deepEqual(launch, {
     args: [],
     options: {
-      configDir: "/tmp/zgap-config",
+      configDir,
       origin: "https://ai-proxy.zz.gg",
       dangerousMode: false,
       leanMode: true,
+    },
+  });
+  await assert.rejects(readFile(path.join(configDir, "preferences.json"), "utf8"), { code: "ENOENT" });
+});
+
+test("직접 OMP 명령은 LEAN OFF로 시작한다", async (t) => {
+  const { main } = await import("../src/cli.mjs");
+  const configDir = await tempDir(t);
+  await writeFile(path.join(configDir, "preferences.json"), '{"dangerousMode":false,"ompLeanSkills":["git"]}\n');
+  let launch;
+
+  const result = await main({
+    argv: ["omp"],
+    configDir,
+    configReader: async () => ({ host: "ai-proxy.zz.gg", origin: "https://ai-proxy.zz.gg" }),
+    ompRunner: async (args, options) => { launch = { args, options }; return 26; },
+  });
+
+  assert.equal(result, 26);
+  assert.deepEqual(launch, {
+    args: [],
+    options: {
+      configDir,
+      origin: "https://ai-proxy.zz.gg",
+      dangerousMode: false,
     },
   });
 });
