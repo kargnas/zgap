@@ -25,6 +25,44 @@ const ACCESS_NEW = jwt("new@example.com", "claude");
 const REFRESH_OLD = `zgap-rt-${"c".repeat(43)}`;
 const REFRESH_NEW = `zgap-rt-${"d".repeat(43)}`;
 
+test("request context는 허용 필드만 UTF-8 Base64URL로 인코딩한다", async () => {
+  const { REQUEST_CONTEXT_HEADER, createRequestContext, decodeRequestContext, requestContextHeaders, resumeSessionId } = await import("../src/request-context.mjs");
+  const context = createRequestContext({
+    tool: "codex",
+    cwd: "/repo/project",
+    sessionId: resumeSessionId(["resume", "session-123"]),
+    wrapperVersion: "0.1.0",
+    systemInfo: {
+      hostname: "workstation",
+      os_name: "TestOS",
+      os_version: "1.2.3",
+      os_arch: "x64",
+    },
+    pid: 1234,
+    launchId: "launch-123",
+  });
+  context.prompt = "never send this";
+  const encoded = requestContextHeaders(context)[REQUEST_CONTEXT_HEADER];
+  assert.match(encoded, /^[A-Za-z0-9_-]+$/);
+  assert.deepEqual(decodeRequestContext(encoded), {
+    v: 1,
+    tool: "codex",
+    wrapper_version: "0.1.0",
+    hostname: "workstation",
+    os_name: "TestOS",
+    os_version: "1.2.3",
+    os_arch: "x64",
+    cwd: "/repo/project",
+    project: "project",
+    session_id: "session-123",
+    launch_id: "launch-123",
+    pid: 1234,
+  });
+  assert.equal(resumeSessionId(["--print", "prompt text"]), undefined);
+  assert.equal(resumeSessionId(["--resume=session-456"]), "session-456");
+  assert.equal(decodeRequestContext(Buffer.from("{}", "utf8").toString("base64url")), null);
+});
+
 test("JWT access token profile은 계약 필드만 표시용으로 해석한다", async () => {
   const { decodeAccessTokenProfile } = await import("../src/credentials.mjs");
   assert.deepEqual(decodeAccessTokenProfile(ACCESS_NEW), {
@@ -796,6 +834,25 @@ else {
   const joined = invocation.argv.join("\n");
   assert.match(joined, /model_provider="zgap"/);
   assert.match(joined, /model_providers\.zgap=\{name="zgap",base_url="https:\/\/proxy\.example\.test\/v1"/);
+  const { decodeRequestContext } = await import("../src/request-context.mjs");
+  const { normalizeSystemInfo } = await import("../src/system-info.mjs");
+  const expectedSystemInfo = normalizeSystemInfo({ platform: os.platform(), hostname: os.hostname(), release: os.release(), arch: os.arch() });
+  const codexContextValue = joined.match(/X-Zgap-Request-Context"="([^"]+)"/)?.[1];
+  const codexContext = decodeRequestContext(codexContextValue);
+  assert.deepEqual(codexContext, {
+    v: 1,
+    tool: "codex",
+    wrapper_version: "0.1.0",
+    hostname: expectedSystemInfo.hostname,
+    os_name: expectedSystemInfo.os_name,
+    os_version: expectedSystemInfo.os_version,
+    os_arch: expectedSystemInfo.os_arch,
+    cwd: process.cwd(),
+    project: path.basename(process.cwd()),
+    launch_id: codexContext.launch_id,
+    pid: codexContext.pid,
+  });
+  assert.equal(Object.hasOwn(codexContext, "session_id"), false);
   assert.match(joined, /auth=\{command=/);
   assert.match(joined, /auth-token/);
   assert.match(joined, new RegExp(credentialPathPattern(path.join(configDir, "credentials.json"))));
@@ -980,7 +1037,7 @@ test("claude는 gateway 환경과 apiKeyHelper 설정만 프로세스에 주입�
 import { writeFileSync } from "node:fs";
 writeFileSync(process.env.FAKE_CLAUDE_MARKER, JSON.stringify({
   argv: process.argv.slice(2),
-  env: Object.fromEntries(["ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_FOUNDRY_API_KEY", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "CLAUDE_CODE_API_BASE_URL", "CLAUDE_CODE_PROXY_URL", "CLAUDE_CODE_SESSION_ACCESS_TOKEN", "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", "CLAUDE_CODE_MAX_CONTEXT_TOKENS", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST", "CLAUDE_CONFIG_DIR"].map((key) => [key, process.env[key] ?? null])),
+  env: Object.fromEntries(["ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_FOUNDRY_API_KEY", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_CUSTOM_HEADERS", "CLAUDE_CODE_API_BASE_URL", "CLAUDE_CODE_PROXY_URL", "CLAUDE_CODE_SESSION_ACCESS_TOKEN", "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", "CLAUDE_CODE_MAX_CONTEXT_TOKENS", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST", "CLAUDE_CONFIG_DIR"].map((key) => [key, process.env[key] ?? null])),
 }));
 process.exitCode = 7;
 `);
@@ -1002,6 +1059,10 @@ process.exitCode = 7;
   assert.equal(settings.env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY, "1");
   assert.equal(settings.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, "262144");
   assert.equal(settings.env.CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK, "1");
+  const { decodeRequestContext } = await import("../src/request-context.mjs");
+  const claudeContextValue = settings.env.ANTHROPIC_CUSTOM_HEADERS.match(/X-Zgap-Request-Context: ([A-Za-z0-9_-]+)/)?.[1];
+  assert.equal(decodeRequestContext(claudeContextValue).tool, "claude");
+  assert.equal(decodeRequestContext(claudeContextValue).cwd, process.cwd());
   for (const name of [
     "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_AWS_API_KEY", "ANTHROPIC_FOUNDRY_API_KEY",
     "ANTHROPIC_FOUNDRY_AUTH_TOKEN", "ANTHROPIC_VERTEX_PROJECT_ID", "CLAUDE_CODE_API_BASE_URL",
@@ -1011,6 +1072,7 @@ process.exitCode = 7;
     "CLAUDE_CODE_USE_GATEWAY", "CLAUDE_CODE_USE_VERTEX",
   ]) assert.equal(settings.env[name], "", name);
   assert.equal(invocation.env.ANTHROPIC_BASE_URL, "https://proxy.example.test");
+  assert.equal(invocation.env.ANTHROPIC_CUSTOM_HEADERS, settings.env.ANTHROPIC_CUSTOM_HEADERS);
   assert.equal(invocation.env.ANTHROPIC_API_KEY, null);
   assert.equal(invocation.env.ANTHROPIC_AUTH_TOKEN, null);
   assert.equal(invocation.env.ANTHROPIC_FOUNDRY_API_KEY, null);
@@ -1244,6 +1306,7 @@ import("node:fs").then(({ writeFileSync }) => writeFileSync(${JSON.stringify(man
 
 test("OMP extension은 zzgg 단일 provider로 catalog 모델을 등록한다", async () => {
   const { authTokenCommand, registerProxyProviders, PROVIDER_NAME } = await import("../src/omp-provider-extension.mjs");
+  const { decodeRequestContext, REQUEST_CONTEXT_HEADER } = await import("../src/request-context.mjs");
   const flags = [];
   const registrations = [];
   const handlers = new Map();
@@ -1413,8 +1476,17 @@ test("OMP extension은 zzgg 단일 provider로 catalog 모델을 등록한다", 
   assert.match(expectedKey, /auth-token/);
   assert.equal(zzgg.apiKey, expectedKey);
   assert.equal(zzgg.authHeader, true);
+  const ompContext = decodeRequestContext(zzgg.headers[REQUEST_CONTEXT_HEADER]);
+  assert.equal(ompContext.tool, "omp");
+  assert.equal(ompContext.cwd, process.cwd());
+  assert.equal(ompContext.project, path.basename(process.cwd()));
+  assert.equal(typeof ompContext.launch_id, "string");
+  assert.equal(typeof ompContext.pid, "number");
   const anthropicModel = zzggModels.models.find((model) => model.api === "anthropic-messages");
   assert.equal(anthropicModel.headers["X-Api-Key"], expectedKey);
+  assert.equal(anthropicModel.headers[REQUEST_CONTEXT_HEADER], zzgg.headers[REQUEST_CONTEXT_HEADER]);
+  const codexModel = zzggModels.models.find((model) => model.api === "openai-codex-responses");
+  assert.equal(codexModel.headers[REQUEST_CONTEXT_HEADER], zzgg.headers[REQUEST_CONTEXT_HEADER]);
   assert.equal(zzgg.headers["X-Zgap-Provider-Override"], requiredFlagName);
   assert.deepEqual(env, {
     ANTHROPIC_CUSTOM_HEADERS: "x-tenant: keep",
