@@ -5,6 +5,7 @@ import { readProxyConfig } from "./config.mjs";
 import { fetchModelCatalog } from "./catalog.mjs";
 import { credentialsPath, defaultConfigDir, resolveAccessToken } from "./credentials.mjs";
 import { installOmpProviderCompat, requiredFlagFromArgv } from "./omp-provider-compat.mjs";
+import { createRequestContext, requestContextHeaders, resumeSessionId } from "./request-context.mjs";
 
 const CLI_FILE = realpathSync(fileURLToPath(new URL("../bin/zgap.mjs", import.meta.url)));
 
@@ -145,14 +146,16 @@ export function registerProxyProviders(pi, {
   platform = process.platform,
   env = process.env,
   terminate,
+  requestContext = createRequestContext({ tool: "omp", cwd: process.cwd(), sessionId: resumeSessionId(process.argv.slice(2)) }),
 }) {
   const apiKey = authTokenCommand(credentialFile, platform, env);
+  const contextHeaders = requestContextHeaders(requestContext);
   const codexBaseUrl = `${origin}/v1/responses?omp_endpoint=/codex/responses`;
   const providerModels = normalizeProviderModels(models).map((definition) => definition.api === ANTHROPIC_API
     // Parity with the previous dedicated Anthropic registration: the proxy accepts
     // either header, and direct Anthropic clients send both bearer and X-Api-Key.
-    ? { ...definition, baseUrl: origin, headers: { "X-Api-Key": apiKey } }
-    : { ...definition, baseUrl: codexBaseUrl });
+    ? { ...definition, baseUrl: origin, headers: { ...contextHeaders, "X-Api-Key": apiKey } }
+    : { ...definition, baseUrl: codexBaseUrl, headers: contextHeaders });
   installOmpProviderCompat(pi, {
     requiredFlagName,
     env,
@@ -162,6 +165,7 @@ export function registerProxyProviders(pi, {
         baseUrl: origin,
         apiKey,
         authHeader: true,
+        headers: contextHeaders,
         models: providerModels,
       }],
     ],
