@@ -4,23 +4,25 @@ import { fileURLToPath } from "node:url";
 import { ORIGIN } from "./constants.mjs";
 import { credentialsPath, defaultConfigDir } from "./credentials.mjs";
 import { createEphemeralCatalog, removeEphemeralCatalog, resolveCodexExecutable } from "./catalog.mjs";
+import { createRequestContext, requestContextHeaders, resumeSessionId } from "./request-context.mjs";
 
 const CLI_FILE = realpathSync(fileURLToPath(new URL("../bin/zgap.mjs", import.meta.url)));
 const FORWARDED_SIGNALS = process.platform === "win32"
   ? ["SIGINT", "SIGTERM"]
   : ["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT"];
 
-function providerTable(credentialFile, origin, spaced = false) {
+function providerTable(credentialFile, origin, headers, spaced = false) {
   const quote = JSON.stringify;
   const apiBaseUrl = `${origin}/v1`;
+  const httpHeaders = `{${quote(Object.keys(headers)[0])}=${quote(Object.values(headers)[0])}}`;
   if (spaced) {
-    return `{ name = ${quote("zgap")}, base_url = ${quote(apiBaseUrl)}, auth = { command = ${quote(process.execPath)}, args = [${quote(CLI_FILE)}, ${quote("auth-token")}, ${quote(credentialFile)}] } }`;
+    return `{ name = ${quote("zgap")}, base_url = ${quote(apiBaseUrl)}, http_headers = ${httpHeaders}, auth = { command = ${quote(process.execPath)}, args = [${quote(CLI_FILE)}, ${quote("auth-token")}, ${quote(credentialFile)}] } }`;
   }
-  return `{name=${quote("zgap")},base_url=${quote(apiBaseUrl)},auth={command=${quote(process.execPath)},args=[${quote(CLI_FILE)},${quote("auth-token")},${quote(credentialFile)}]}}`;
+  return `{name=${quote("zgap")},base_url=${quote(apiBaseUrl)},http_headers=${httpHeaders},auth={command=${quote(process.execPath)},args=[${quote(CLI_FILE)},${quote("auth-token")},${quote(credentialFile)}]}}`;
 }
 
-function providerConfig(credentialFile, origin) {
-  return `model_providers.zgap=${providerTable(credentialFile, origin)}`;
+function providerConfig(credentialFile, origin, headers) {
+  return `model_providers.zgap=${providerTable(credentialFile, origin, headers)}`;
 }
 
 export async function runCodex(args, {
@@ -56,6 +58,11 @@ export async function runCodex(args, {
   delete env.OPENAI_BASE_URL;
   delete env.OPENAI_API_KEY;
   delete env.ZGAP_API_KEY;
+  const requestHeaders = requestContextHeaders(createRequestContext({
+    tool: "codex",
+    cwd,
+    sessionId: resumeSessionId(args),
+  }));
 
   try {
     const codexPath = await resolveCodexExecutable({ env, cwd });
@@ -65,7 +72,7 @@ export async function runCodex(args, {
     return await new Promise((resolve, reject) => {
       const launchArgs = [
         "-c",
-        providerConfig(credentialsPath(configDir), origin),
+        providerConfig(credentialsPath(configDir), origin, requestHeaders),
         "-c",
         'model_provider="zgap"',
         "-c",

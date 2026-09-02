@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ORIGIN } from "./constants.mjs";
 import { credentialsPath, defaultConfigDir } from "./credentials.mjs";
+import { createRequestContext, requestContextHeaders, resumeSessionId } from "./request-context.mjs";
 
 const CLI_FILE = realpathSync(fileURLToPath(new URL("../bin/zgap.mjs", import.meta.url)));
 const FORWARDED_SIGNALS = process.platform === "win32"
@@ -28,7 +29,7 @@ const CLEARED_ENV = [
   "CLAUDE_CODE_USE_FOUNDRY", "CLAUDE_CODE_USE_GATEWAY", "CLAUDE_CODE_USE_MANTLE", "CLAUDE_CODE_USE_ANTHROPIC_AWS",
   "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD", "CLAUDE_CODE_USE_CCR_V2", "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST",
 ];
-function claudeSettingsEnv(origin) {
+function claudeSettingsEnv(origin, requestHeaders) {
   return {
     ...Object.fromEntries(CLEARED_ENV.map((name) => [name, ""])),
     ANTHROPIC_BASE_URL: origin,
@@ -37,6 +38,7 @@ function claudeSettingsEnv(origin) {
     CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
     CLAUDE_CODE_MAX_CONTEXT_TOKENS: "262144",
     CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK: "1",
+    ANTHROPIC_CUSTOM_HEADERS: Object.entries(requestHeaders).map(([key, value]) => `${key}: ${value}`).join("\n"),
   };
 }
 
@@ -97,11 +99,17 @@ export async function runClaude(args, {
   }
   const env = { ...process.env };
   for (const name of CLEARED_ENV) delete env[name];
+  const requestHeaders = requestContextHeaders(createRequestContext({
+    tool: "claude",
+    cwd,
+    sessionId: resumeSessionId(args),
+  }));
   env.ANTHROPIC_BASE_URL = origin;
   env.ANTHROPIC_DEFAULT_OPUS_MODEL = "claude-opus-5[1m]";
   env.ANTHROPIC_DEFAULT_SONNET_MODEL = "claude-sonnet-5[1m]";
   env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY = "1";
   env.CLAUDE_CODE_MAX_CONTEXT_TOKENS = "262144";
+  env.ANTHROPIC_CUSTOM_HEADERS = Object.entries(requestHeaders).map(([key, value]) => `${key}: ${value}`).join("\n");
   const abortIfSignaled = () => {
     if (receivedSignal) throw new Error(`runClaude interrupted by ${receivedSignal}`);
   };
@@ -111,7 +119,7 @@ export async function runClaude(args, {
     return await new Promise((resolve, reject) => {
       child = spawn(claudePath, [
         "--settings",
-        JSON.stringify({ apiKeyHelper: apiKeyHelper(credentialsPath(configDir)), env: claudeSettingsEnv(origin) }),
+        JSON.stringify({ apiKeyHelper: apiKeyHelper(credentialsPath(configDir)), env: claudeSettingsEnv(origin, requestHeaders) }),
         ...(dangerousMode && !args.includes("--dangerously-skip-permissions")
           ? ["--dangerously-skip-permissions"]
           : []),
