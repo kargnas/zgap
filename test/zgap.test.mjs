@@ -1037,7 +1037,7 @@ test("claude는 gateway 환경과 apiKeyHelper 설정만 프로세스에 주입�
 import { writeFileSync } from "node:fs";
 writeFileSync(process.env.FAKE_CLAUDE_MARKER, JSON.stringify({
   argv: process.argv.slice(2),
-  env: Object.fromEntries(["ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_FOUNDRY_API_KEY", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_CUSTOM_HEADERS", "CLAUDE_CODE_API_BASE_URL", "CLAUDE_CODE_PROXY_URL", "CLAUDE_CODE_SESSION_ACCESS_TOKEN", "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", "CLAUDE_CODE_MAX_CONTEXT_TOKENS", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST", "CLAUDE_CONFIG_DIR"].map((key) => [key, process.env[key] ?? null])),
+  env: Object.fromEntries(["ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_FOUNDRY_API_KEY", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_FABLE_MODEL", "ANTHROPIC_CUSTOM_HEADERS", "CLAUDE_CODE_API_BASE_URL", "CLAUDE_CODE_PROXY_URL", "CLAUDE_CODE_SESSION_ACCESS_TOKEN", "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", "CLAUDE_CODE_MAX_CONTEXT_TOKENS", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST", "CLAUDE_CONFIG_DIR"].map((key) => [key, process.env[key] ?? null])),
 }));
 process.exitCode = 7;
 `);
@@ -1056,6 +1056,7 @@ process.exitCode = 7;
   assert.equal(settings.env.ANTHROPIC_BASE_URL, "https://proxy.example.test");
   assert.equal(settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL, "claude-opus-5[1m]");
   assert.equal(settings.env.ANTHROPIC_DEFAULT_SONNET_MODEL, "claude-sonnet-5[1m]");
+  assert.equal(settings.env.ANTHROPIC_DEFAULT_FABLE_MODEL, "claude-fable-5-1[1m]");
   assert.equal(settings.env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY, "1");
   assert.equal(settings.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, "262144");
   assert.equal(settings.env.CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK, "1");
@@ -1078,6 +1079,7 @@ process.exitCode = 7;
   assert.equal(invocation.env.ANTHROPIC_FOUNDRY_API_KEY, null);
   assert.equal(invocation.env.ANTHROPIC_DEFAULT_OPUS_MODEL, "claude-opus-5[1m]");
   assert.equal(invocation.env.ANTHROPIC_DEFAULT_SONNET_MODEL, "claude-sonnet-5[1m]");
+  assert.equal(invocation.env.ANTHROPIC_DEFAULT_FABLE_MODEL, "claude-fable-5-1[1m]");
   assert.equal(invocation.env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY, "1");
   assert.equal(invocation.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, "262144");
   assert.equal(invocation.env.CLAUDE_CODE_API_BASE_URL, null);

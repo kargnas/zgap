@@ -35,6 +35,8 @@ function claudeSettingsEnv(origin, requestHeaders) {
     ANTHROPIC_BASE_URL: origin,
     ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-5[1m]",
     ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-5[1m]",
+    // Claude Code hides Fable from the /advisor picker unless this is set or the base URL is api.anthropic.com.
+    ANTHROPIC_DEFAULT_FABLE_MODEL: "claude-fable-5-1[1m]",
     CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
     CLAUDE_CODE_MAX_CONTEXT_TOKENS: "262144",
     CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK: "1",
@@ -107,6 +109,7 @@ export async function runClaude(args, {
   env.ANTHROPIC_BASE_URL = origin;
   env.ANTHROPIC_DEFAULT_OPUS_MODEL = "claude-opus-5[1m]";
   env.ANTHROPIC_DEFAULT_SONNET_MODEL = "claude-sonnet-5[1m]";
+  env.ANTHROPIC_DEFAULT_FABLE_MODEL = "claude-fable-5-1[1m]";
   env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY = "1";
   env.CLAUDE_CODE_MAX_CONTEXT_TOKENS = "262144";
   env.ANTHROPIC_CUSTOM_HEADERS = Object.entries(requestHeaders).map(([key, value]) => `${key}: ${value}`).join("\n");
