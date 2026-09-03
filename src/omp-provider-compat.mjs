@@ -79,6 +79,20 @@ export function createOmpProviderHandshakeArgument() {
   return `--${name}=true`;
 }
 
+export const CREDENTIAL_FD_FLAG = "zgap-credential-fd";
+
+// runOmp reopens a one-use credential as a pipe on this descriptor for the extension. The number
+// travels in argv, like the handshake flag, so no credential state is ambient in the environment.
+export function credentialFdFromArgv(argv) {
+  const prefix = `--${CREDENTIAL_FD_FLAG}=`;
+  const candidates = argv.filter((arg) => arg.startsWith(prefix));
+  if (candidates.length === 0) return undefined;
+  if (candidates.length > 1) throw new Error("Invalid zgap OMP credential descriptor argument.");
+  const fd = Number(candidates[0].slice(prefix.length));
+  if (!Number.isInteger(fd) || fd < 3) throw new Error("Invalid zgap OMP credential descriptor argument.");
+  return fd;
+}
+
 export function requiredFlagFromArgv(argv) {
   const candidates = argv.filter((arg) => arg.startsWith("--zgap-provider-override-required"));
   if (candidates.length !== 1) throw new Error("Invalid zgap OMP provider override handshake.");
@@ -238,7 +252,7 @@ function validTargetModel(model, expected) {
     && model.baseUrl === expectedBaseUrl;
 }
 
-async function validProviderRequest(ctx, expectedProviders, requiredFlagName) {
+async function validProviderRequest(ctx, expectedProviders, requiredFlagName, commandBackedApiKey) {
   const { model, modelRegistry } = ctx;
   const provider = model.provider;
   const expected = expectedProviders[provider];
@@ -247,7 +261,7 @@ async function validProviderRequest(ctx, expectedProviders, requiredFlagName) {
     // getProviderBaseUrl returns the first model-defined baseUrl, so with mixed
     // per-model endpoints any member of the expected set proves override ownership.
     || !expected.baseUrls.has(modelRegistry.getProviderBaseUrl(provider))
-    || !modelRegistry.hasCommandBackedApiKey(provider)
+    || modelRegistry.hasCommandBackedApiKey(provider) !== commandBackedApiKey
     || headerValue(modelRegistry.getProviderHeaders(provider), "x-zgap-provider-override") !== requiredFlagName
   ) return false;
 
@@ -258,7 +272,7 @@ async function validProviderRequest(ctx, expectedProviders, requiredFlagName) {
   return true;
 }
 
-function validTargetCatalog(modelRegistry, expectedProviders, requiredFlagName) {
+function validTargetCatalog(modelRegistry, expectedProviders, requiredFlagName, commandBackedApiKey) {
   const seen = new Set();
   for (const model of modelRegistry.getAll()) {
     const expected = expectedProviders[model.provider];
@@ -270,7 +284,7 @@ function validTargetCatalog(modelRegistry, expectedProviders, requiredFlagName) 
     const expected = expectedProviders[provider];
     if (
       !expected.baseUrls.has(modelRegistry.getProviderBaseUrl(provider))
-      || !modelRegistry.hasCommandBackedApiKey(provider)
+      || modelRegistry.hasCommandBackedApiKey(provider) !== commandBackedApiKey
       || headerValue(modelRegistry.getProviderHeaders(provider), "x-zgap-provider-override") !== requiredFlagName
     ) return false;
   }
@@ -280,9 +294,14 @@ function validTargetCatalog(modelRegistry, expectedProviders, requiredFlagName) 
 export function installOmpProviderCompat(pi, {
   providers,
   requiredFlagName,
+  // A file-backed credential registers a command key that OMP re-runs on auth retries; a
+  // descriptor-backed one registers the literal key. The registry must report exactly the
+  // shape that was registered, or another extension replaced the provider's key.
+  commandBackedApiKey,
   env = process.env,
   terminate = defaultTerminate,
 }) {
+  if (typeof commandBackedApiKey !== "boolean") throw new TypeError("commandBackedApiKey must be a boolean.");
   pi.registerFlag(requiredFlagName, {
     type: "boolean",
     description: "Require this zgap provider override extension instance to load.",
@@ -324,7 +343,7 @@ export function installOmpProviderCompat(pi, {
         return;
       }
       registerProviders((name, config) => ctx.modelRegistry.registerProvider(name, config), registrations);
-      if (!validTargetCatalog(ctx.modelRegistry, expectedProviders, requiredFlagName)) {
+      if (!validTargetCatalog(ctx.modelRegistry, expectedProviders, requiredFlagName, commandBackedApiKey)) {
         failClosed();
         return;
       }
@@ -341,7 +360,7 @@ export function installOmpProviderCompat(pi, {
       sanitizeProxyEnvironment(env);
       const provider = ctx.model?.provider;
       if (!targetProviders.has(provider)) return;
-      if (!(await validProviderRequest(ctx, expectedProviders, requiredFlagName))) failClosed();
+      if (!(await validProviderRequest(ctx, expectedProviders, requiredFlagName, commandBackedApiKey))) failClosed();
     } catch {
       failClosed();
     }

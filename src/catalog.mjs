@@ -57,9 +57,7 @@ function validateModels(models, label) {
   }
 }
 
-export async function fetchModelCatalog(configDir, clientVersion, origin) {
-  const credentialFile = credentialsPath(configDir);
-  const accessToken = await resolveAccessToken({ credentialFile });
+export async function fetchModelCatalog(accessToken, clientVersion, origin) {
   const url = new URL("/v1/models", origin);
   url.searchParams.set("client_version", clientVersion);
   const response = await fetch(url, {
@@ -77,7 +75,8 @@ export async function fetchModelCatalog(configDir, clientVersion, origin) {
 
 export async function createEphemeralCatalog({ configDir, codexPath, env = process.env, origin }) {
   const clientVersion = await readCodexVersion(codexPath, env);
-  const catalog = await fetchModelCatalog(configDir, clientVersion, origin);
+  const accessToken = await resolveAccessToken({ credentialFile: credentialsPath(configDir) });
+  const catalog = await fetchModelCatalog(accessToken, clientVersion, origin);
   const directory = await mkdtemp(path.join(os.tmpdir(), "zgap-"));
   try {
     await chmod(directory, 0o700);

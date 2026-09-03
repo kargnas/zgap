@@ -50,6 +50,7 @@
 - OMP on PATH is either a `#!/usr/bin/env bun` script or a Bun single-file executable. Treat both as valid targets and never assume one form.
 - Never derive a script runtime from `process.execPath` inside a child agent. Under the single-file executable it resolves to the agent binary, so running it relaunches the agent instead of the zgap CLI and yields an empty credential. `runOmp` passes its own runtime in `ZGAP_RUNTIME` for this reason.
 - Verify credential-command and launch changes against both OMP forms. The npm script alone does not prove the single-file executable works.
+- A spawned child receives only descriptors 0-2; an inherited credential descriptor never reaches OMP by itself. `zgap omp --credential-fd` therefore reads the descriptor in the parent and re-delivers the key through an explicit pipe on descriptor 3 announced by the extension-owned `--zgap-credential-fd` flag. Keep every credential read in that mode off `process.env` and off the credential path.
 
 ## Ownership Boundaries
 

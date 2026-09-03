@@ -1,10 +1,10 @@
 import { Buffer } from "node:buffer";
-import { realpathSync } from "node:fs";
+import { closeSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { readProxyConfig } from "./config.mjs";
 import { fetchModelCatalog } from "./catalog.mjs";
-import { credentialsPath, defaultConfigDir, resolveAccessToken } from "./credentials.mjs";
-import { installOmpProviderCompat, requiredFlagFromArgv } from "./omp-provider-compat.mjs";
+import { credentialsPath, defaultConfigDir, readApiKeyDescriptor, resolveAccessToken } from "./credentials.mjs";
+import { CREDENTIAL_FD_FLAG, credentialFdFromArgv, installOmpProviderCompat, requiredFlagFromArgv } from "./omp-provider-compat.mjs";
 import { createRequestContext, requestContextHeaders, resumeSessionId } from "./request-context.mjs";
 
 const CLI_FILE = realpathSync(fileURLToPath(new URL("../bin/zgap.mjs", import.meta.url)));
@@ -138,17 +138,18 @@ function normalizeProviderModels(models) {
   return definitions;
 }
 
+// `apiKey` is either the command key from authTokenCommand (credential file) or a literal key read
+// once from a credential descriptor; `commandBackedApiKey` tells the compat guard which to expect.
 export function registerProxyProviders(pi, {
   origin,
-  credentialFile,
+  apiKey,
+  commandBackedApiKey,
   requiredFlagName,
   models,
-  platform = process.platform,
   env = process.env,
   terminate,
   requestContext = createRequestContext({ tool: "omp", cwd: process.cwd(), sessionId: resumeSessionId(process.argv.slice(2)) }),
 }) {
-  const apiKey = authTokenCommand(credentialFile, platform, env);
   const contextHeaders = requestContextHeaders(requestContext);
   const codexBaseUrl = `${origin}/v1/responses?omp_endpoint=/codex/responses`;
   const providerModels = normalizeProviderModels(models).map((definition) => definition.api === ANTHROPIC_API
@@ -158,6 +159,7 @@ export function registerProxyProviders(pi, {
     : { ...definition, baseUrl: codexBaseUrl, headers: contextHeaders });
   installOmpProviderCompat(pi, {
     requiredFlagName,
+    commandBackedApiKey,
     env,
     terminate,
     providers: [
@@ -212,13 +214,31 @@ export async function installProxySearch({
 
 export default async function zgapProxy(pi) {
   const requiredFlagName = requiredFlagFromArgv(process.argv);
+  const credentialFd = credentialFdFromArgv(process.argv);
   const configDir = defaultConfigDir();
   const { origin } = await readProxyConfig(configDir);
+  if (credentialFd !== undefined) {
+    // OMP's second argv parse rejects unknown flags, so the descriptor flag is registered like the handshake.
+    pi.registerFlag(CREDENTIAL_FD_FLAG, { type: "number", description: "Descriptor holding the one-use zgap credential." });
+    let apiKey;
+    try {
+      apiKey = readApiKeyDescriptor(credentialFd);
+    } finally {
+      // Nothing below zgap may hold the credential pipe once the key is in memory.
+      closeSync(credentialFd);
+    }
+    const { models } = await fetchModelCatalog(apiKey, "omp", origin);
+    // No SearXNG injection here: SEARXNG_TOKEN would sit in OMP's environment, which its tool
+    // children inherit, and a one-use credential exists precisely to keep the key out of them.
+    registerProxyProviders(pi, { origin, apiKey, commandBackedApiKey: false, requiredFlagName, models });
+    return;
+  }
   const credentialFile = credentialsPath(configDir);
-  const { models } = await fetchModelCatalog(configDir, "omp", origin);
+  const { models } = await fetchModelCatalog(await resolveAccessToken({ credentialFile }), "omp", origin);
   registerProxyProviders(pi, {
     origin,
-    credentialFile,
+    apiKey: authTokenCommand(credentialFile),
+    commandBackedApiKey: true,
     requiredFlagName,
     models,
   });

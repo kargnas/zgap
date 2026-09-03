@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
-import { access, chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, open, readFile, realpath, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -1389,8 +1389,8 @@ test("OMP extension은 zzgg 단일 provider로 catalog 모델을 등록한다", 
     },
   }, {
     origin,
-    credentialFile,
-    platform: "linux",
+    apiKey: authTokenCommand(credentialFile, "linux", env),
+    commandBackedApiKey: true,
     env,
     requiredFlagName,
     models: catalogModels,
@@ -1605,8 +1605,8 @@ test("OMP extension은 zzgg 단일 provider로 catalog 모델을 등록한다", 
     },
   }, {
     origin,
-    credentialFile,
-    platform: "linux",
+    apiKey: authTokenCommand(credentialFile, "linux", { ZGAP_RUNTIME: "/usr/bin/zgap-runtime" }),
+    commandBackedApiKey: true,
     env: { ZGAP_RUNTIME: "/usr/bin/zgap-runtime" },
     models: catalogModels,
     requiredFlagName,
@@ -2053,6 +2053,163 @@ if (process.argv[2] === "--version") { process.stdout.write("omp/18.0.3\\n"); pr
   assert.equal(result.code, 1);
   assert.match(result.stderr, /No zgap credentials configured\. Run `zgap login`\./);
   await assert.rejects(access(marker), { code: "ENOENT" });
+});
+
+test("omp --credential-fd는 unlink된 credential descriptor를 읽고 OMP에는 pipe로 다시 건넨다", async (t) => {
+  const root = await tempDir(t);
+  const configRoot = path.join(root, "config");
+  const fakeBin = path.join(root, "bin");
+  await mkdir(path.join(configRoot, "zgap"), { recursive: true });
+  await mkdir(fakeBin, { recursive: true });
+  const observedFile = path.join(root, "observed.json");
+  const fakeOmp = path.join(fakeBin, "omp");
+  await writeFile(fakeOmp, `#!/usr/bin/env node
+import { fstatSync, readFileSync, writeFileSync } from "node:fs";
+if (process.argv[2] === "--version") { process.stdout.write("omp/18.0.3\\n"); process.exit(0); }
+writeFileSync(${JSON.stringify(observedFile)}, JSON.stringify({
+  args: process.argv.slice(2),
+  file: fstatSync(3).isFile(),
+  credential: readFileSync(3, "utf8"),
+}));
+`);
+  await chmod(fakeOmp, 0o755);
+  const credentialFile = path.join(root, "one-use.json");
+  await writeFile(credentialFile, JSON.stringify({ api_key: "zgap-one-use-key" }), { mode: 0o600 });
+  const handle = await open(credentialFile, "r");
+  t.after(() => handle.close().catch(() => {}));
+  // A hosted launcher unlinks the credential before zgap starts, so the descriptor is its only name.
+  await rm(credentialFile);
+  const child = spawn(nodePath, [cliPath, "omp", "--credential-fd=3", "-p", "review"], {
+    env: {
+      XDG_CONFIG_HOME: configRoot,
+      PATH: `${fakeBin}${path.delimiter}${process.env.PATH}`,
+    },
+    stdio: ["ignore", "pipe", "pipe", handle.fd],
+  });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  const [code] = await once(child, "exit");
+  assert.equal(code, 0, stderr);
+  const observed = JSON.parse(await readFile(observedFile, "utf8"));
+  // The zgap-owned flag never reaches OMP; the extension-owned descriptor flag does.
+  assert.equal(observed.args.some((arg) => arg.startsWith("--credential-fd")), false);
+  assert.equal(observed.args.includes("--zgap-credential-fd=3"), true);
+  assert.deepEqual(observed.args.slice(-2), ["-p", "review"]);
+  // OMP receives a fresh pipe holding the key, not the original file descriptor.
+  assert.equal(observed.file, false);
+  assert.deepEqual(JSON.parse(observed.credential), { api_key: "zgap-one-use-key" });
+});
+
+test("omp --credential-fd는 OAuth credential과 잘못된 descriptor를 OMP 실행 전에 거부한다", async (t) => {
+  const root = await tempDir(t);
+  const configRoot = path.join(root, "config");
+  const fakeBin = path.join(root, "bin");
+  await mkdir(path.join(configRoot, "zgap"), { recursive: true });
+  await mkdir(fakeBin, { recursive: true });
+  const marker = path.join(root, "ran");
+  const fakeOmp = path.join(fakeBin, "omp");
+  await writeFile(fakeOmp, `#!/usr/bin/env node
+import { writeFileSync } from "node:fs";
+if (process.argv[2] === "--version") { process.stdout.write("omp/18.0.3\\n"); process.exit(0); }
+writeFileSync(${JSON.stringify(marker)}, "ran");
+`);
+  await chmod(fakeOmp, 0o755);
+  const env = { XDG_CONFIG_HOME: configRoot, PATH: `${fakeBin}${path.delimiter}${process.env.PATH}` };
+  const runWithDescriptor = async (content, args) => {
+    const credentialFile = path.join(root, `credential-${Math.random().toString(16).slice(2)}.json`);
+    await writeFile(credentialFile, content, { mode: 0o600 });
+    const handle = await open(credentialFile, "r");
+    await rm(credentialFile);
+    const child = spawn(nodePath, [cliPath, "omp", ...args], { env, stdio: ["ignore", "pipe", "pipe", handle.fd] });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    const [code] = await once(child, "exit");
+    await handle.close();
+    return { code, stderr };
+  };
+
+  const origin = "https://proxy.example.test";
+  const oauth = await runWithDescriptor(JSON.stringify({
+    access_expires_at: "2099-01-02T00:00:00.000Z",
+    access_token: jwt("old@example.com", "codex", origin),
+    device_id: "d".repeat(43),
+    origin,
+    refresh_expires_at: "2099-01-05T00:00:00.000Z",
+    refresh_token: REFRESH_OLD,
+  }), ["--credential-fd=3", "-p", "review"]);
+  assert.equal(oauth.code, 1);
+  assert.match(oauth.stderr, /must hold an API key; OAuth credentials need a credential file/);
+
+  const malformed = await runWithDescriptor("not json", ["--credential-fd=3", "-p", "review"]);
+  assert.equal(malformed.code, 1);
+  assert.match(malformed.stderr, /Cannot read zgap credential descriptor 3/);
+
+  const duplicated = await runWithDescriptor('{"api_key":"k"}', ["--credential-fd=3", "--credential-fd=4", "-p", "review"]);
+  assert.equal(duplicated.code, 1);
+  assert.match(duplicated.stderr, /accepts a single --credential-fd/);
+
+  const standard = await runWithDescriptor('{"api_key":"k"}', ["--credential-fd=2", "-p", "review"]);
+  assert.equal(standard.code, 1);
+  assert.match(standard.stderr, /descriptor number of 3 or higher/);
+  await assert.rejects(access(marker), { code: "ENOENT" });
+});
+
+test("OMP extension은 credential descriptor 모드에서 리터럴 키를 등록하고 SearXNG 주입을 건너뛴다", async () => {
+  const { registerProxyProviders } = await import("../src/omp-provider-extension.mjs");
+  const { credentialFdFromArgv } = await import("../src/omp-provider-compat.mjs");
+  assert.equal(credentialFdFromArgv(["-p", "hello"]), undefined);
+  assert.equal(credentialFdFromArgv(["--zgap-credential-fd=3", "-p"]), 3);
+  assert.throws(() => credentialFdFromArgv(["--zgap-credential-fd=3", "--zgap-credential-fd=4"]), /credential descriptor/);
+  assert.throws(() => credentialFdFromArgv(["--zgap-credential-fd=1"]), /credential descriptor/);
+  assert.throws(() => credentialFdFromArgv(["--zgap-credential-fd=x"]), /credential descriptor/);
+
+  const registrations = [];
+  const handlers = new Map();
+  const terminations = [];
+  const requiredFlagName = "zgap-provider-override-required-test";
+  const origin = "https://proxy.example.test";
+  const models = [{
+    slug: "anthropic/catalog-anthropic",
+    context_window: 200000,
+    display_name: "Anthropic Proxy Model",
+    input_modalities: ["text"],
+    supported_reasoning_levels: [{ effort: "high", description: "High adaptive reasoning" }],
+    default_reasoning_level: "high",
+    supported_in_api: true,
+    visibility: "list",
+  }];
+  await registerProxyProviders({
+    registerFlag() {},
+    registerProvider(name, config) { registrations.push({ name, config }); },
+    async setModel() { return true; },
+    on(event, handler) { handlers.set(event, handler); },
+  }, {
+    origin,
+    apiKey: "literal-one-use-key",
+    commandBackedApiKey: false,
+    env: {},
+    requiredFlagName,
+    models,
+    terminate(message) { terminations.push(message); },
+  });
+  const zzgg = registrations.find((entry) => entry.name === "zzgg" && Array.isArray(entry.config.models)).config;
+  assert.equal(zzgg.apiKey, "literal-one-use-key");
+  assert.doesNotMatch(zzgg.apiKey, /^!/);
+  const anthropicModel = zzgg.models[0];
+  assert.equal(anthropicModel.headers["X-Api-Key"], "literal-one-use-key");
+
+  // A registry that reports a command-backed key in descriptor mode means another extension swapped the key.
+  const model = { ...anthropicModel, provider: "zzgg", headers: { ...anthropicModel.headers, Authorization: "Bearer literal-one-use-key" } };
+  const registry = (commandBacked) => ({
+    getProviderBaseUrl: () => origin,
+    getProviderHeaders: () => ({ "X-Zgap-Provider-Override": requiredFlagName }),
+    hasCommandBackedApiKey: () => commandBacked,
+    async getApiKey() { return "literal-one-use-key"; },
+  });
+  await handlers.get("before_provider_request")({ type: "before_provider_request", payload: {} }, { model, modelRegistry: registry(false) });
+  assert.equal(terminations.length, 0);
+  await handlers.get("before_provider_request")({ type: "before_provider_request", payload: {} }, { model, modelRegistry: registry(true) });
+  assert.equal(terminations.length, 1);
 });
 
 test("omp가 PATH에 없으면 설치 명령어를 안내한다", async () => {
