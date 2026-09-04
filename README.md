@@ -35,6 +35,15 @@ Existing OMP extensions continue to load in the zgap child. A required extension
 
 `zgap omp` supports launch and ACP sessions. Run OMP management commands such as `models`, `config`, and `plugin` with `omp` directly.
 
+Inside `zgap omp`, use OMP's built-in `/fast on` and `/fast off` commands to toggle the current model family's Fast tier; OpenAI requests use `service_tier: priority`. The process-local provider extension also adds `/ultrafast on` and `/ultrafast off`; it applies only to Codex models whose server catalog advertises that tier. Ultrafast takes precedence while enabled, and disabling it restores the Fast selection that remains active in OMP. With `tier.subagent: inherit`, subagents inherit Fast, while the extension shares the live Ultrafast selection with subagents in the current OMP process.
+
+```text
+/fast on
+/fast off
+/ultrafast on
+/ultrafast off
+```
+
 ```text
 zgap login             Choose Browser OAuth or an API key
 zgap login oauth       Configure browser OAuth
