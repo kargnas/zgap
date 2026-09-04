@@ -1,11 +1,10 @@
 import { execFile, spawn } from "node:child_process";
 import { access, realpath, stat } from "node:fs/promises";
-import { closeSync, constants as fsConstants, realpathSync } from "node:fs";
+import { constants as fsConstants, realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { credentialsPath, defaultConfigDir, readApiKeyDescriptor, resolveAccessToken } from "./credentials.mjs";
+import { credentialsPath, defaultConfigDir, resolveAccessToken } from "./credentials.mjs";
 import {
-  CREDENTIAL_FD_FLAG,
   assertOmpLaunchArgs,
   assertOmpVersion,
   createOmpProviderHandshakeArgument,
@@ -22,20 +21,6 @@ const OMP_LEAN_ARGS = [
 const FORWARDED_SIGNALS = process.platform === "win32"
   ? ["SIGINT", "SIGTERM"]
   : ["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT"];
-
-const CREDENTIAL_FD_PREFIX = "--credential-fd=";
-
-// A hosted caller may unlink the credential before zgap starts and keep it only on an inherited
-// descriptor. This flag is zgap's own and is removed before the remaining arguments reach OMP.
-function takeCredentialFd(args) {
-  const flags = args.filter((arg) => arg.startsWith(CREDENTIAL_FD_PREFIX));
-  if (flags.length === 0) return [args, undefined];
-  if (flags.length > 1) throw new Error("`zgap omp` accepts a single --credential-fd.");
-  const fd = Number(flags[0].slice(CREDENTIAL_FD_PREFIX.length));
-  if (!Number.isInteger(fd) || fd < 3) throw new Error("--credential-fd requires an inherited descriptor number of 3 or higher.");
-  if (process.platform === "win32") throw new Error("--credential-fd is not supported on Windows.");
-  return [args.filter((arg) => !arg.startsWith(CREDENTIAL_FD_PREFIX)), fd];
-}
 
 async function executable(pathname) {
   try {
@@ -76,7 +61,7 @@ export async function runOmp(launchArgs, {
   leanMode = false,
   ompLeanSkills = [],
 } = {}) {
-  const [args, credentialFd] = takeCredentialFd(launchArgs);
+  const args = launchArgs;
   assertOmpLaunchArgs(args);
   if (!Array.isArray(ompLeanSkills) || ompLeanSkills.some((skill) => typeof skill !== "string" || skill.length === 0)) {
     throw new TypeError("OMP lean skills must be an array of non-empty strings.");
@@ -126,20 +111,9 @@ export async function runOmp(launchArgs, {
     if (env.OMP_SKIP_SETUP === undefined) env.OMP_SKIP_SETUP = "1";
     const ompPath = await resolveOmpExecutable({ env, cwd });
     abortIfSignaled();
-    // A spawned child receives only the three standard descriptors, so an inherited credential
-    // descriptor cannot reach OMP by itself. Read it here, close it so no process below zgap holds
-    // the original file, and re-deliver the key through a pipe on descriptor 3 that only OMP's
-    // extension reads; OMP closes extra descriptors before its own tool children start.
-    let apiKey;
-    if (credentialFd === undefined) {
-      await resolveAccessToken({ credentialFile: credentialsPath(configDir) });
-    } else {
-      try {
-        apiKey = readApiKeyDescriptor(credentialFd);
-      } finally {
-        closeSync(credentialFd);
-      }
-    }
+    // OMP rebuilds this extension for every session it creates, so the credential must stay
+    // re-readable for the whole run. Fail here instead of inside OMP when it is missing.
+    await resolveAccessToken({ credentialFile: credentialsPath(configDir) });
     abortIfSignaled();
     assertOmpVersion(await readOmpVersion(ompPath, env));
     abortIfSignaled();
@@ -149,24 +123,16 @@ export async function runOmp(launchArgs, {
         "-e", OMP_EXTENSION_FILE,
         // This random flag exists only if this exact extension loaded; otherwise OMP's second parse rejects it.
         handshakeArgument,
-        ...(apiKey === undefined ? [] : [`--${CREDENTIAL_FD_FLAG}=3`]),
         ...(dangerousMode && !args.includes("--auto-approve") && !args.includes("--approval-mode") && !args.some((arg) => arg.startsWith("--approval-mode="))
           ? ["--auto-approve"]
           : []),
         ...leanArgs,
         ...args,
-      ], { cwd, env, stdio: apiKey === undefined ? "inherit" : ["inherit", "inherit", "inherit", "pipe"] });
+      ], { cwd, env, stdio: "inherit" });
       child.once("error", (error) => reject(error.code === "ENOENT"
         ? new Error("OMP CLI is not installed or not in PATH.")
         : error));
       child.once("exit", (code, signal) => resolve(code ?? (signal ? 1 : 0)));
-      if (apiKey !== undefined) {
-        // The child's exit code is the outcome: if OMP dies before reading, Bun on Linux emits a
-        // second socket error after the first, and a one-shot listener would let it escape as an
-        // uncaught exception. If the key never arrives, the extension fails OMP startup itself.
-        child.stdio[3].on("error", () => {});
-        child.stdio[3].end(`${JSON.stringify({ api_key: apiKey })}\n`);
-      }
     });
   } finally {
     removeSignalHandlers();

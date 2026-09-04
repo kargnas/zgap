@@ -130,23 +130,6 @@ function normalizeCredential(parsed) {
   return { ...parsed, kind: "oauth", accessExpiresAt, refreshExpiresAt };
 }
 
-// A hosted caller can unlink the credential before zgap starts and hand over only an inherited
-// descriptor. Reading it consumes the descriptor, so callers read once and pass the key on.
-// Only a static API key is accepted: OAuth rotation rewrites the credential file under a lock,
-// and a descriptor names no file to rewrite.
-export function readApiKeyDescriptor(fd) {
-  let parsed;
-  try {
-    parsed = JSON.parse(readFileSync(fd, "utf8"));
-  } catch (error) {
-    throw new Error(`Cannot read zgap credential descriptor ${fd}: ${error.message}`);
-  }
-  const credential = normalizeCredential(parsed);
-  if (!credential) throw new Error(`Credential descriptor ${fd} does not hold a valid zgap credential.`);
-  if (credential.kind !== "api-key") throw new Error(`Credential descriptor ${fd} must hold an API key; OAuth credentials need a credential file.`);
-  return credential.apiKey;
-}
-
 export async function readCredentialFile(target) {
   let parsed;
   try {

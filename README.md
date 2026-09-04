@@ -35,8 +35,6 @@ Existing OMP extensions continue to load in the zgap child. A required extension
 
 `zgap omp` supports launch and ACP sessions. Run OMP management commands such as `models`, `config`, and `plugin` with `omp` directly.
 
-`zgap omp --credential-fd=<n>` reads a one-use credential from an inherited file descriptor instead of the credential file, for hosts that unlink the credential before starting zgap. The descriptor must hold an API-key credential (`{"api_key": "..."}`); OAuth credentials are rejected because token rotation needs a writable file. zgap reads the descriptor once, closes it, and hands the key to the OMP child through a fresh pipe on descriptor 3 that only the provider override reads, so neither the original descriptor nor a key environment variable reaches OMP's tool children. In this mode the proxy SearXNG search injection is skipped for the same reason. The flag is POSIX-only.
-
 ```text
 zgap login             Choose Browser OAuth or an API key
 zgap login oauth       Configure browser OAuth
