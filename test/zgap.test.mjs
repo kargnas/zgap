@@ -1384,8 +1384,15 @@ test("OMP extension은 zzgg 단일 provider로 catalog 모델을 등록한다", 
       selectedModels.push(model);
       return true;
     },
+    registerCommand() {},
     on(event, handler) {
-      handlers.set(event, handler);
+      const previous = handlers.get(event);
+      handlers.set(event, event === "before_provider_request" && previous
+        ? async (currentEvent, context) => {
+          const payload = await previous(currentEvent, context);
+          return handler({ ...currentEvent, payload: payload ?? currentEvent.payload }, context);
+        }
+        : handler);
     },
   }, {
     origin,
@@ -1599,8 +1606,15 @@ test("OMP extension은 zzgg 단일 provider로 catalog 모델을 등록한다", 
     async setModel() {
       return true;
     },
+    registerCommand() {},
     on(event, handler) {
-      secondHandlers.set(event, handler);
+      const previous = secondHandlers.get(event);
+      secondHandlers.set(event, event === "before_provider_request" && previous
+        ? async (currentEvent, context) => {
+          const payload = await previous(currentEvent, context);
+          return handler({ ...currentEvent, payload: payload ?? currentEvent.payload }, context);
+        }
+        : handler);
     },
   }, {
     origin,
@@ -1874,6 +1888,175 @@ test("OMP extension은 zzgg 단일 provider로 catalog 모델을 등록한다", 
     assert.equal(message.includes(credentialFile), false);
     assert.equal(message.includes("proxy-token"), false);
   }
+});
+
+test("OMP extension의 /ultrafast 명령은 catalog capability에 맞춰 Codex 요청만 변경한다", async () => {
+  const { authTokenCommand, registerProxyProviders } = await import("../src/omp-provider-extension.mjs?ultrafast-parent");
+  const { registerProxyProviders: registerSubagentProxyProviders } = await import("../src/omp-provider-extension.mjs?ultrafast-subagent");
+  const commands = new Map();
+  const eventHandlers = new Map();
+  const notifications = [];
+  const statuses = [];
+  const terminations = [];
+  const origin = "https://proxy.example.test";
+  const credentialFile = "/tmp/zgap credentials.json";
+  const requiredFlagName = "zgap-provider-override-ultrafast-test";
+  const env = { ZGAP_RUNTIME: "/usr/bin/zgap-runtime" };
+  const codexBaseUrl = `${origin}/v1/responses?omp_endpoint=/codex/responses`;
+  const models = [
+    {
+      slug: "openai/alpha-codex",
+      context_window: 131072,
+      display_name: "Alpha Codex",
+      input_modalities: ["text"],
+      supported_reasoning_levels: [],
+      service_tiers: [{ id: "ultrafast", name: "Ultrafast" }],
+    },
+    {
+      slug: "openai/beta-codex",
+      context_window: 131072,
+      display_name: "Beta Codex",
+      input_modalities: ["text"],
+      supported_reasoning_levels: [],
+      service_tiers: [{ id: "priority", name: "Fast" }],
+    },
+  ];
+  const apiKey = authTokenCommand(credentialFile, "linux", env);
+  const runtimeApiKey = "proxy-token";
+  const providerHeaders = {
+    Authorization: `Bearer ${runtimeApiKey}`,
+    "X-Zgap-Provider-Override": requiredFlagName,
+  };
+
+  await registerProxyProviders({
+    registerFlag() {},
+    registerProvider() {},
+    async setModel() {
+      return true;
+    },
+    registerCommand(name, options) {
+      commands.set(name, options);
+    },
+    on(event, handler) {
+      eventHandlers.set(event, [...(eventHandlers.get(event) ?? []), handler]);
+    },
+  }, {
+    origin,
+    apiKey,
+    requiredFlagName,
+    models,
+    env,
+    terminate(message) {
+      terminations.push(message);
+    },
+  });
+
+  assert.ok(commands.has("ultrafast"));
+  const command = commands.get("ultrafast");
+  const ui = {
+    notify(message, type) {
+      notifications.push({ message, type });
+    },
+    setStatus(...args) {
+      statuses.push(args);
+    },
+  };
+  const modelRegistry = {
+    getProviderBaseUrl() {
+      return codexBaseUrl;
+    },
+    getProviderHeaders() {
+      return { "X-Zgap-Provider-Override": requiredFlagName };
+    },
+    hasCommandBackedApiKey() {
+      return true;
+    },
+    async getApiKey() {
+      return runtimeApiKey;
+    },
+  };
+  const request = async (model, initialPayload = {}) => {
+    const payload = { input: [], ...initialPayload };
+    for (const handler of eventHandlers.get("before_provider_request") ?? []) {
+      const result = await handler(
+        { type: "before_provider_request", payload },
+        { model, modelRegistry },
+      );
+      if (result !== undefined) return result;
+    }
+    return payload;
+  };
+  const codexModel = (id) => ({
+    id,
+    provider: "zzgg",
+    api: "openai-codex-responses",
+    baseUrl: codexBaseUrl,
+    headers: providerHeaders,
+  });
+
+  assert.equal((await request(codexModel("alpha-codex"), { service_tier: "priority" })).service_tier, "priority");
+  await command.handler("on", { ui });
+  assert.equal(statuses.length, 1);
+  assert.equal(statuses[0].length, 2);
+  assert.equal(typeof statuses[0][0], "string");
+  assert.equal(typeof statuses[0][1], "string");
+  assert.equal((await request(codexModel("alpha-codex"), { service_tier: "priority" })).service_tier, "ultrafast");
+
+  const subagentHandlers = new Map();
+  await registerSubagentProxyProviders({
+    registerFlag() {},
+    registerProvider() {},
+    async setModel() {
+      return true;
+    },
+    registerCommand() {},
+    on(event, handler) {
+      subagentHandlers.set(event, [...(subagentHandlers.get(event) ?? []), handler]);
+    },
+  }, {
+    origin,
+    apiKey,
+    requiredFlagName,
+    models,
+    env,
+    terminate(message) {
+      terminations.push(message);
+    },
+  });
+  let subagentPayload = { input: [], service_tier: "priority" };
+  for (const handler of subagentHandlers.get("before_provider_request") ?? []) {
+    subagentPayload = await handler(
+      { type: "before_provider_request", payload: subagentPayload },
+      { model: codexModel("alpha-codex"), modelRegistry },
+    ) ?? subagentPayload;
+  }
+  assert.equal(subagentPayload.service_tier, "ultrafast");
+
+  assert.equal((await request(codexModel("beta-codex"))).service_tier, undefined);
+  assert.equal((await request({
+    ...codexModel("alpha-codex"),
+    provider: "openrouter",
+  })).service_tier, undefined);
+
+  await command.handler("bogus", { ui });
+  assert.equal(statuses.length, 1);
+  assert.match(notifications.at(-1).message, /Usage:\s*\/ultrafast\s+(?:on\|off)/i);
+  assert.equal((await request(codexModel("alpha-codex"), { service_tier: "priority" })).service_tier, "ultrafast");
+
+  await command.handler("off", { ui });
+  assert.equal(statuses.length, 2);
+  assert.equal(statuses[1].length, 2);
+  assert.equal(statuses[1][1], undefined);
+  assert.equal((await request(codexModel("alpha-codex"), { service_tier: "priority" })).service_tier, "priority");
+  subagentPayload = { input: [], service_tier: "priority" };
+  for (const handler of subagentHandlers.get("before_provider_request") ?? []) {
+    subagentPayload = await handler(
+      { type: "before_provider_request", payload: subagentPayload },
+      { model: codexModel("alpha-codex"), modelRegistry },
+    ) ?? subagentPayload;
+  }
+  assert.equal(subagentPayload.service_tier, "priority");
+  assert.deepEqual(terminations, []);
 });
 
 test("OMP extension은 SearXNG proxy 환경을 사용자 설정이 없을 때만 주입한다", async () => {

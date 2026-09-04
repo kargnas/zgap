@@ -46,6 +46,25 @@ const OMP_INPUT_MODALITIES = new Set(["text", "image"]);
 const OMP_REASONING_EFFORTS = new Set(["minimal", "low", "medium", "high", "xhigh", "max"]);
 const CODEX_API = "openai-codex-responses";
 const ANTHROPIC_API = "anthropic-messages";
+const ULTRAFAST_TIER = "ultrafast";
+const ULTRAFAST_STATE_KEY = Symbol.for("zgap.omp.ultrafast-state");
+
+function ultrafastState() {
+  // OMP binds this extension again for subagents, so process-global state lets them
+  // inherit the parent's live mode without writing it to the user's OMP settings.
+  return globalThis[ULTRAFAST_STATE_KEY] ??= { enabled: false };
+}
+
+function normalizeModelId(slug) {
+  if (slug.startsWith("anthropic/")) return slug.slice("anthropic/".length);
+  if (slug.startsWith("openai/")) return slug.slice("openai/".length);
+  return slug;
+}
+
+function supportsServiceTier(model, tier) {
+  return Array.isArray(model?.service_tiers)
+    && model.service_tiers.some((serviceTier) => serviceTier?.id === tier);
+}
 
 function normalizeProviderModels(models) {
   if (!Array.isArray(models)) throw new Error("OMP model catalog must be an array.");
@@ -80,12 +99,9 @@ function normalizeProviderModels(models) {
     // Codex websockets and the OpenAI priority/fast service tier key off `api` and the
     // `gpt-*`/`codex-*` model-id patterns, so both survive the dedicated provider name.
     let api = CODEX_API;
-    let id = model.slug;
+    let id = normalizeModelId(model.slug);
     if (model.slug.startsWith("anthropic/")) {
       api = ANTHROPIC_API;
-      id = model.slug.slice("anthropic/".length);
-    } else if (model.slug.startsWith("openai/")) {
-      id = model.slug.slice("openai/".length);
     }
     if (id.length === 0) {
       throw new Error(`OMP model catalog contains a model with an invalid slug: ${model.slug}`);
@@ -151,7 +167,14 @@ export function registerProxyProviders(pi, {
 }) {
   const contextHeaders = requestContextHeaders(requestContext);
   const codexBaseUrl = `${origin}/v1/responses?omp_endpoint=/codex/responses`;
-  const providerModels = normalizeProviderModels(models).map((definition) => definition.api === ANTHROPIC_API
+  const normalizedModels = normalizeProviderModels(models);
+  const ultrafastModelIds = new Set(
+    models
+      .filter((model) => model?.supported_in_api !== false && model?.visibility !== "hide")
+      .filter((model) => supportsServiceTier(model, ULTRAFAST_TIER))
+      .map((model) => normalizeModelId(model.slug)),
+  );
+  const providerModels = normalizedModels.map((definition) => definition.api === ANTHROPIC_API
     // Parity with the previous dedicated Anthropic registration: the proxy accepts
     // either header, and direct Anthropic clients send both bearer and X-Api-Key.
     ? { ...definition, baseUrl: origin, headers: { ...contextHeaders, "X-Api-Key": apiKey } }
@@ -170,6 +193,31 @@ export function registerProxyProviders(pi, {
       }],
     ],
   });
+
+  if (typeof pi.registerCommand === "function") {
+    const state = ultrafastState();
+    pi.registerCommand("ultrafast", {
+      description: "Toggle the ultrafast service tier",
+      handler: async (args, ctx) => {
+        const mode = typeof args === "string" ? args.trim().toLowerCase() : "";
+        if (mode !== "on" && mode !== "off") {
+          ctx.ui.notify("Usage: /ultrafast on|off", "warning");
+          return;
+        }
+        state.enabled = mode === "on";
+        ctx.ui.setStatus("ultrafast", state.enabled ? "ultrafast" : undefined);
+        ctx.ui.notify(`Ultrafast ${state.enabled ? "enabled" : "disabled"}.`, "info");
+      },
+    });
+    pi.on("before_provider_request", (_event, ctx) => {
+      const model = ctx.model;
+      if (!state.enabled
+        || model?.provider !== PROVIDER_NAME
+        || model.api !== CODEX_API
+        || !ultrafastModelIds.has(normalizeModelId(model.id))) return;
+      return { ..._event.payload, service_tier: ULTRAFAST_TIER };
+    });
+  }
 }
 
 const SEARXNG_ENVIRONMENT = [
