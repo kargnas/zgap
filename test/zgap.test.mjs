@@ -1306,6 +1306,108 @@ import("node:fs").then(({ writeFileSync }) => writeFileSync(${JSON.stringify(man
   await assert.rejects(access(managementMarker), { code: "ENOENT" });
 });
 
+test("OMP provider refresh는 현재 thinking selector를 유지한다", async () => {
+  const { installOmpProviderCompat } = await import("../src/omp-provider-compat.mjs");
+  const requiredFlagName = "zgap-provider-override-required-thinking-test";
+  const baseUrl = "https://proxy.example.test";
+  const providerModel = {
+    id: "model",
+    provider: "zzgg",
+    api: "openai-codex-responses",
+    baseUrl,
+  };
+  const refreshedModel = { ...providerModel };
+
+  for (const scenario of [
+    { name: "explicit effort changes", initial: "high", after: "low", configured: undefined, expected: "high" },
+    { name: "fresh auto effort stays unchanged", initial: "medium", after: "medium", configured: undefined, expected: undefined },
+    { name: "resumed auto effort changes", initial: "medium", after: "low", configured: "auto", expected: "auto" },
+    { name: "non-reasoning model stays unchanged", initial: undefined, after: undefined, configured: undefined, expected: undefined },
+  ]) {
+    const operations = [];
+    const handlers = new Map();
+    let effectiveLevel = scenario.initial;
+    const pi = {
+      registerFlag() {},
+      registerProvider() {},
+      getThinkingLevel() {
+        operations.push("getThinkingLevel");
+        return effectiveLevel;
+      },
+      setThinkingLevel(level) {
+        operations.push(`setThinkingLevel:${level}`);
+      },
+      async setModel() {
+        operations.push("setModel");
+        effectiveLevel = scenario.after;
+        return true;
+      },
+      on(event, handler) {
+        handlers.set(event, handler);
+      },
+    };
+    const registry = {
+      authStorage: {},
+      getProviderBaseUrl() {
+        return baseUrl;
+      },
+      getProviderHeaders() {
+        return { "X-Zgap-Provider-Override": requiredFlagName };
+      },
+      hasCommandBackedApiKey() {
+        return true;
+      },
+      registerProvider() {
+        operations.push("registerProvider");
+      },
+      find() {
+        return refreshedModel;
+      },
+      getAll() {
+        return [refreshedModel];
+      },
+    };
+
+    installOmpProviderCompat(pi, {
+      requiredFlagName,
+      env: {},
+      providers: [["zzgg", {
+        api: "openai-codex-responses",
+        baseUrl,
+        models: [providerModel],
+      }]],
+      terminate(message) {
+        throw new Error(message);
+      },
+    });
+
+    await handlers.get("session_start")(
+      { type: "session_start" },
+      {
+        model: { ...providerModel, baseUrl: "https://stale.example.test" },
+        modelRegistry: registry,
+        sessionManager: {
+          getBranch() {
+            return scenario.configured === undefined
+              ? []
+              : [{ type: "thinking_level_change", thinkingLevel: scenario.initial, configured: scenario.configured }];
+          },
+        },
+      },
+    );
+
+    const expectedOperations = [
+      "registerProvider",
+      "registerProvider",
+      "getThinkingLevel",
+      "setModel",
+      "getThinkingLevel",
+    ];
+    if (scenario.expected !== undefined) expectedOperations.push(`setThinkingLevel:${scenario.expected}`);
+    assert.deepEqual(operations, expectedOperations, scenario.name);
+  }
+});
+
 test("OMP extension은 zzgg 단일 provider로 catalog 모델을 등록한다", async () => {
   const { authTokenCommand, registerProxyProviders, PROVIDER_NAME } = await import("../src/omp-provider-extension.mjs");
   const { decodeRequestContext, REQUEST_CONTEXT_HEADER } = await import("../src/request-context.mjs");
@@ -1383,6 +1485,13 @@ test("OMP extension은 zzgg 단일 provider로 catalog 모델을 등록한다", 
       sessionOperations.push("setModel");
       selectedModels.push(model);
       return true;
+    },
+    getThinkingLevel() {
+      sessionOperations.push("getThinkingLevel");
+      return "medium";
+    },
+    setThinkingLevel(level) {
+      sessionOperations.push(`setThinkingLevel:${level}`);
     },
     registerCommand() {},
     on(event, handler) {
@@ -1563,6 +1672,7 @@ test("OMP extension은 zzgg 단일 provider로 catalog 모델을 등록한다", 
     { type: "session_start" },
     {
       model: currentModel,
+      sessionManager: { getBranch() { return []; } },
       modelRegistry: {
         ...sessionRegistrySafety,
         registerProvider(name, config) {
@@ -1583,7 +1693,9 @@ test("OMP extension은 zzgg 단일 provider로 catalog 모델을 등록한다", 
   assert.deepEqual(sessionOperations, [
     "register:zzgg",
     "register:zzgg",
+    "getThinkingLevel",
     "setModel",
+    "getThinkingLevel",
   ]);
   assert.deepEqual(selectedModels, [refreshedModel]);
   assert.deepEqual(terminations, []);
@@ -1606,6 +1718,10 @@ test("OMP extension은 zzgg 단일 provider로 catalog 모델을 등록한다", 
     async setModel() {
       return true;
     },
+    getThinkingLevel() {
+      return undefined;
+    },
+    setThinkingLevel() {},
     registerCommand() {},
     on(event, handler) {
       const previous = secondHandlers.get(event);
@@ -1632,6 +1748,7 @@ test("OMP extension은 zzgg 단일 provider로 catalog 모델을 등록한다", 
       { type: "session_start" },
       {
         model: currentModel,
+        sessionManager: { getBranch() { return []; } },
         modelRegistry: {
           ...sessionRegistrySafety,
           registerProvider() {},

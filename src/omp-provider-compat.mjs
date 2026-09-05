@@ -277,6 +277,17 @@ function validTargetCatalog(modelRegistry, expectedProviders, requiredFlagName) 
   return true;
 }
 
+function activeThinkingSelector(pi, ctx) {
+  const effectiveLevel = pi.getThinkingLevel();
+  const latestThinkingChange = ctx.sessionManager.getBranch().findLast(
+    (entry) => entry?.type === "thinking_level_change",
+  );
+  return {
+    effectiveLevel,
+    selector: latestThinkingChange?.configured === "auto" ? "auto" : effectiveLevel,
+  };
+}
+
 export function installOmpProviderCompat(pi, {
   providers,
   requiredFlagName,
@@ -330,8 +341,16 @@ export function installOmpProviderCompat(pi, {
       }
       const model = ctx.model;
       if (!targetProviders.has(model?.provider)) return;
+      // OMP reapplies the refreshed model's default thinking level during setModel.
+      // Capture the live selector first so a provider metadata refresh cannot change
+      // the effort explicitly selected for the current session.
+      const { effectiveLevel, selector } = activeThinkingSelector(pi, ctx);
       const refreshed = ctx.modelRegistry.find(model.provider, model.id);
-      if (!refreshed || !(await pi.setModel(refreshed))) failClosed();
+      if (!refreshed || !(await pi.setModel(refreshed))) {
+        failClosed();
+        return;
+      }
+      if (pi.getThinkingLevel() !== effectiveLevel) pi.setThinkingLevel(selector);
     } catch {
       failClosed();
     }
