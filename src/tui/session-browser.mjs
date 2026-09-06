@@ -142,8 +142,8 @@ function rowText(session, detailsState, selected, language, width, compact, curr
   const assistantPrefix = "        A ";
   const time = timestampLabel(session.updatedAt, language, currentTime);
   const turnCount = Number.isSafeInteger(detailsState?.turnCount)
-    ? compact ? `${detailsState.turnCount}t` : t("sessionsTurnCount", { count: detailsState.turnCount })
-    : detailsState?.error ? t("sessionsDetailsUnavailable") : "…";
+    ? compact ? `${detailsState.turnCount}t` : t("resumeTurnCount", { count: detailsState.turnCount })
+    : detailsState?.error ? t("resumeDetailsUnavailable") : "…";
   const fileSize = Number.isFinite(detailsState?.fileSize) ? fileSizeLabel(detailsState.fileSize, language) : "…";
   const detailParts = [
     time && { text: time, color: COLORS.blue },
@@ -286,7 +286,7 @@ function previewText(session, width, height, t, { compact = false } = {}) {
     ? []
     : [chunk(truncateText(displayText(session.title), maxWidth), COLORS.text, undefined, true)];
   if (turns.length === 0) {
-    chunks.push(chunk(`\n${t("sessionsPreviewEmpty")}`, COLORS.meta));
+    chunks.push(chunk(`\n${t("resumePreviewEmpty")}`, COLORS.meta));
     return new StyledText(chunks);
   }
   const rowBudget = Math.max(2, height - 5);
@@ -295,7 +295,7 @@ function previewText(session, width, height, t, { compact = false } = {}) {
   let previousIndex = null;
   for (const index of indices) {
     if (previousIndex !== null && index - previousIndex > 1) {
-      chunks.push(chunk(`${chunks.length ? "\n" : ""}${t("sessionsPreviewOmitted", { count: index - previousIndex - 1 })}`, COLORS.meta, undefined, true));
+      chunks.push(chunk(`${chunks.length ? "\n" : ""}${t("resumePreviewOmitted", { count: index - previousIndex - 1 })}`, COLORS.meta, undefined, true));
     }
     const pair = turns[index];
     const userLines = wrapPreviewText(pair.user, maxWidth - 2, remainingRows > 0 ? 2 : 1);
@@ -409,6 +409,7 @@ export async function runSessionBrowser({
     let viewportStart = 0;
     let showHelp = false;
     let showPreview = false;
+    let showResumeChoice = false;
     let previewLoading = false;
     let previewError = null;
     let previewGeneration = 0;
@@ -435,7 +436,7 @@ export async function runSessionBrowser({
       padding: 1,
     });
     const title = new TextRenderable(renderer, {
-      content: t("sessionsTitle"),
+      content: t("resumeTitle"),
       fg: "#67E8F9",
       attributes: TextAttributes.BOLD,
       height: 1,
@@ -504,7 +505,7 @@ export async function runSessionBrowser({
     const render = () => {
       const compact = renderer.width <= COMPACT_WIDTH;
       const loading = state === "initializing" || state === "loading" || previewLoading || convertLoading;
-      const mainListVisible = !showConvert && !showPreview && !showHelp;
+      const mainListVisible = !showConvert && !showPreview && !showHelp && !showResumeChoice;
       const activeSessions = state === "ready" && mainListVisible ? filteredSessions() : [];
       const nextSpinnerMode = loading
         ? "loading"
@@ -533,7 +534,7 @@ export async function runSessionBrowser({
         ...tabs.flatMap((tab, index) => {
           const active = tab.provider === tabProvider;
           if (compact && !active) return [];
-          const label = tab.provider === "all" ? t("sessionsAll") : truncateText(displayText(tab.provider), 12);
+          const label = tab.provider === "all" ? t("resumeAll") : truncateText(displayText(tab.provider), 12);
           const text = `[${index + 1}]${label}${tab.provider === "all" || compact ? "" : ` ${tab.count}`}`;
           return [
             chunk(" ", COLORS.chip),
@@ -542,8 +543,24 @@ export async function runSessionBrowser({
         }),
       ]);
       hint.content = notice || (checked.size > 0
-        ? t("sessionsSelectionHint", { count: checked.size })
-        : compact ? t("sessionsCompactHint") : t("sessionsHint"));
+        ? t("resumeSelectionHint", { count: checked.size })
+        : compact ? t("resumeCompactHint") : t("resumeHint"));
+      if (showResumeChoice) {
+        title.content = t("resumeChoiceTitle");
+        title.visible = true;
+        filters.content = "";
+        filters.visible = false;
+        previewContent.visible = false;
+        list.visible = true;
+        hint.content = t("resumeChoiceHint");
+        list.content = new StyledText([
+          chunk(t("resumeChoiceProxy"), COLORS.amber, undefined, true),
+          chunk("\n\n", COLORS.text),
+          chunk(t("resumeChoiceLocal"), COLORS.green, undefined, true),
+        ]);
+        renderer.requestRender();
+        return;
+      }
       if (showConvert) {
         convertIndex = Math.max(0, Math.min(convertIndex, convertTargets.length - 1));
         const convertVisibleRows = Math.max(1, renderer.height - 8);
@@ -552,7 +569,7 @@ export async function runSessionBrowser({
         convertViewport = Math.max(0, Math.min(convertViewport, Math.max(0, convertTargets.length - convertVisibleRows)));
         const target = convertTargets[convertIndex];
         const changeCount = target ? convertSessions.filter((session) => session.provider !== target).length : 0;
-        title.content = t("sessionsConvertTitle");
+        title.content = t("resumeConvertTitle");
         title.visible = true;
         filters.content = "";
         filters.visible = false;
@@ -560,14 +577,14 @@ export async function runSessionBrowser({
         list.visible = true;
         hint.maxHeight = 3;
         hint.content = convertLoading
-          ? `${ORBIT_SPINNER.frames[spinnerIndex]} ${t("sessionsProviderConverting", { count: changeCount })}`
+          ? `${ORBIT_SPINNER.frames[spinnerIndex]} ${t("resumeProviderConverting", { count: changeCount })}`
           : convertError
-            ? `${t("sessionsProviderConvertFailed")}: ${convertError.message}`
-            : t("sessionsProviderConvertHint");
+            ? `${t("resumeProviderConvertFailed")}: ${convertError.message}`
+            : t("resumeProviderConvertHint");
         list.content = new StyledText([
           chunk(changeCount === convertSessions.length
-            ? t("sessionsProviderConvertCount", { count: changeCount })
-            : t("sessionsProviderConvertPartial", { count: changeCount, total: convertSessions.length }), COLORS.amber, undefined, true),
+            ? t("resumeProviderConvertCount", { count: changeCount })
+            : t("resumeProviderConvertPartial", { count: changeCount, total: convertSessions.length }), COLORS.amber, undefined, true),
           chunk("\n\n", COLORS.text),
           ...convertMenuChunks(convertTargets, convertIndex, renderer.width, convertViewport, convertVisibleRows),
         ]);
@@ -582,17 +599,17 @@ export async function runSessionBrowser({
           ? { ...session, preview: detailCache.get(session).preview }
           : session;
         previewContent.visible = true;
-        title.content = t("sessionsPreviewTitle");
+        title.content = t("resumePreviewTitle");
         title.visible = true;
         filters.content = "";
         filters.visible = false;
         hint.maxHeight = compact ? 1 : 3;
-        hint.content = notice || t("sessionsPreviewHint");
+        hint.content = notice || t("resumePreviewHint");
         list.visible = false;
         previewContent.content = previewLoading
-          ? `${ORBIT_SPINNER.frames[spinnerIndex]} ${t("sessionsPreviewLoading")}`
+          ? `${ORBIT_SPINNER.frames[spinnerIndex]} ${t("resumePreviewLoading")}`
           : previewError
-            ? `${t("sessionsPreviewLoadFailed")}: ${previewError.message}`
+            ? `${t("resumePreviewLoadFailed")}: ${previewError.message}`
             : previewSession
               ? previewText(previewSession, renderer.width, renderer.height, t, { compact })
               : "";
@@ -604,38 +621,38 @@ export async function runSessionBrowser({
       list.visible = true;
       hint.maxHeight = 3;
       if (showHelp) {
-        title.content = t("sessionsHelpTitle");
+        title.content = t("resumeHelpTitle");
         title.visible = true;
         filters.content = "";
         filters.visible = false;
         hint.content = "";
-        list.content = t("sessionsHelp");
+        list.content = t("resumeHelp");
         list.fg = COLORS.text;
         renderer.requestRender();
         return;
       }
-      title.content = t("sessionsTitle");
+      title.content = t("resumeTitle");
       title.visible = true;
       filters.visible = true;
       if (state === "initializing") {
-        list.content = `${ORBIT_SPINNER.frames[spinnerIndex]} ${t("sessionsInitializing")}`;
+        list.content = `${ORBIT_SPINNER.frames[spinnerIndex]} ${t("resumeInitializing")}`;
         list.fg = "#94A3B8";
         renderer.requestRender();
         return;
       }
       if (state === "loading") {
         if (sessions.length === 0) {
-          list.content = `${ORBIT_SPINNER.frames[spinnerIndex]} ${t("sessionsLoading")}`;
+          list.content = `${ORBIT_SPINNER.frames[spinnerIndex]} ${t("resumeLoading")}`;
           list.fg = "#94A3B8";
           renderer.requestRender();
           return;
         }
         // Partial results render as the normal list; the hint keeps the spinner so the scan visibly continues.
         // A live check count outranks the spinner, since the list itself already shows loading is unfinished.
-        if (checked.size === 0) hint.content = notice || `${ORBIT_SPINNER.frames[spinnerIndex]} ${t("sessionsLoading")}`;
+        if (checked.size === 0) hint.content = notice || `${ORBIT_SPINNER.frames[spinnerIndex]} ${t("resumeLoading")}`;
       }
       if (state === "error") {
-        list.content = error?.message ? `${t("sessionsLoadFailed")}: ${error.message}` : t("sessionsLoadFailed");
+        list.content = error?.message ? `${t("resumeLoadFailed")}: ${error.message}` : t("resumeLoadFailed");
         list.fg = "#F87171";
         renderer.requestRender();
         return;
@@ -644,8 +661,8 @@ export async function runSessionBrowser({
       keepSelection(values);
       if (values.length === 0) {
         list.content = state === "loading"
-          ? `${ORBIT_SPINNER.frames[spinnerIndex]} ${t("sessionsLoading")}`
-          : scope === "repo" ? t("sessionsEmptyRepo") : t("sessionsEmptyAll");
+          ? `${ORBIT_SPINNER.frames[spinnerIndex]} ${t("resumeLoading")}`
+          : scope === "repo" ? t("resumeEmptyRepo") : t("resumeEmptyAll");
         list.fg = "#94A3B8";
         renderer.requestRender();
         return;
@@ -703,12 +720,11 @@ export async function runSessionBrowser({
         clearActiveResume();
         activeResumeKey = key;
         activeResumeTimer = startTimer(clearActiveResume, 1_000);
-        showNotice(t("sessionsActiveResumeConfirm"), 1_000);
+        showNotice(t("resumeActiveResumeConfirm"), 1_000);
         return;
       }
-      clearActiveResume();
-      cleanup();
-      Promise.resolve().then(() => onSelect(session)).then(resolveResult, rejectResult);
+      showResumeChoice = true;
+      render();
     };
     const select = (index) => {
       const values = filteredSessions();
@@ -782,7 +798,7 @@ export async function runSessionBrowser({
         if (lastCtrlC !== null && timestamp - lastCtrlC <= 1_000) finish(130);
         else {
           lastCtrlC = timestamp;
-          showNotice(t("sessionsCtrlCExitPrompt"), 1_000);
+          showNotice(t("resumeCtrlCExitPrompt"), 1_000);
         }
         return;
       }
@@ -868,7 +884,7 @@ export async function runSessionBrowser({
                 selectedKey = null;
               }
               convertReturnSession = null;
-              showNotice(t("sessionsProviderConverted", { count: toConvert.length, provider: displayText(target) }));
+              showNotice(t("resumeProviderConverted", { count: toConvert.length, provider: displayText(target) }));
             })
             .catch((conversionError) => {
               if (cleaned) return;
@@ -876,6 +892,25 @@ export async function runSessionBrowser({
               convertError = conversionError;
               render();
             });
+        }
+        return;
+      }
+      if (showResumeChoice) {
+        if (event.name === "up" || event.name === "k" || event.name === "down" || event.name === "j") return;
+        if (event.name === "return") {
+          const session = filteredSessions()[selectedIndex];
+          if (!session) return;
+          showResumeChoice = false;
+          clearActiveResume();
+          cleanup();
+          Promise.resolve().then(() => onSelect(session, { remote: true })).then(resolveResult, rejectResult);
+        } else if (event.name === "l") {
+          const session = filteredSessions()[selectedIndex];
+          if (!session) return;
+          showResumeChoice = false;
+          clearActiveResume();
+          cleanup();
+          Promise.resolve().then(() => onSelect(session, { remote: false })).then(resolveResult, rejectResult);
         }
         return;
       }
@@ -934,7 +969,7 @@ export async function runSessionBrowser({
         const session = filteredSessions()[selectedIndex];
         if (!session) return;
         if (checkStateFor(session) === null) {
-          showNotice(t("sessionsNotConvertible"));
+          showNotice(t("resumeNotConvertible"));
           return;
         }
         if (!checked.delete(session.id)) checked.add(session.id);
@@ -944,7 +979,7 @@ export async function runSessionBrowser({
       if (event.name === "c") {
         const chosen = sessions.filter((session) => session.agent === "codex" && session.provider && checked.has(session.id));
         if (chosen.length === 0) {
-          showNotice(t("sessionsNoSelection"));
+          showNotice(t("resumeNoSelection"));
           return;
         }
         convertSessions = chosen;

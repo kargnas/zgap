@@ -69,11 +69,11 @@ test("session browser는 initializing, loading, repo 목록을 구분한다", as
   });
 
   await flush(setup);
-  assert.match(setup.captureCharFrame(), /Initializing sessions/);
+  assert.match(setup.captureCharFrame(), /Initializing resume/);
 
   scope.resolve({ roots: ["/repo", "/repo/worktrees/feature"] });
   await flush(setup);
-  assert.match(setup.captureCharFrame(), /Loading sessions/);
+  assert.match(setup.captureCharFrame(), /Loading resume/);
 
   loading.resolve(sessions);
   await flush(setup);
@@ -115,7 +115,7 @@ test("session browser는 loading spinner를 움직이고 완료 후 timer를 정
   loading.resolve([]);
   await flush(setup);
   assert.equal(cleared, 1);
-  assert.match(setup.captureCharFrame(), /No sessions in current repo/);
+  assert.match(setup.captureCharFrame(), /No resume in current repo/);
 
   await setup.mockInput.pressBackspace();
   assert.equal(await result, 0);
@@ -146,10 +146,11 @@ test("session browser는 로딩 중 부분 결과를 즉시 렌더링하고 이�
   await flush(setup);
   let frame = setup.captureCharFrame();
   assert.match(frame, /Add session switcher/);
-  assert.match(frame, /Loading sessions/);
+  assert.match(frame, /Loading resume/);
 
   setup.mockInput.pressKey("down");
   await flush(setup);
+  await setup.mockInput.pressEnter();
   await setup.mockInput.pressEnter();
   assert.equal(await result, 0);
   assert.equal(selectedTitle, "Add session switcher");
@@ -225,7 +226,7 @@ test("최초 로딩 완료 시에도 커서는 같은 목록 위치에 남는다
     assert.match(initialFrame, /›\s+\[ \] CODEX · zgap {2}First/);
 
     loading.resolve([newer, first, second]);
-    const readyFrame = await waitForFrame(setup, (frame) => frame.includes("[2]zgap 3") && !frame.includes("Loading sessions"));
+    const readyFrame = await waitForFrame(setup, (frame) => frame.includes("[2]zgap 3") && !frame.includes("Loading resume"));
     assert.match(readyFrame, /›\s+\[ \] CODEX · zgap {2}Newer/);
     assert.doesNotMatch(readyFrame, /›\s+\[ \] CODEX · zgap {2}First/);
   } finally {
@@ -250,14 +251,14 @@ test("로딩 중 체크하면 선택 안내가 스피너보다 우선한다", as
     },
   });
   await flush(setup);
-  assert.match(setup.captureCharFrame(), /Loading sessions/);
+  assert.match(setup.captureCharFrame(), /Loading resume/);
 
   setup.mockInput.pressKey(" ");
   await flush(setup);
   const frame = setup.captureCharFrame();
   assert.match(frame, /\[x\] CODEX/);
   assert.match(frame, /1 selected · c convert/);
-  assert.doesNotMatch(frame, /Loading sessions/);
+  assert.doesNotMatch(frame, /Loading resume/);
 
   // First Backspace clears the batch, second one exits.
   setup.mockInput.pressBackspace();
@@ -396,6 +397,7 @@ test("session browser는 OMP 행을 표시하고 agent 필터에서 선택한다
   assert.match(frame, /Resume OMP work/);
 
   setup.mockInput.pressEnter();
+  await setup.mockInput.pressEnter();
   assert.equal(await result, 19);
   assert.equal(selected, ompSession);
 });
@@ -542,7 +544,7 @@ test("Space는 Codex row를 체크하고 Claude row에는 안내를 보여준다
   setup.mockInput.pressArrow("down");
   setup.mockInput.pressKey(" ");
   await flush(setup);
-  assert.match(setup.captureCharFrame(), /Only saved Codex sessions can be checked/);
+  assert.match(setup.captureCharFrame(), /Only saved Codex resume can be checked/);
 
   await setup.mockInput.pressBackspace();
   assert.equal(await result, 0);
@@ -591,7 +593,7 @@ test("c는 체크 없이는 안내를 보여주고 체크된 세션으로 변환
 
   setup.mockInput.pressKey("c");
   await flush(setup);
-  assert.match(setup.captureCharFrame(), /Check sessions with Space first/);
+  assert.match(setup.captureCharFrame(), /Check resume with Space first/);
 
   setup.mockInput.pressKey(" ");
   setup.mockInput.pressKey("c");
@@ -641,15 +643,15 @@ test("혼합 provider 체크는 target과 같은 세션을 제외한 개수로 �
   setup.mockInput.pressKey("c");
   await waitForFrame(setup, (frame) => frame.includes("CONVERT PROVIDER"));
   let frame = setup.captureCharFrame();
-  assert.match(frame, /1 of 3 selected sessions will change/);
+  assert.match(frame, /1 of 3 selected resume will change/);
 
   setup.mockInput.pressArrow("down");
   await flush(setup);
   frame = setup.captureCharFrame();
-  assert.match(frame, /2 of 3 selected sessions will change/);
+  assert.match(frame, /2 of 3 selected resume will change/);
 
   setup.mockInput.pressEnter();
-  await waitForFrame(setup, (value) => value.includes("2 sessions converted to openai"));
+  await waitForFrame(setup, (value) => value.includes("2 resume converted to openai"));
   frame = setup.captureCharFrame();
   assert.deepEqual(converted, [{ ids: ["codex-zgap", "codex-zgap-two"], target: "openai" }]);
   assert.match(frame, /\[✓\] CODEX · openai {2}Add session/);
@@ -764,7 +766,7 @@ test("변환 실패는 변환 화면에 오류를 보여주고 선택을 유지�
   setup.mockInput.pressKey("c");
   await waitForFrame(setup, (frame) => frame.includes("CONVERT PROVIDER"));
   setup.mockInput.pressEnter();
-  await waitForFrame(setup, (frame) => frame.includes("Could not convert sessions"));
+  await waitForFrame(setup, (frame) => frame.includes("Could not convert resume"));
   assert.match(setup.captureCharFrame(), /database is locked/);
 
   setup.mockInput.pressEscape();
@@ -879,6 +881,7 @@ test("미리보기의 Enter는 세션을 그대로 재개한다", async (t) => {
   assert.match(frame, /U Build a session switcher/);
 
   setup.mockInput.pressEnter();
+  await setup.mockInput.pressEnter();
   assert.equal(await result, 17);
   assert.equal(selectedSession, originalSession);
   assert.equal(originalSession.provider, "zgap");
@@ -1009,6 +1012,7 @@ test("session browser는 Enter로 선택한 세션을 재개한다", async (t) =
   await flush(setup);
 
   setup.mockInput.pressEnter();
+  await setup.mockInput.pressEnter();
   assert.equal(await result, 23);
   assert.equal(selected.id, "codex-zgap");
   assert.equal(setup.renderer.isDestroyed, true);
@@ -1034,6 +1038,7 @@ test("session browser는 실행 중인 세션을 목록에서 Enter 두 번으�
   assert.equal(selected, false);
 
   setup.mockInput.pressEnter();
+  await setup.mockInput.pressEnter();
   assert.equal(await result, 23);
   assert.equal(selected, true);
 });
@@ -1060,6 +1065,7 @@ test("session browser는 실행 중인 Codex 세션을 미리보기에서 Enter 
   assert.equal(selected, false);
 
   setup.mockInput.pressEnter();
+  await setup.mockInput.pressEnter();
   assert.equal(await result, 23);
   assert.equal(selected, true);
 });
@@ -1395,7 +1401,7 @@ test("session browser는 repo를 먼저 읽고 All 전환 시 전체 session을 
   setup.mockInput.pressKey("s");
   await flush(setup);
   assert.deepEqual(calls, ["repo", "all"]);
-  assert.match(setup.captureCharFrame(), /Loading sessions/);
+  assert.match(setup.captureCharFrame(), /Loading resume/);
   assert.doesNotMatch(setup.captureCharFrame(), /Add session switcher/);
 
   setup.mockInput.pressKey("s");
@@ -1468,7 +1474,7 @@ test("session browser는 refresh 중 이전 목록을 지우고 새 snapshot을 
   setup.mockInput.pressKey("r");
   await flush(setup);
   let frame = setup.captureCharFrame();
-  assert.match(frame, /Loading sessions/);
+  assert.match(frame, /Loading resume/);
   assert.doesNotMatch(frame, /Add session switcher/);
 
   refresh.resolve([{ ...sessions[0], id: "new", title: "New snapshot" }]);
@@ -1498,7 +1504,7 @@ test("session browser는 double quit와 renderer cleanup을 보존한다", async
     sessionLoader: async () => [],
   });
   await flush(setup);
-  assert.match(setup.captureCharFrame(), /No sessions in current repo/);
+  assert.match(setup.captureCharFrame(), /No resume in current repo/);
 
   await setup.mockInput.pressCtrlC();
   now = 500;
