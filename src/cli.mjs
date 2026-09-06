@@ -27,33 +27,33 @@ import { runSessionBrowser } from "./tui/session-browser.mjs";
 
 const BACK_TO_START_MENU = Symbol("back-to-start-menu");
 
-// A resumed session runs in the directory zgap was launched from, not the one recorded in
-// the session: the agents look the id up across every project, and the user picks the
-// checkout by where they run zgap. OMP still switches itself to the recorded directory.
+// zgap passes only the session id and stays in the directory it was launched from. Each
+// agent decides on its own whether to work there or in the session's recorded directory:
+// Codex and Claude Code look the id up across every project, and OMP switches itself into
+// the recorded directory when it still exists.
 export async function resumeSession(session, configDir, {
   origin,
   dangerousMode = false,
   leanMode = false,
   ompLeanSkills = [],
-  cwd = process.cwd(),
   codexRunner = runCodex,
   claudeRunner = runClaude,
   ompRunner = runOmp,
 } = {}) {
   if (session?.agent === "codex") {
-    const options = { configDir, cwd };
+    const options = { configDir };
     if (origin) options.origin = origin;
     if (dangerousMode) options.dangerousMode = true;
     return codexRunner(["resume", session.id], options);
   }
   if (session?.agent === "claude") {
-    const options = { configDir, cwd };
+    const options = { configDir };
     if (origin) options.origin = origin;
     if (dangerousMode) options.dangerousMode = true;
     return claudeRunner(["--resume", session.id], options);
   }
   if (session?.agent === "omp") {
-    const options = { configDir, cwd, leanMode, ompLeanSkills };
+    const options = { configDir, leanMode, ompLeanSkills };
     if (origin) options.origin = origin;
     if (dangerousMode) options.dangerousMode = true;
     return ompRunner([`--resume=${session.id}`], options);
@@ -162,17 +162,17 @@ export async function main({
     return serveRunner(args, { configDir, origin, log });
   }
   if (command === "resume") {
+    const [{ host, origin }, dangerousMode] = await Promise.all([
+      configReader(configDir),
+      dangerousModeReader(configDir),
+    ]);
     return sessionBrowser({
       cwd,
+      host,
       onSelect: async (session, { remote = true } = {}) => {
-        const [{ origin }, dangerousMode] = await Promise.all([
-          configReader(configDir),
-          dangerousModeReader(configDir),
-        ]);
         return resumeSession(session, configDir, {
           ...(remote ? { origin } : {}),
           dangerousMode,
-          cwd,
           codexRunner,
           claudeRunner,
           ompRunner,
@@ -240,6 +240,7 @@ export async function main({
             let selected = false;
             const browserResult = await sessionBrowser({
               cwd,
+              host: proxyConfig.host,
               onSelect: (session, { remote = true } = {}) => {
                 selected = true;
                 return resumeSession(session, configDir, {
@@ -247,7 +248,6 @@ export async function main({
                   dangerousMode,
                   leanMode: ompLeanMode,
                   ompLeanSkills,
-                  cwd,
                   codexRunner,
                   claudeRunner,
                   ompRunner,

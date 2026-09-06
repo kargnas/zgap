@@ -502,12 +502,11 @@ test("sessions direct command는 현재 디렉터리의 browser를 연다", asyn
   assert.equal(options.cwd, "/repo/worktree");
 });
 
-test("session resume은 선택한 agent의 정확한 id를 전달하고 zgap을 실행한 디렉터리에서 재개한다", async () => {
+test("session resume은 세션 id만 전달하고 작업 디렉터리 결정은 agent에 맡긴다", async () => {
   const cli = await import("../src/cli.mjs");
   assert.equal(typeof cli.resumeSession, "function");
   const calls = [];
   const runners = {
-    cwd: "/repo/launch",
     codexRunner: async (args, options) => { calls.push({ agent: "codex", args, options }); return 11; },
     claudeRunner: async (args, options) => { calls.push({ agent: "claude", args, options }); return 12; },
     ompRunner: async (args, options) => { calls.push({ agent: "omp", args, options }); return 13; },
@@ -523,14 +522,13 @@ test("session resume은 선택한 agent의 정확한 id를 전달하고 zgap을 
     ompLeanSkills: ["git", "testing"],
   }), 13);
   assert.deepEqual(calls, [
-    { agent: "codex", args: ["resume", "codex-id"], options: { configDir: "/config", cwd: "/repo/launch", dangerousMode: true } },
-    { agent: "claude", args: ["--resume", "claude-id"], options: { configDir: "/config", cwd: "/repo/launch", dangerousMode: true } },
+    { agent: "codex", args: ["resume", "codex-id"], options: { configDir: "/config", dangerousMode: true } },
+    { agent: "claude", args: ["--resume", "claude-id"], options: { configDir: "/config", dangerousMode: true } },
     {
       agent: "omp",
       args: ["--resume=exact-omp-id"],
       options: {
         configDir: "/config",
-        cwd: "/repo/launch",
         origin: "https://proxy.example.test",
         dangerousMode: true,
         leanMode: true,
@@ -540,9 +538,10 @@ test("session resume은 선택한 agent의 정확한 id를 전달하고 zgap을 
   ]);
 });
 
-test("resume 명령은 browser에서 고른 세션을 zgap을 실행한 디렉터리에서 재개한다", async () => {
+test("resume 명령은 browser에 설정 host를 넘기고 로컬 선택 시 origin 없이 재개한다", async () => {
   const { main } = await import("../src/cli.mjs");
   const calls = [];
+  let browserOptions;
 
   const result = await main({
     argv: ["resume"],
@@ -551,11 +550,16 @@ test("resume 명령은 browser에서 고른 세션을 zgap을 실행한 디렉�
     configReader: async () => ({ host: "proxy.example.test", origin: "https://proxy.example.test" }),
     dangerousModeReader: async () => false,
     claudeRunner: async (args, options) => { calls.push({ args, options }); return 21; },
-    sessionBrowser: async ({ onSelect }) => onSelect({ agent: "claude", id: "claude-id", cwd: "/repo/recorded" }, { remote: false }),
+    sessionBrowser: async (options) => {
+      browserOptions = options;
+      return options.onSelect({ agent: "claude", id: "claude-id", cwd: "/repo/recorded" }, { remote: false });
+    },
   });
 
   assert.equal(result, 21);
-  assert.deepEqual(calls, [{ args: ["--resume", "claude-id"], options: { configDir: "/config", cwd: "/repo/launch" } }]);
+  assert.equal(browserOptions.cwd, "/repo/launch");
+  assert.equal(browserOptions.host, "proxy.example.test");
+  assert.deepEqual(calls, [{ args: ["--resume", "claude-id"], options: { configDir: "/config" } }]);
 });
 
 test("start menu의 Resume에서 뒤로 오면 start menu를 다시 연다", async () => {
