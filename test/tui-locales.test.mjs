@@ -40,10 +40,10 @@ test("영어와 한국어 locale은 같은 메뉴 key를 제공하고 40x10에�
       const frame = setup.captureCharFrame();
       const proxyStatus = locale === "ko" ? "프록시 접속됨" : "Proxy online";
       const modeHint = locale === "ko" ? "←↑↓→ · Tab 모드 · L lean · ↵ 선택 · ^C×2/Esc×2" : "←↑↓→ · Tab mode · L lean · ↵ select · ^C×2/Esc×2";
-      const sessionsLabel = locale === "ko" ? "세션" : "Sessions";
+      const sessionsLabel = locale === "ko" ? "재개" : "Resume";
       assert.match(frame, new RegExp(status), `${locale} ${credentialState} status clipped`);
       assert.match(frame, new RegExp(action), `${locale} ${credentialState} action clipped`);
-      assert.match(frame, new RegExp(sessionsLabel), `${locale} ${credentialState} Sessions action clipped`);
+      assert.match(frame, new RegExp(sessionsLabel), `${locale} ${credentialState} Resume action clipped`);
       assert.match(frame, /SAFE.*YOLO/, `${locale} ${credentialState} mode rail clipped`);
       const normalizedFrame = frame.replaceAll(/\s+/g, " ").replaceAll("/ ", "/");
       assert.ok(normalizedFrame.includes(modeHint), `${locale} ${credentialState} mode hint clipped`);
