@@ -1027,6 +1027,7 @@ test("재개 선택 화면은 방향키로 프록시와 로컬을 고르고 Esc�
 
   const result = runSessionBrowser({
     rendererFactory: async () => setup,
+    host: "proxy.example.test",
     discoverScope: async () => ({ roots: ["/repo"] }),
     sessionLoader: async () => [{ ...sessions[0], cwd: "/repo" }],
     onSelect: async (session, options) => { selections.push([session.id, options]); return 23; },
@@ -1038,15 +1039,15 @@ test("재개 선택 화면은 방향키로 프록시와 로컬을 고르고 Esc�
   let frame = setup.captureCharFrame();
   assert.match(frame, /RESUME SESSION/);
   assert.match(frame, /CODEX {2}Add session switcher/);
-  assert.match(frame, /›\s+Use ai-proxy\.zz\.gg/);
-  assert.match(frame, /\n\s+Resume with local configuration/);
+  assert.match(frame, /›\s+proxy\.example\.test/);
+  assert.match(frame, /\n\s+Local configuration/);
   assert.match(frame, /↑↓ move · Enter resume · Esc back/);
 
   setup.mockInput.pressArrow("down");
   await flush(setup);
   frame = setup.captureCharFrame();
-  assert.match(frame, /\n\s+Use ai-proxy\.zz\.gg/);
-  assert.match(frame, /›\s+Resume with local configuration/);
+  assert.match(frame, /\n\s+proxy\.example\.test/);
+  assert.match(frame, /›\s+Local configuration/);
 
   // Esc returns to the list without leaving the browser; the choice resets on the next Enter.
   setup.mockInput.pressEscape();
@@ -1058,7 +1059,7 @@ test("재개 선택 화면은 방향키로 프록시와 로컬을 고르고 Esc�
 
   setup.mockInput.pressEnter();
   await flush(setup);
-  assert.match(setup.captureCharFrame(), /›\s+Use ai-proxy\.zz\.gg/);
+  assert.match(setup.captureCharFrame(), /›\s+proxy\.example\.test/);
   setup.mockInput.pressArrow("down");
   await setup.mockInput.pressEnter();
   assert.equal(await result, 23);

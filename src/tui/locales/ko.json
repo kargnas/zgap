@@ -98,6 +98,6 @@
   "compactHintLean": "←↑↓→ · Space 스킬 · L lean · ↵ 선택 · ^C×2/Esc×2",
   "resumeChoiceTitle": "세션 재개",
   "resumeChoiceHint": "↑↓ 이동 · Enter 재개 · Esc 뒤로",
-  "resumeChoiceProxy": "ai-proxy.zz.gg 사용",
-  "resumeChoiceLocal": "로컬 설정으로 재개"
+  "resumeChoiceProxy": "{{host}}",
+  "resumeChoiceLocal": "로컬 설정"
 }

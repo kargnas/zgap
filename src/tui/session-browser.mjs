@@ -318,6 +318,7 @@ function previewText(session, width, height, t, { compact = false } = {}) {
 export async function runSessionBrowser({
   rendererFactory = createCliRenderer,
   cwd = process.cwd(),
+  host,
   onSelect = async () => 0,
   language = process.env.LANG,
   now = Date.now,
@@ -556,7 +557,7 @@ export async function runSessionBrowser({
         hint.content = t("resumeChoiceHint");
         const session = filteredSessions()[selectedIndex];
         const choices = [
-          [t("resumeChoiceProxy"), COLORS.amber],
+          [t("resumeChoiceProxy", { host }), COLORS.amber],
           [t("resumeChoiceLocal"), COLORS.green],
         ];
         list.content = new StyledText([
