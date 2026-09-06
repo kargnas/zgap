@@ -13,7 +13,6 @@ import { runCodex } from "./codex.mjs";
 import { runClaude } from "./claude.mjs";
 import { runOmp } from "./omp.mjs";
 import { discoverOmpSkills } from "./omp-skills.mjs";
-import { stat } from "node:fs/promises";
 import { readProxyConfig } from "./config.mjs";
 import {
   readDangerousMode,
@@ -27,37 +26,36 @@ import { runSessionBrowser } from "./tui/session-browser.mjs";
 
 const BACK_TO_START_MENU = Symbol("back-to-start-menu");
 
+// A resumed session runs in the directory zgap was launched from, not the one recorded in
+// the session: the agents look the id up across every project, and the user picks the
+// checkout by where they run zgap. OMP still switches itself to the recorded directory.
 export async function resumeSession(session, configDir, {
   origin,
   dangerousMode = false,
   leanMode = false,
   ompLeanSkills = [],
+  cwd = process.cwd(),
   codexRunner = runCodex,
   claudeRunner = runClaude,
   ompRunner = runOmp,
 } = {}) {
-  // spawn() reports a deleted cwd as ENOENT, which the runners would misdiagnose as a
-  // missing agent CLI; old resume from removed checkouts need their own message.
-  if (typeof session?.cwd === "string" && !await stat(session.cwd).then((entry) => entry.isDirectory(), () => false)) {
-    throw new Error(`Session directory no longer exists: ${session.cwd}`);
-  }
   if (session?.agent === "codex") {
-    const options = { configDir, cwd: session.cwd };
+    const options = { configDir, cwd };
     if (origin) options.origin = origin;
     if (dangerousMode) options.dangerousMode = true;
     return codexRunner(["resume", session.id], options);
   }
   if (session?.agent === "claude") {
-    const options = { configDir, cwd: session.cwd };
+    const options = { configDir, cwd };
     if (origin) options.origin = origin;
     if (dangerousMode) options.dangerousMode = true;
     return claudeRunner(["--resume", session.id], options);
   }
   if (session?.agent === "omp") {
-    const options = { configDir, cwd: session.cwd, leanMode, ompLeanSkills };
+    const options = { configDir, cwd, leanMode, ompLeanSkills };
     if (origin) options.origin = origin;
     if (dangerousMode) options.dangerousMode = true;
-    return ompRunner([`--resume=${session.id}`, `--cwd=${session.cwd}`], options);
+    return ompRunner([`--resume=${session.id}`], options);
   }
   throw new Error(`Unsupported session agent: ${session?.agent ?? "unknown"}`);
 }
@@ -167,6 +165,7 @@ export async function main({
         return resumeSession(session, configDir, {
           ...(remote ? { origin } : {}),
           dangerousMode,
+          cwd,
           codexRunner,
           claudeRunner,
           ompRunner,
@@ -241,6 +240,7 @@ export async function main({
                   dangerousMode,
                   leanMode: ompLeanMode,
                   ompLeanSkills,
+                  cwd,
                   codexRunner,
                   claudeRunner,
                   ompRunner,

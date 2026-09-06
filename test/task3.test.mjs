@@ -502,24 +502,20 @@ test("sessions direct command는 현재 디렉터리의 browser를 연다", asyn
   assert.equal(options.cwd, "/repo/worktree");
 });
 
-test("session resume은 선택한 agent의 정확한 id와 저장된 디렉터리를 전달한다", async (t) => {
+test("session resume은 선택한 agent의 정확한 id를 전달하고 zgap을 실행한 디렉터리에서 재개한다", async () => {
   const cli = await import("../src/cli.mjs");
   assert.equal(typeof cli.resumeSession, "function");
-  const root = await tempDir(t);
-  const codexCwd = path.join(root, "codex");
-  const claudeCwd = path.join(root, "claude");
-  const ompCwd = path.join(root, "omp");
-  await Promise.all([codexCwd, claudeCwd, ompCwd].map((directory) => mkdir(directory, { recursive: true })));
   const calls = [];
   const runners = {
+    cwd: "/repo/launch",
     codexRunner: async (args, options) => { calls.push({ agent: "codex", args, options }); return 11; },
     claudeRunner: async (args, options) => { calls.push({ agent: "claude", args, options }); return 12; },
     ompRunner: async (args, options) => { calls.push({ agent: "omp", args, options }); return 13; },
   };
 
-  assert.equal(await cli.resumeSession({ agent: "codex", id: "codex-id", cwd: codexCwd }, "/config", { ...runners, dangerousMode: true }), 11);
-  assert.equal(await cli.resumeSession({ agent: "claude", id: "claude-id", cwd: claudeCwd }, "/config", { ...runners, dangerousMode: true }), 12);
-  assert.equal(await cli.resumeSession({ agent: "omp", id: "exact-omp-id", cwd: ompCwd }, "/config", {
+  assert.equal(await cli.resumeSession({ agent: "codex", id: "codex-id", cwd: "/repo/codex" }, "/config", { ...runners, dangerousMode: true }), 11);
+  assert.equal(await cli.resumeSession({ agent: "claude", id: "claude-id", cwd: "/repo/claude" }, "/config", { ...runners, dangerousMode: true }), 12);
+  assert.equal(await cli.resumeSession({ agent: "omp", id: "exact-omp-id", cwd: "/repo/omp" }, "/config", {
     ...runners,
     origin: "https://proxy.example.test",
     dangerousMode: true,
@@ -527,14 +523,14 @@ test("session resume은 선택한 agent의 정확한 id와 저장된 디렉터�
     ompLeanSkills: ["git", "testing"],
   }), 13);
   assert.deepEqual(calls, [
-    { agent: "codex", args: ["resume", "codex-id"], options: { configDir: "/config", cwd: codexCwd, dangerousMode: true } },
-    { agent: "claude", args: ["--resume", "claude-id"], options: { configDir: "/config", cwd: claudeCwd, dangerousMode: true } },
+    { agent: "codex", args: ["resume", "codex-id"], options: { configDir: "/config", cwd: "/repo/launch", dangerousMode: true } },
+    { agent: "claude", args: ["--resume", "claude-id"], options: { configDir: "/config", cwd: "/repo/launch", dangerousMode: true } },
     {
       agent: "omp",
-      args: ["--resume=exact-omp-id", `--cwd=${ompCwd}`],
+      args: ["--resume=exact-omp-id"],
       options: {
         configDir: "/config",
-        cwd: ompCwd,
+        cwd: "/repo/launch",
         origin: "https://proxy.example.test",
         dangerousMode: true,
         leanMode: true,
@@ -544,17 +540,22 @@ test("session resume은 선택한 agent의 정확한 id와 저장된 디렉터�
   ]);
 });
 
-test("session resume은 삭제된 작업 디렉터리를 CLI 미설치와 구분해 알린다", async (t) => {
-  const cli = await import("../src/cli.mjs");
-  const root = await tempDir(t);
-  const gone = path.join(root, "removed-checkout");
-  await assert.rejects(
-    cli.resumeSession({ agent: "claude", id: "gone-id", cwd: gone }, "/config", {
-      codexRunner: async () => { throw new Error("must not spawn"); },
-      claudeRunner: async () => { throw new Error("must not spawn"); },
-    }),
-    (error) => error.message.includes(gone) && !error.message.includes("not installed"),
-  );
+test("resume 명령은 browser에서 고른 세션을 zgap을 실행한 디렉터리에서 재개한다", async () => {
+  const { main } = await import("../src/cli.mjs");
+  const calls = [];
+
+  const result = await main({
+    argv: ["resume"],
+    cwd: "/repo/launch",
+    configDir: "/config",
+    configReader: async () => ({ host: "proxy.example.test", origin: "https://proxy.example.test" }),
+    dangerousModeReader: async () => false,
+    claudeRunner: async (args, options) => { calls.push({ args, options }); return 21; },
+    sessionBrowser: async ({ onSelect }) => onSelect({ agent: "claude", id: "claude-id", cwd: "/repo/recorded" }, { remote: false }),
+  });
+
+  assert.equal(result, 21);
+  assert.deepEqual(calls, [{ args: ["--resume", "claude-id"], options: { configDir: "/config", cwd: "/repo/launch" } }]);
 });
 
 test("start menu의 Resume에서 뒤로 오면 start menu를 다시 연다", async () => {
