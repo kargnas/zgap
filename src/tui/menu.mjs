@@ -83,7 +83,7 @@ function menuContent(credentialState, accountProfile, t, host) {
         { name: "codex", label: t("codex"), description: t("codexDescription", { host }) },
         { name: "claude", label: t("claude"), description: t("claudeDescription", { host }) },
         { name: "omp", label: t("omp"), description: t("ompDescription", { host }) },
-        { name: "sessions", label: t("sessions"), description: t("sessionsDescription") },
+        { name: "resume", label: t("resume"), description: t("resumeDescription") },
       ],
     };
   }
@@ -94,7 +94,7 @@ function menuContent(credentialState, accountProfile, t, host) {
       statusColor: "#FCD34D",
       actions: [
         { name: "login", label: t("loginAgain"), description: t("loginAgainDescription") },
-        { name: "sessions", label: t("sessions"), description: t("sessionsDescription") },
+        { name: "resume", label: t("resume"), description: t("resumeDescription") },
       ],
     };
   }
@@ -104,7 +104,7 @@ function menuContent(credentialState, accountProfile, t, host) {
       statusColor: "#94A3B8",
       actions: [
         { name: "login", label: t("login"), description: t("loginDescription") },
-        { name: "sessions", label: t("sessions"), description: t("sessionsDescription") },
+        { name: "resume", label: t("resume"), description: t("resumeDescription") },
       ],
     };
   }

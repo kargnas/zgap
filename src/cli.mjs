@@ -37,7 +37,7 @@ export async function resumeSession(session, configDir, {
   ompRunner = runOmp,
 } = {}) {
   // spawn() reports a deleted cwd as ENOENT, which the runners would misdiagnose as a
-  // missing agent CLI; old sessions from removed checkouts need their own message.
+  // missing agent CLI; old resume from removed checkouts need their own message.
   if (typeof session?.cwd === "string" && !await stat(session.cwd).then((entry) => entry.isDirectory(), () => false)) {
     throw new Error(`Session directory no longer exists: ${session.cwd}`);
   }
@@ -71,7 +71,7 @@ function printHelp() {
   zgap codex [args...]   Run Codex through the configured proxy
   zgap claude [args...]  Run Claude through the configured proxy
   zgap omp [args...]     Run OMP through the configured proxy
-  zgap sessions          Browse agent history
+  zgap resume          Resume an agent session
   zgap update            Update zgap from GitHub main
 
 zgap keeps each supported agent's normal local configuration and history.`);
@@ -156,16 +156,16 @@ export async function main({
       dangerousMode,
     });
   }
-  if (command === "sessions") {
+  if (command === "resume") {
     return sessionBrowser({
       cwd,
-      onSelect: async (session) => {
+      onSelect: async (session, { remote = true } = {}) => {
         const [{ origin }, dangerousMode] = await Promise.all([
           configReader(configDir),
           dangerousModeReader(configDir),
         ]);
         return resumeSession(session, configDir, {
-          origin,
+          ...(remote ? { origin } : {}),
           dangerousMode,
           codexRunner,
           claudeRunner,
@@ -230,14 +230,14 @@ export async function main({
             leanMode: ompLeanMode,
             ...(ompLeanSkills.length > 0 ? { ompLeanSkills } : {}),
           }),
-          sessions: async () => {
+          resume: async () => {
             let selected = false;
             const browserResult = await sessionBrowser({
               cwd,
-              onSelect: (session) => {
+              onSelect: (session, { remote = true } = {}) => {
                 selected = true;
                 return resumeSession(session, configDir, {
-                  origin: proxyConfig.origin,
+                  ...(remote ? { origin: proxyConfig.origin } : {}),
                   dangerousMode,
                   leanMode: ompLeanMode,
                   ompLeanSkills,

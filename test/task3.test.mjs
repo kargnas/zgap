@@ -362,7 +362,7 @@ test("인자 없는 CLI는 credential 상태를 시작 메뉴에 전달한다", 
   assert.equal(typeof menuOptions.actions.login, "function");
   assert.equal(typeof menuOptions.actions.codex, "function");
   assert.equal(typeof menuOptions.actions.claude, "function");
-  assert.equal(typeof menuOptions.actions.sessions, "function");
+  assert.equal(typeof menuOptions.actions.resume, "function");
 });
 
 test("시작 메뉴의 dangerous mode 변경은 저장 후 같은 프로세스의 Codex 실행에 적용한다", async () => {
@@ -493,7 +493,7 @@ test("sessions direct command는 현재 디렉터리의 browser를 연다", asyn
   let options;
 
   const result = await main({
-    argv: ["sessions"],
+    argv: ["resume"],
     cwd: "/repo/worktree",
     sessionBrowser: async (value) => { options = value; return 12; },
   });
@@ -557,7 +557,7 @@ test("session resume은 삭제된 작업 디렉터리를 CLI 미설치와 구분
   );
 });
 
-test("start menu의 Sessions에서 뒤로 오면 start menu를 다시 연다", async () => {
+test("start menu의 Resume에서 뒤로 오면 start menu를 다시 연다", async () => {
   const { main } = await import("../src/cli.mjs");
   let menuCalls = 0;
   let browserCalls = 0;
@@ -569,7 +569,7 @@ test("start menu의 Sessions에서 뒤로 오면 start menu를 다시 연다", a
     credentialReader: async () => ({ access_token: "invalid" }),
     startMenu: async ({ actions }) => {
       menuCalls += 1;
-      if (menuCalls === 1) return actions.sessions();
+      if (menuCalls === 1) return actions.resume();
       return 17;
     },
     sessionBrowser: async ({ cwd }) => {
@@ -584,7 +584,7 @@ test("start menu의 Sessions에서 뒤로 오면 start menu를 다시 연다", a
   assert.equal(browserCalls, 1);
 });
 
-test("start menu의 Sessions가 quit하면 start menu를 다시 열지 않는다", async () => {
+test("start menu의 Resume가 quit하면 start menu를 다시 열지 않는다", async () => {
   const { main } = await import("../src/cli.mjs");
   let menuCalls = 0;
 
@@ -594,7 +594,7 @@ test("start menu의 Sessions가 quit하면 start menu를 다시 열지 않는다
     credentialReader: async () => ({ access_token: "invalid" }),
     startMenu: async ({ actions }) => {
       menuCalls += 1;
-      return actions.sessions();
+      return actions.resume();
     },
     sessionBrowser: async () => 130,
   });
@@ -707,7 +707,7 @@ test("L은 OMP LEAN을 즉시 전환하고 OMP 시작 시에만 경고를 표시
       codex: async () => 0,
       claude: async () => 0,
       omp: async () => { launches.push("omp"); return 7; },
-      sessions: async () => 0,
+      resume: async () => 0,
     },
   });
 
@@ -804,7 +804,7 @@ test("OMP LEAN 스킬 선택창은 선택을 저장하고 전체 해제한다", 
       if (saveFails) throw new Error("disk full");
       writes.push(skills);
     },
-    actions: { codex: async () => 0, claude: async () => 0, omp: async () => 0, sessions: async () => 0 },
+    actions: { codex: async () => 0, claude: async () => 0, omp: async () => 0, resume: async () => 0 },
   });
 
   await flushMenu(setup);
@@ -886,7 +886,7 @@ test("OMP LEAN 스킬 선택창은 긴 목록에서도 제목과 안내 영역�
     credentialState: "signed-in",
     ompLeanMode: true,
     onOmpSkillsLoad: async () => skills,
-    actions: { codex: async () => 0, claude: async () => 0, omp: async () => 0, sessions: async () => 0 },
+    actions: { codex: async () => 0, claude: async () => 0, omp: async () => 0, resume: async () => 0 },
   });
 
   await flushMenu(setup);
@@ -940,7 +940,7 @@ test("dangerous mode 저장 실패는 SAFE 상태와 오류 안내를 유지한�
   assert.match(frameAfterFailedTab, /Could not save YOLO mode/);
 });
 
-test("로그인 상태에서는 CODEX, Claude, Sessions를 선택할 수 있다", async (t) => {
+test("로그인 상태에서는 CODEX, Claude, Resume를 선택할 수 있다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runStartMenu } = await import("../src/tui/menu.mjs");
   const setup = await createTestRenderer({ width: 100, height: 24 });
@@ -962,23 +962,23 @@ test("로그인 상태에서는 CODEX, Claude, Sessions를 선택할 수 있다"
   assert.match(frame, /CODEX/);
   assert.match(frame, /Claude/);
   assert.match(frame, /OMP/);
-  assert.match(frame, /Sessions/);
+  assert.match(frame, /Resume/);
   assert.doesNotMatch(frame, /Login/);
   const codexLabel = findText(setup.renderer.root, "CODEX  ↵");
   const claudeLabel = findText(setup.renderer.root, "Claude  ↵");
   const ompLabel = findText(setup.renderer.root, "OMP  ↵");
-  const sessionsLabel = findText(setup.renderer.root, "Sessions  ↵");
-  // Four agent cards wrap into a 2x2 grid: row order is Codex/Claude then OMP/Sessions.
+  const resumeLabel = findText(setup.renderer.root, "Resume  ↵");
+  // Four agent cards wrap into a 2x2 grid: row order is Codex/Claude then OMP/Resume.
   assert.equal(codexLabel.y, claudeLabel.y);
-  assert.equal(ompLabel.y, sessionsLabel.y);
+  assert.equal(ompLabel.y, resumeLabel.y);
   assert.equal(codexLabel.x, ompLabel.x);
-  assert.equal(claudeLabel.x, sessionsLabel.x);
+  assert.equal(claudeLabel.x, resumeLabel.x);
   assert.ok(claudeLabel.x > codexLabel.x, `Claude action must be right of Codex: ${claudeLabel.x} <= ${codexLabel.x}`);
   assert.ok(ompLabel.y > codexLabel.y, `OMP action must be below Codex: ${ompLabel.y} <= ${codexLabel.y}`);
-  assert.ok(sessionsLabel.y > claudeLabel.y, `Sessions action must be below Claude: ${sessionsLabel.y} <= ${claudeLabel.y}`);
+  assert.ok(resumeLabel.y > claudeLabel.y, `Resume action must be below Claude: ${resumeLabel.y} <= ${claudeLabel.y}`);
   assert.notEqual(codexLabel.fg.toString(), claudeLabel.fg.toString());
 
-  const cards = [codexLabel, claudeLabel, ompLabel, sessionsLabel].map((label) => label.parent);
+  const cards = [codexLabel, claudeLabel, ompLabel, resumeLabel].map((label) => label.parent);
   const selectedBorder = cards[0].borderColor.toString();
   const unselectedBorder = cards[1].borderColor.toString();
   await setup.mockInput.pressArrow("right");
@@ -1000,7 +1000,7 @@ test("로그인 상태에서는 CODEX, Claude, Sessions를 선택할 수 있다"
   assert.equal(cards[1].borderColor.toString(), unselectedBorder);
   assert.deepEqual(writes, []);
   await setup.mockInput.pressEnter();
-  await assert.rejects(resultPromise, /Missing menu action: sessions/);
+  await assert.rejects(resultPromise, /Missing menu action: resume/);
   assert.deepEqual(calls, []);
 });
 
@@ -1036,7 +1036,7 @@ test("Stacked Command Cards는 상하 박스와 선택 테두리를 유지한다
   assert.match(compact.captureCharFrame(), /╭─+╮/);
   assert.match(compact.captureCharFrame(), /CODEX/);
   assert.match(compact.captureCharFrame(), /Claude/);
-  assert.match(compact.captureCharFrame(), /Sessions/);
+  assert.match(compact.captureCharFrame(), /Resume/);
   assert.match(compact.captureCharFrame(), /SAFE.*YOLO/);
   assert.match(compact.captureCharFrame(), /Esc/);
 
@@ -1085,7 +1085,7 @@ test("만료된 로그인 상태에서는 Login again을 기본 선택한다", a
     credentialState: "expired",
     actions: {
       login: async () => { calls.push("login"); return 7; },
-      sessions: async () => { calls.push("sessions"); return 10; },
+      resume: async () => { calls.push("sessions"); return 10; },
       codex: async () => { calls.push("codex"); return 8; },
     },
   });
@@ -1093,14 +1093,14 @@ test("만료된 로그인 상태에서는 Login again을 기본 선택한다", a
   const frame = setup.captureCharFrame();
   assert.match(frame, /Session expired/);
   assert.match(frame, /Login again/);
-  assert.match(frame, /Sessions/);
+  assert.match(frame, /Resume/);
   assert.doesNotMatch(frame, /CODEX/);
   await setup.mockInput.pressEnter();
   assert.equal(await resultPromise, 7);
   assert.deepEqual(calls, ["login"]);
 });
 
-test("compact 미로그인 메뉴는 Right로 Sessions를 실행한다", async (t) => {
+test("compact 미로그인 메뉴는 Right로 Resume를 실행한다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runStartMenu } = await import("../src/tui/menu.mjs");
   const setup = await createTestRenderer({ width: 72, height: 12 });
@@ -1111,7 +1111,7 @@ test("compact 미로그인 메뉴는 Right로 Sessions를 실행한다", async (
     credentialState: "signed-out",
     actions: {
       login: async () => { calls.push("login"); return 7; },
-      sessions: async () => { calls.push("sessions"); return 10; },
+      resume: async () => { calls.push("sessions"); return 10; },
       codex: async () => { calls.push("codex"); return 8; },
     },
   });
@@ -1119,7 +1119,7 @@ test("compact 미로그인 메뉴는 Right로 Sessions를 실행한다", async (
   const frame = setup.captureCharFrame();
   assert.match(frame, /Not signed in/);
   assert.match(frame, /Login/);
-  assert.match(frame, /Sessions/);
+  assert.match(frame, /Resume/);
   assert.doesNotMatch(frame, /CODEX/);
   await setup.mockInput.pressArrow("right");
   await setup.mockInput.pressEnter();
@@ -1138,7 +1138,7 @@ test("비compact 미로그인 메뉴는 세로 이동을 유지하고 좌우와 
     credentialState: "signed-out",
     actions: {
       login: async () => { calls.push("login"); return 7; },
-      sessions: async () => { calls.push("sessions"); return 10; },
+      resume: async () => { calls.push("sessions"); return 10; },
     },
   });
 
@@ -1209,7 +1209,7 @@ test("Corner Map은 40x10으로 줄어도 상태, action, 종료 hint를 유지�
   assert.match(wideFrame, /user@example\.com/);
   assert.match(wideFrame, /CODEX/);
   assert.match(wideFrame, /Claude/);
-  assert.match(wideFrame, /Sessions/);
+  assert.match(wideFrame, /Resume/);
   assert.match(wideFrame, /Esc/);
   setup.resize(72, 24);
   await flushMenu(setup);
@@ -1234,8 +1234,8 @@ test("Corner Map은 40x10으로 줄어도 상태, action, 종료 hint를 유지�
   assert.match(frame, /Proxy online · 85 ms/);
   assert.match(frame, /CODEX/);
   assert.match(frame, /Claude/);
-  assert.match(frame, /Sessions/);
-  assert.match(frame, /│Sessions\s+│/);
+  assert.match(frame, /Resume/);
+  assert.match(frame, /│Resume\s+│/);
   assert.match(frame, /Esc/);
   assert.deepEqual(Array.from(setup.captureSpans().lines[0].spans[0].bg.buffer), [0, 0, 0, 255]);
   await setup.mockInput.pressCtrlC();
@@ -1374,7 +1374,7 @@ test("CLI help는 logout direct command를 안내한다", async () => {
   const [code] = await once(child, "exit");
   assert.equal(code, 0);
   assert.match(stdout, /zgap logout\s+Sign out on this device/);
-  assert.match(stdout, /zgap sessions\s+Browse agent history/);
+  assert.match(stdout, /zgap resume\s+Resume an agent session/);
   assert.match(stdout, /zgap update\s+Update zgap from GitHub main/);
 });
 
