@@ -31,6 +31,12 @@ if ! command -v bun >/dev/null 2>&1; then
 fi
 
 command -v bun >/dev/null 2>&1
+# Remove a prior path or linked install first; otherwise Bun can keep two `zgap`
+# entries in the global manifest and make the lockfile invalid.
+global_package="${bun_install_dir}/install/global/package.json"
+if [ -f "${global_package}" ] && [[ "$(<"${global_package}")" == *'"zgap"'* ]]; then
+  bun remove -g zgap
+fi
 # Pin the registry: some machines set the default registry to npm.pkg.github.com
 # for private GitHub Packages, which 404s public tarballs like path-to-regexp.
 bun add -g github:kargnas/zgap#main --force --no-cache --registry https://registry.npmjs.org

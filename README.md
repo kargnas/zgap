@@ -9,6 +9,9 @@ curl -fsSL https://raw.githubusercontent.com/kargnas/zgap/main/install.sh | bash
 ```
 
 The installer adds `zgap` through Bun and installs Bun first when needed.
+Keep the global install pointed at GitHub for automatic updates. For local
+development, run `bun run bin/zgap.mjs` from the checkout instead of linking it
+into Bun's global dependencies; linked checkouts intentionally skip updates.
 
 Configure one credential, then open the agent menu. `zgap login` opens a TUI for choosing Browser OAuth or an API key:
 

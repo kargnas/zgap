@@ -1414,23 +1414,26 @@ test("Bun package dry-run contains runtime files only", async () => {
   }
 });
 
-test("installer uses existing Bun and never manages zgap files", async (t) => {
+test("installer removes an existing zgap link before installing the remote package", async (t) => {
   const root = await tempDir(t);
   const fakeBin = path.join(root, "bin");
   const marker = path.join(root, "bun-args");
   await mkdir(fakeBin, { recursive: true });
+  await mkdir(path.join(root, "install", "global"), { recursive: true });
+  await writeFile(path.join(root, "install", "global", "package.json"), '{"dependencies":{"zgap":"/tmp/zgap"}}\n');
   await writeFile(path.join(fakeBin, "bun"), `#!/bin/sh
 printf '%s\\n' "$@" >> ${marker}
 `);
   await chmod(path.join(fakeBin, "bun"), 0o755);
   const child = spawn("/bin/bash", [path.join(repoDir, "install.sh")], {
-    env: { PATH: fakeBin },
+    env: { PATH: fakeBin, BUN_INSTALL: root },
   });
   const [code] = await once(child, "exit");
   assert.equal(code, 0);
   assert.equal(
     await readFile(marker, "utf8"),
-    "add\n-g\ngithub:kargnas/zgap#main\n--force\n--no-cache\n--registry\nhttps://registry.npmjs.org\n"
+    "remove\n-g\nzgap\n"
+      + "add\n-g\ngithub:kargnas/zgap#main\n--force\n--no-cache\n--registry\nhttps://registry.npmjs.org\n"
       + "update\n-g\nzgap\n--force\n--no-cache\n--registry\nhttps://registry.npmjs.org\n",
   );
   assert.equal((await readdir(root)).includes("zgap"), false);
