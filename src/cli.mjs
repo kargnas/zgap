@@ -209,7 +209,7 @@ export async function main({
         accountProfile,
         host: proxyConfig.host,
         origin: proxyConfig.origin,
-        updateChecker,
+        updateChecker: (options) => updateChecker({ ...options, configDir }),
         dangerousMode,
         ompLeanMode,
         ompLeanSkills,
