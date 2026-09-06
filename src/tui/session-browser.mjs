@@ -410,6 +410,7 @@ export async function runSessionBrowser({
     let showHelp = false;
     let showPreview = false;
     let showResumeChoice = false;
+    let resumeChoiceIndex = 0;
     let previewLoading = false;
     let previewError = null;
     let previewGeneration = 0;
@@ -553,10 +554,23 @@ export async function runSessionBrowser({
         previewContent.visible = false;
         list.visible = true;
         hint.content = t("resumeChoiceHint");
+        const session = filteredSessions()[selectedIndex];
+        const choices = [
+          [t("resumeChoiceProxy"), COLORS.amber],
+          [t("resumeChoiceLocal"), COLORS.green],
+        ];
         list.content = new StyledText([
-          chunk(t("resumeChoiceProxy"), COLORS.amber, undefined, true),
+          chunk(session ? `${displayText(session.agent).toUpperCase()}  ${truncateText(displayText(session.title), Math.max(4, renderer.width - 12))}` : "", COLORS.chip),
           chunk("\n\n", COLORS.text),
-          chunk(t("resumeChoiceLocal"), COLORS.green, undefined, true),
+          ...choices.flatMap(([label, color], index) => {
+            const selected = index === resumeChoiceIndex;
+            const background = selected ? COLORS.amberBackground : undefined;
+            return [
+              ...(index > 0 ? [chunk("\n", COLORS.text)] : []),
+              chunk(selected ? "› " : "  ", COLORS.amber, background),
+              chunk(label, color, background, selected),
+            ];
+          }),
         ]);
         renderer.requestRender();
         return;
@@ -724,6 +738,7 @@ export async function runSessionBrowser({
         return;
       }
       showResumeChoice = true;
+      resumeChoiceIndex = 0;
       render();
     };
     const select = (index) => {
@@ -803,7 +818,10 @@ export async function runSessionBrowser({
         return;
       }
       if (event.name === "escape" || event.name === "backspace") {
-        if (showConvert) {
+        if (showResumeChoice) {
+          showResumeChoice = false;
+          render();
+        } else if (showConvert) {
           if (convertLoading) return;
           showConvert = false;
           convertError = null;
@@ -896,21 +914,19 @@ export async function runSessionBrowser({
         return;
       }
       if (showResumeChoice) {
-        if (event.name === "up" || event.name === "k" || event.name === "down" || event.name === "j") return;
-        if (event.name === "return") {
+        if (["up", "k"].includes(event.name)) {
+          resumeChoiceIndex = 0;
+          render();
+        } else if (["down", "j"].includes(event.name)) {
+          resumeChoiceIndex = 1;
+          render();
+        } else if (event.name === "return") {
           const session = filteredSessions()[selectedIndex];
           if (!session) return;
           showResumeChoice = false;
           clearActiveResume();
           cleanup();
-          Promise.resolve().then(() => onSelect(session, { remote: true })).then(resolveResult, rejectResult);
-        } else if (event.name === "l") {
-          const session = filteredSessions()[selectedIndex];
-          if (!session) return;
-          showResumeChoice = false;
-          clearActiveResume();
-          cleanup();
-          Promise.resolve().then(() => onSelect(session, { remote: false })).then(resolveResult, rejectResult);
+          Promise.resolve().then(() => onSelect(session, { remote: resumeChoiceIndex === 0 })).then(resolveResult, rejectResult);
         }
         return;
       }

@@ -97,7 +97,7 @@
   "compactHint": "←↑↓→ · Tab 모드 · L lean · ↵ 선택 · ^C×2/Esc×2",
   "compactHintLean": "←↑↓→ · Space 스킬 · L lean · ↵ 선택 · ^C×2/Esc×2",
   "resumeChoiceTitle": "세션 재개",
-  "resumeChoiceHint": "Enter: ai-proxy.zz.gg · l: 로컬 · Esc: 뒤로",
+  "resumeChoiceHint": "↑↓ 이동 · Enter 재개 · Esc 뒤로",
   "resumeChoiceProxy": "ai-proxy.zz.gg 사용",
   "resumeChoiceLocal": "로컬 설정으로 재개"
 }

@@ -1018,6 +1018,75 @@ test("session browser는 Enter로 선택한 세션을 재개한다", async (t) =
   assert.equal(setup.renderer.isDestroyed, true);
 });
 
+test("재개 선택 화면은 방향키로 프록시와 로컬을 고르고 Esc로 목록에 돌아간다", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
+  const setup = await createTestRenderer({ width: 72, height: 12 });
+  t.after(() => setup.renderer.destroy());
+  const selections = [];
+
+  const result = runSessionBrowser({
+    rendererFactory: async () => setup,
+    discoverScope: async () => ({ roots: ["/repo"] }),
+    sessionLoader: async () => [{ ...sessions[0], cwd: "/repo" }],
+    onSelect: async (session, options) => { selections.push([session.id, options]); return 23; },
+  });
+  await flush(setup);
+
+  setup.mockInput.pressEnter();
+  await flush(setup);
+  let frame = setup.captureCharFrame();
+  assert.match(frame, /RESUME SESSION/);
+  assert.match(frame, /CODEX {2}Add session switcher/);
+  assert.match(frame, /›\s+Use ai-proxy\.zz\.gg/);
+  assert.match(frame, /\n\s+Resume with local configuration/);
+  assert.match(frame, /↑↓ move · Enter resume · Esc back/);
+
+  setup.mockInput.pressArrow("down");
+  await flush(setup);
+  frame = setup.captureCharFrame();
+  assert.match(frame, /\n\s+Use ai-proxy\.zz\.gg/);
+  assert.match(frame, /›\s+Resume with local configuration/);
+
+  // Esc returns to the list without leaving the browser; the choice resets on the next Enter.
+  setup.mockInput.pressEscape();
+  await flush(setup);
+  frame = setup.captureCharFrame();
+  assert.doesNotMatch(frame, /RESUME SESSION/);
+  assert.match(frame, /›\s+\[ \] CODEX · zgap {2}Add session switcher/);
+  assert.equal(selections.length, 0);
+
+  setup.mockInput.pressEnter();
+  await flush(setup);
+  assert.match(setup.captureCharFrame(), /›\s+Use ai-proxy\.zz\.gg/);
+  setup.mockInput.pressArrow("down");
+  await setup.mockInput.pressEnter();
+  assert.equal(await result, 23);
+  assert.deepEqual(selections, [["codex-zgap", { remote: false }]]);
+  assert.equal(setup.renderer.isDestroyed, true);
+});
+
+test("재개 선택 화면에서 Enter는 기본으로 프록시 설정을 선택한다", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
+  const setup = await createTestRenderer({ width: 72, height: 12 });
+  t.after(() => setup.renderer.destroy());
+  let options;
+
+  const result = runSessionBrowser({
+    rendererFactory: async () => setup,
+    discoverScope: async () => ({ roots: ["/repo"] }),
+    sessionLoader: async () => [{ ...sessions[0], cwd: "/repo" }],
+    onSelect: async (_session, value) => { options = value; return 23; },
+  });
+  await flush(setup);
+
+  setup.mockInput.pressEnter();
+  await setup.mockInput.pressEnter();
+  assert.equal(await result, 23);
+  assert.deepEqual(options, { remote: true });
+});
+
 test("session browser는 실행 중인 세션을 목록에서 Enter 두 번으로 재개한다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");

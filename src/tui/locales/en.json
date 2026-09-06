@@ -97,7 +97,7 @@
   "compactHint": "←↑↓→ · Tab mode · L lean · ↵ select · ^C×2/Esc×2",
   "compactHintLean": "←↑↓→ · Space skills · L lean · ↵ select · ^C×2/Esc×2",
   "resumeChoiceTitle": "RESUME SESSION",
-  "resumeChoiceHint": "Enter: ai-proxy.zz.gg · l: local · Esc: back",
+  "resumeChoiceHint": "↑↓ move · Enter resume · Esc back",
   "resumeChoiceProxy": "Use ai-proxy.zz.gg",
   "resumeChoiceLocal": "Resume with local configuration"
 }

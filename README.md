@@ -38,6 +38,8 @@ Existing OMP extensions continue to load in the zgap child. A required extension
 
 `zgap omp` supports launch and ACP sessions. Run OMP management commands such as `models`, `config`, and `plugin` with `omp` directly.
 
+`zgap resume` lists Codex, Claude Code, and OMP sessions. Choose a session, then pick with the arrow keys whether it resumes through the proxy or with the agent's own local configuration. The agent starts in the directory where you ran `zgap`, not in the directory recorded in the session; OMP is the exception, because it switches itself into the recorded directory when it exists.
+
 Inside `zgap omp`, use OMP's built-in `/fast on` and `/fast off` commands to toggle the current model family's Fast tier; OpenAI requests use `service_tier: priority`. The process-local provider extension also adds `/ultrafast on` and `/ultrafast off`; it applies only to Codex models whose server catalog advertises that tier. Ultrafast takes precedence while enabled, and disabling it restores the Fast selection that remains active in OMP. With `tier.subagent: inherit`, subagents inherit Fast, while the extension shares the live Ultrafast selection with subagents in the current OMP process.
 
 ```text
@@ -55,7 +57,7 @@ zgap logout            Remove the active credential
 zgap codex [args...]   Run Codex
 zgap claude [args...]  Run Claude Code
 zgap omp [args...]     Run OMP with process-local provider overrides
-zgap sessions          Browse agent history
+zgap resume            Resume an agent session
 zgap --help            Show all commands
 ```
 
