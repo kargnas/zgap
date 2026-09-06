@@ -12,6 +12,7 @@ import { login } from "./login.mjs";
 import { runCodex } from "./codex.mjs";
 import { runClaude } from "./claude.mjs";
 import { runOmp } from "./omp.mjs";
+import { runServe } from "./serve.mjs";
 import { discoverOmpSkills } from "./omp-skills.mjs";
 import { readProxyConfig } from "./config.mjs";
 import {
@@ -70,6 +71,7 @@ function printHelp() {
   zgap claude [args...]  Run Claude through the configured proxy
   zgap omp [args...]     Run OMP through the configured proxy
   zgap resume          Resume an agent session
+  zgap serve [--port N]  Forward a loopback port to the proxy for local-only clients
   zgap update            Update zgap from GitHub main
 
 zgap keeps each supported agent's normal local configuration and history.`);
@@ -96,6 +98,7 @@ export async function main({
   codexRunner = runCodex,
   claudeRunner = runClaude,
   ompRunner = runOmp,
+  serveRunner = runServe,
   log = console.log,
   cwd = process.cwd(),
 } = {}) {
@@ -153,6 +156,10 @@ export async function main({
       origin,
       dangerousMode,
     });
+  }
+  if (command === "serve") {
+    const { origin } = await configReader(configDir);
+    return serveRunner(args, { configDir, origin, log });
   }
   if (command === "resume") {
     return sessionBrowser({

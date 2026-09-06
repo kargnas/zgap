@@ -57,9 +57,12 @@ zgap logout            Remove the active credential
 zgap codex [args...]   Run Codex
 zgap claude [args...]  Run Claude Code
 zgap omp [args...]     Run OMP with process-local provider overrides
+zgap serve [--port N]  Forward a loopback port to the proxy for local-only clients
 zgap resume            Resume an agent session
 zgap --help            Show all commands
 ```
+
+`zgap serve` runs a loopback forwarder for clients whose provider settings only accept a local server, such as Aside's Ollama and LM Studio connections. It listens on `127.0.0.1:11434` (Ollama's default port; change it with `--port`), drops whatever key the client sends, and forwards every request to the configured proxy with the zgap credential. Enter `http://127.0.0.1:11434/v1` as the client's Base URL and any placeholder as its API key. The forwarder does not add the diagnostic request context described above.
 
 ## Features
 

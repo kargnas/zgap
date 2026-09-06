@@ -19,6 +19,7 @@
 - `src/claude.mjs`: Claude Code launch arguments, inline settings, and child environment cleanup.
 - `src/omp.mjs`: OMP authentication/version gates, process arguments, signal forwarding, and process-local extension loading.
 - `src/omp-skills.mjs`: read-only OMP skill discovery for the LEAN selector.
+- `src/serve.mjs`: `zgap serve`, the loopback forwarder that attaches the zgap credential for local-only clients.
 - `src/omp-provider-extension.mjs`: process-local OpenAI Codex and Anthropic transport/auth definitions.
 - `src/omp-provider-compat.mjs`: explicitly marked OMP 18.0.3 compatibility workarounds for additive fail-closed loading, provider ownership, and usage suppression.
 - `src/sessions.mjs`: Multi-agent session discovery and shared history parsing.
@@ -61,6 +62,7 @@
 - Keep Codex process arguments and child environment cleanup in `src/codex.mjs`.
 - Keep OMP launch gates, process arguments, and signal cleanup in `src/omp.mjs`; keep read-only skill discovery in `src/omp-skills.mjs`; keep proxy provider definitions and credential commands in `src/omp-provider-extension.mjs`; keep every version-specific workaround in `src/omp-provider-compat.mjs`.
 - Keep menu rendering and keyboard handling in `src/tui/menu.mjs`; keep translations in `src/tui/locales/*.json`.
+- Keep the loopback forwarder in `src/serve.mjs`; it binds `127.0.0.1` only and never forwards a client's own credential.
 
 ## OpenTUI
 
