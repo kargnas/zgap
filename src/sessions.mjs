@@ -165,12 +165,22 @@ function normalizeRecord(record, agent) {
 }
 
 function contains(root, target) {
-  const relative = path.relative(root, target);
+  const relative = path.relative(path.resolve(root), path.resolve(target));
   return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
 }
 
 function inRoots(target, roots) {
   return roots.some((root) => contains(path.resolve(root), target));
+}
+
+function owningRoot(target, roots) {
+  // A linked worktree can be physically nested inside another root, so the most specific match owns the session.
+  let owner = null;
+  for (const root of roots) {
+    const resolved = path.resolve(root);
+    if (contains(resolved, target) && (!owner || resolved.length > owner.length)) owner = resolved;
+  }
+  return owner;
 }
 
 async function gitOutput(args, cwd) {
@@ -472,15 +482,25 @@ async function readClaudeDefault(claudeHome, roots = [], onRecords) {
 }
 
 export function filterSessions(sessions, filters = {}) {
+  const scope = filters.scope;
+  const roots = Array.isArray(filters.roots) ? filters.roots : [];
+  const cwd = typeof filters.cwd === "string" ? path.resolve(filters.cwd) : null;
+  const mainRoot = roots.length > 0 ? path.resolve(roots[0]) : null;
+  const directoryOwner = cwd ? owningRoot(cwd, roots) : null;
   return sessions.filter((session) =>
-    (filters.scope !== "repo" || inRoots(session.cwd, filters.roots ?? []))
+    (scope === "all" || !scope || scope === "repo" && inRoots(session.cwd, roots)
+      || scope === "directory" && cwd && contains(cwd, session.cwd)
+        && owningRoot(session.cwd, roots) === directoryOwner
+      || scope === "parent" && mainRoot && contains(mainRoot, session.cwd)
+        && owningRoot(session.cwd, roots) === mainRoot)
     && (!filters.agent || filters.agent === "all" || session.agent === filters.agent)
     && (!filters.provider || filters.provider === "all" || session.provider === filters.provider));
 }
 
 export async function listSessions(options = {}) {
   const cwd = path.resolve(options.cwd ?? process.cwd());
-  const allScope = options.all || options.scope === "all";
+  const scope = options.all || options.scope === "all" ? "all" : options.scope ?? "repo";
+  const allScope = scope === "all";
   const roots = allScope ? [] : await discoverRepositoryScope(cwd, options);
   const codexHome = options.codexHome ?? process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex");
   const claudeHome = options.claudeHome ?? path.join(os.homedir(), ".claude");
@@ -503,7 +523,7 @@ export async function listSessions(options = {}) {
       ...claudeRecords.map((record) => normalizeAny(record, "claude")).filter(Boolean),
       ...ompRecords.map((record) => normalizeAny(record, "omp")).filter(Boolean),
     ];
-    const visible = values.filter((session) => allScope || roots.some((root) => contains(root, session.cwd)));
+    const visible = filterSessions(values, { scope, cwd, roots });
     const normalizedActivePaths = new Set([...activePaths].map((pathname) => path.resolve(pathname)));
     for (const session of visible) {
       const pathname = session.previewLocator?.type === "jsonl" ? session.previewLocator.path : "";

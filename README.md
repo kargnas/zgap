@@ -40,6 +40,10 @@ Existing OMP extensions continue to load in the zgap child. A required extension
 
 `zgap resume` lists Codex, Claude Code, and OMP sessions. Choose a session, then pick with the arrow keys whether it resumes through the configured proxy host or with the agent's own local configuration. zgap passes only the session id from the directory where you ran it; each agent decides on its own whether to work there or in the directory recorded in the session.
 
+The session browser displays Scope, Agent, Provider, and Sort as rows of choices. Use `Tab` or `Shift+Tab` to move between the session list and filter rows, arrow keys to choose a row or value, and `Enter` to apply it. `Esc` cancels the pending filter choice. The initial view includes all worktrees and the parent repository, with the newest sessions first. Scope can also show only the current directory and its descendants, only the parent repository, or all projects. The parent repository is Git's main checkout; separate linked worktrees are excluded from directory-only and parent-only views, even when stored beneath those directories.
+
+In the list, `↑`/`↓` moves between sessions, `→` opens the conversation preview, and `Enter` starts the resume selection. `←` or `Esc` closes the preview. `Space` checks a Codex session, `c` opens provider conversion, `r` refreshes, and `?` shows the full key guide. Sort supports newest-first and oldest-first order.
+
 Inside `zgap omp`, use OMP's built-in `/fast on` and `/fast off` commands to toggle the current model family's Fast tier; OpenAI requests use `service_tier: priority`. The process-local provider extension also adds `/ultrafast on` and `/ultrafast off`; it applies only to Codex models whose server catalog advertises that tier. Ultrafast takes precedence while enabled, and disabling it restores the Fast selection that remains active in OMP. With `tier.subagent: inherit`, subagents inherit Fast, while the extension shares the live Ultrafast selection with subagents in the current OMP process.
 
 ```text

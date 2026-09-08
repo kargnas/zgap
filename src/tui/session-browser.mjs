@@ -14,10 +14,10 @@ import { convertCodexSessionProviders, discoverRepositoryScope, filterSessions, 
 import { loadMenuTranslator } from "./menu.mjs";
 
 const AGENTS = ["all", "codex", "claude", "omp"];
+const SCOPES = ["directory", "repo", "parent", "all"];
+const SORTS = ["newest", "oldest"];
 const COMPACT_WIDTH = 60;
 const EXACT_TIME_AFTER_MS = 3 * 60 * 60_000;
-// Digit keys 1-9 select provider tabs, so at most eight provider tabs follow the All tab.
-const MAX_PROVIDER_TABS = 8;
 const CONVERTED_MARK_MS = 3_000;
 const ORBIT_SPINNER = {
   frames: ["● · · ·", "· ● · ·", "· · ● ·", "· · · ●", "· · ● ·", "· ● · ·"],
@@ -35,10 +35,6 @@ const COLORS = {
   chip: "#94A3B8",
 };
 const PROVIDER_COLORS = ["#6EE7B7", "#60A5FA", "#C084FC", "#2DD4BF", "#F472B6", "#A3E635"];
-
-function nextValue(values, current) {
-  return values[(Math.max(0, values.indexOf(current)) + 1) % values.length];
-}
 
 function timestampLabel(value, language, currentTime) {
   if (!Number.isFinite(value) || value <= 0) return "";
@@ -327,7 +323,7 @@ export async function runSessionBrowser({
   sessionLoader = ({ scope, roots, onUpdate }) => listSessions({
     cwd,
     scope,
-    repositoryRoots: scope === "repo" ? roots : undefined,
+    repositoryRoots: scope === "all" ? undefined : roots,
     onUpdate,
   }),
   previewLoader = loadSessionPreview,
@@ -402,7 +398,13 @@ export async function runSessionBrowser({
     let error = null;
     let scope = "repo";
     let agent = "all";
-    let tabProvider = "all";
+    let provider = "all";
+    let sort = "newest";
+    let pendingScope = scope;
+    let pendingAgent = agent;
+    let pendingProvider = provider;
+    let pendingSort = sort;
+    let filterFocus = -1;
     let selectedIndex = 0;
     let selectedKey = null;
     // Partial scans can insert newer sessions above the first partial row, so untouched initial focus stays position-based.
@@ -447,7 +449,14 @@ export async function runSessionBrowser({
     const filters = new TextRenderable(renderer, {
       content: "",
       fg: "#94A3B8",
+      height: 4,
+      selectable: true,
+    });
+    const divider = new TextRenderable(renderer, {
+      content: "",
+      fg: COLORS.meta,
       height: 1,
+      flexShrink: 0,
       selectable: true,
     });
     const list = new TextRenderable(renderer, {
@@ -471,27 +480,44 @@ export async function runSessionBrowser({
     });
     root.add(title);
     root.add(filters);
+    root.add(divider);
     root.add(list);
     root.add(previewContent);
     root.add(hint);
     renderer.root.add(root);
 
-    const visibleRows = () => Math.max(1, Math.floor(((renderer.height - 6) + 1) / 4));
-    const providerTabs = () => {
+    const visibleRows = () => {
+      const measured = Number(list.height);
+      if (Number.isFinite(measured) && measured > 0) return Math.max(1, Math.floor((measured + 1) / 4));
+      const outerPaddingRows = renderer.height <= 12 ? 0 : 2;
+      const titleRows = 1;
+      const filterRows = 5;
+      const footerRows = renderer.width <= COMPACT_WIDTH ? 1 : 2;
+      return Math.max(1, Math.floor((renderer.height - outerPaddingRows - titleRows - filterRows - footerRows + 1) / 4));
+    };
+    const providerChoices = () => {
       const counts = new Map();
-      for (const session of sessionFilter(sessions, { scope, roots })) {
+      // Loading and partial scans must not change applied filters or the current keyboard candidate.
+      if (provider !== "all") counts.set(provider, 0);
+      if (pendingProvider !== "all") counts.set(pendingProvider, 0);
+      for (const session of sessionFilter(sessions, { scope, cwd, roots, agent: "all", provider: "all" })) {
         if (session.agent !== "codex" || !session.provider) continue;
         counts.set(session.provider, (counts.get(session.provider) ?? 0) + 1);
       }
-      const ranked = [...counts.entries()]
-        .sort((first, second) => second[1] - first[1] || first[0].localeCompare(second[0]))
-        .slice(0, MAX_PROVIDER_TABS);
-      return [{ provider: "all", count: 0 }, ...ranked.map(([provider, count]) => ({ provider, count }))];
+      return [{ value: "all", count: 0 }, ...[...counts.entries()]
+        .sort((first, second) => first[0].localeCompare(second[0]))
+        .map(([value, count]) => ({ value, count }))];
     };
     const checkStateFor = (session) => (session.agent === "codex" && session.provider
       ? recentlyConverted.has(session.id) ? "converted" : checked.has(session.id) ? "checked" : "unchecked"
       : null);
-    const filteredSessions = () => sessionFilter(sessions, { scope, roots, agent, provider: tabProvider });
+    const filteredSessions = () => {
+      const values = [...sessionFilter(sessions, { scope, cwd, roots, agent, provider })];
+      return values.sort((first, second) => {
+        const time = sort === "oldest" ? first.updatedAt - second.updatedAt : second.updatedAt - first.updatedAt;
+        return time || String(first.id).localeCompare(String(second.id));
+      });
+    };
     const keepSelection = (values) => {
       if (preserveSelectionIdentity && selectedKey) {
         const restored = values.findIndex((session) => sessionKey(session) === selectedKey);
@@ -505,9 +531,15 @@ export async function runSessionBrowser({
       viewportStart = Math.max(0, Math.min(viewportStart, Math.max(0, values.length - count)));
     };
     const render = () => {
+      if (cleaned) return;
       const compact = renderer.width <= COMPACT_WIDTH;
       const loading = state === "initializing" || state === "loading" || previewLoading || convertLoading;
       const mainListVisible = !showConvert && !showPreview && !showHelp && !showResumeChoice;
+      // Short terminals keep a session visible below the four filter rows and their divider.
+      root.paddingTop = mainListVisible && renderer.height <= 12 ? 0 : 1;
+      root.paddingBottom = mainListVisible && renderer.height <= 12 ? 0 : 1;
+      divider.visible = mainListVisible;
+      divider.content = "─".repeat(Math.max(1, renderer.width - 2));
       const activeSessions = state === "ready" && mainListVisible ? filteredSessions() : [];
       const nextSpinnerMode = loading
         ? "loading"
@@ -527,24 +559,68 @@ export async function runSessionBrowser({
           if (!cleaned) render();
         }, spinner.interval);
       }
-      const tabs = providerTabs();
-      if (!tabs.some((tab) => tab.provider === tabProvider)) tabProvider = "all";
+      const providerValues = providerChoices();
+      const scopeLabel = (value) => t({
+        directory: "resumeScopeDirectory",
+        repo: "resumeScopeRepo",
+        parent: "resumeScopeParent",
+        all: "resumeScopeAll",
+      }[value]);
+      const agentLabel = (value) => value === "all" ? t("resumeAll") : value.toUpperCase();
+      const sortLabel = (value) => t(value === "oldest" ? "resumeSortOldest" : "resumeSortNewest");
+      const choiceRow = (label, choices, current, rowIndex, format = String) => {
+        const focused = filterFocus === rowIndex;
+        const index = Math.max(0, choices.findIndex((choice) => choice.value === current));
+        const appliedValue = [scope, agent, provider, sort][rowIndex];
+        const prefix = `${label}: `;
+        const available = Math.max(1, renderer.width - 2 - Bun.stringWidth(prefix));
+        const rawText = (choice) => `${choice.value === appliedValue ? "●" : "○"} ${format(choice)}${choice.count ? ` (${choice.count})` : ""}`;
+        const optionText = (choice) => focused && choice.value === current ? `[${rawText(choice)}]` : rawText(choice);
+        const textWidth = (values, first, last) => Bun.stringWidth(first) + Bun.stringWidth(last) + values.reduce((total, value, position) => total + Bun.stringWidth(value) + (position ? 2 : 0), 0);
+        let start = index;
+        let end = index + 1;
+        if (!compact) {
+          while (start > 0 || end < choices.length) {
+            const left = start > 0 ? rawText(choices[start - 1]) : null;
+            const right = end < choices.length ? rawText(choices[end]) : null;
+            const nextStart = left && (!right || index - start <= end - index) ? start - 1 : start;
+            const nextEnd = nextStart === start && right ? end + 1 : end;
+            const nextValues = choices.slice(nextStart, nextEnd).map(optionText);
+            const nextFirst = nextStart > 0 ? "‹ " : "";
+            const nextLast = nextEnd < choices.length ? " ›" : "";
+            if (textWidth(nextValues, nextFirst, nextLast) > available) break;
+            start = nextStart;
+            end = nextEnd;
+          }
+        }
+        const first = start > 0 ? "‹ " : "";
+        const last = end < choices.length ? " ›" : "";
+        const visible = choices.slice(start, end);
+        const labelBudget = Math.max(1, available - Bun.stringWidth(first) - Bun.stringWidth(last));
+        const values = visible.map((choice) => {
+          const selected = choice.value === current;
+          const applied = choice.value === appliedValue;
+          // A lone long option still reserves space for the cursor brackets and edge indicators.
+          const labelText = visible.length === 1
+            ? truncateText(rawText(choice), Math.max(1, labelBudget - (focused && selected ? 2 : 0)))
+            : rawText(choice);
+          const text = focused && selected ? `[${labelText}]` : labelText;
+          return chunk(text, focused && selected ? COLORS.amber : applied ? COLORS.green : COLORS.chip, undefined, focused && selected);
+        });
+        return [chunk(`${label}: `, COLORS.text, undefined, focused), chunk(first, COLORS.meta), ...values.flatMap((value, i) => [...(i ? [chunk("  ", COLORS.meta)] : []), value]), chunk(last, COLORS.meta)];
+      };
+      const scopeChoices = SCOPES.map((value) => ({ value }));
+      const agentChoices = AGENTS.map((value) => ({ value }));
+      const sortChoices = SORTS.map((value) => ({ value }));
       filters.content = new StyledText([
-        chunk(`[s ${scope}]`, COLORS.amber, undefined, true),
-        chunk(" ", COLORS.chip),
-        chunk(`[a ${agent}]`, COLORS.chip),
-        ...tabs.flatMap((tab, index) => {
-          const active = tab.provider === tabProvider;
-          if (compact && !active) return [];
-          const label = tab.provider === "all" ? t("resumeAll") : truncateText(displayText(tab.provider), 12);
-          const text = `[${index + 1}]${label}${tab.provider === "all" || compact ? "" : ` ${tab.count}`}`;
-          return [
-            chunk(" ", COLORS.chip),
-            chunk(text, active ? COLORS.amber : COLORS.chip, undefined, active),
-          ];
-        }),
+        ...choiceRow(t("resumeFilterScope"), scopeChoices, pendingScope, 0, (choice) => scopeLabel(choice.value)), chunk("\n", COLORS.text),
+        ...choiceRow(t("resumeFilterAgent"), agentChoices, pendingAgent, 1, (choice) => agentLabel(choice.value)), chunk("\n", COLORS.text),
+        ...choiceRow(t("resumeFilterProvider"), providerValues, pendingProvider, 2, (choice) => choice.value === "all" ? t("resumeAll") : displayText(choice.value)), chunk("\n", COLORS.text),
+        ...choiceRow(t("resumeFilterSort"), sortChoices, pendingSort, 3, (choice) => sortLabel(choice.value)),
       ]);
-      hint.content = notice || (checked.size > 0
+      hint.content = notice || (filterFocus >= 0
+        ? compact ? t("resumeFilterCompactHint") : `${t("resumeFilterHint")} · ${t(`resumeScope${pendingScope[0].toUpperCase()}${pendingScope.slice(1)}Description`)}`
+        : checked.size > 0
         ? t("resumeSelectionHint", { count: checked.size })
         : compact ? t("resumeCompactHint") : t("resumeHint"));
       if (showResumeChoice) {
@@ -677,7 +753,7 @@ export async function runSessionBrowser({
       if (values.length === 0) {
         list.content = state === "loading"
           ? `${ORBIT_SPINNER.frames[spinnerIndex]} ${t("resumeLoading")}`
-          : scope === "repo" ? t("resumeEmptyRepo") : t("resumeEmptyAll");
+          : t("resumeEmptyFiltered");
         list.fg = "#94A3B8";
         renderer.requestRender();
         return;
@@ -818,7 +894,22 @@ export async function runSessionBrowser({
         }
         return;
       }
+      if (event.name === "tab" && (event.ctrl || event.meta || event.option || event.super || event.hyper)) return;
       if (event.name === "escape" || event.name === "backspace") {
+        if (showHelp) {
+          showHelp = false;
+          render();
+          return;
+        }
+        if (filterFocus >= 0) {
+          pendingScope = scope;
+          pendingAgent = agent;
+          pendingProvider = provider;
+          pendingSort = sort;
+          filterFocus = -1;
+          render();
+          return;
+        }
         if (showResumeChoice) {
           showResumeChoice = false;
           render();
@@ -830,9 +921,6 @@ export async function runSessionBrowser({
         } else if (showPreview) {
           previewGeneration += 1;
           showPreview = false;
-          render();
-        } else if (showHelp) {
-          showHelp = false;
           render();
         } else if (checked.size > 0) {
           checked.clear();
@@ -891,7 +979,8 @@ export async function runSessionBrowser({
                 recentlyConverted = new Set();
                 if (!cleaned) render();
               }, CONVERTED_MARK_MS);
-              tabProvider = "all";
+              provider = "all";
+              pendingProvider = "all";
               showConvert = false;
               convertLoading = false;
               convertError = null;
@@ -932,7 +1021,7 @@ export async function runSessionBrowser({
         return;
       }
       if (showPreview) {
-        if (event.name === "tab") {
+        if (event.name === "left" || event.name === "escape" || event.name === "backspace") {
           previewGeneration += 1;
           showPreview = false;
           render();
@@ -945,6 +1034,74 @@ export async function runSessionBrowser({
         return;
       }
       if (showHelp) return;
+      if (filterFocus >= 0) {
+        if (event.ctrl || event.meta || event.option || event.super || event.hyper) return;
+        if (event.shift && event.name !== "tab") return;
+        const rows = [
+          { get: () => pendingScope, set: (value) => { pendingScope = value; }, values: SCOPES.map((value) => ({ value })) },
+          { get: () => pendingAgent, set: (value) => { pendingAgent = value; }, values: AGENTS.map((value) => ({ value })) },
+          { get: () => pendingProvider, set: (value) => { pendingProvider = value; }, values: providerChoices() },
+          { get: () => pendingSort, set: (value) => { pendingSort = value; }, values: SORTS.map((value) => ({ value })) },
+        ];
+        const row = rows[filterFocus];
+        if (!row) { filterFocus = 0; render(); return; }
+        if (event.name === "tab") {
+          if (event.shift) {
+            filterFocus = filterFocus === 0 ? -1 : filterFocus - 1;
+          } else {
+            filterFocus = filterFocus === rows.length - 1 ? -1 : filterFocus + 1;
+          }
+          pendingScope = scope;
+          pendingAgent = agent;
+          pendingProvider = provider;
+          pendingSort = sort;
+          render();
+          return;
+        }
+        if ((event.name === "up" || event.name === "down") && !event.shift) {
+          filterFocus = event.name === "up" ? (filterFocus + rows.length - 1) % rows.length : (filterFocus + 1) % rows.length;
+          pendingScope = scope;
+          pendingAgent = agent;
+          pendingProvider = provider;
+          pendingSort = sort;
+          render();
+          return;
+        }
+        if ((event.name === "left" || event.name === "right") && !event.shift) {
+          const values = row.values;
+          const current = Math.max(0, values.findIndex((choice) => choice.value === row.get()));
+          const delta = event.name === "right" ? 1 : -1;
+          row.set(values[Math.max(0, Math.min(values.length - 1, current + delta))]?.value ?? row.get());
+          render();
+          return;
+        }
+        if (event.name === "return") {
+          const scopeChanged = filterFocus === 0 && pendingScope !== scope;
+          const agentChanged = filterFocus === 1 && pendingAgent !== agent;
+          const providerChanged = filterFocus === 2 && pendingProvider !== provider;
+          const sortChanged = filterFocus === 3 && pendingSort !== sort;
+          const changed = scopeChanged || agentChanged || providerChanged || sortChanged;
+          if (filterFocus === 0) scope = pendingScope;
+          if (filterFocus === 1) agent = pendingAgent;
+          if (filterFocus === 2) provider = pendingProvider;
+          if (filterFocus === 3) sort = pendingSort;
+          filterFocus = -1;
+          if (changed) {
+            selectedIndex = 0;
+            viewportStart = 0;
+            selectedKey = null;
+          }
+          if (scopeChanged) checked.clear();
+          pendingScope = scope;
+          pendingAgent = agent;
+          pendingProvider = provider;
+          pendingSort = sort;
+          if (scopeChanged && state !== "initializing") void load(scope);
+          else render();
+          return;
+        }
+        return;
+      }
       if (event.name === "r") {
         sessionCache.delete(scope);
         // A refresh rereads the database, which now owns the converted providers.
@@ -952,36 +1109,17 @@ export async function runSessionBrowser({
         void load(scope, { refresh: true });
         return;
       }
-      if (event.name === "s") {
-        scope = scope === "repo" ? "all" : "repo";
-        // Checked ids belong to the previous scope snapshot, so a scope change resets the batch.
-        checked.clear();
-        selectedIndex = 0;
-        viewportStart = 0;
-        selectedKey = null;
-        void load(scope);
+      if (event.name === "tab") {
+        filterFocus = event.shift ? 3 : 0;
+        pendingScope = scope;
+        pendingAgent = agent;
+        pendingProvider = provider;
+        pendingSort = sort;
+        render();
         return;
       }
       // Partial results are complete session records, so navigation and resume work while the scan finishes.
       if (state !== "ready" && !(state === "loading" && sessions.length > 0)) return;
-      if (event.name === "a") {
-        agent = nextValue(AGENTS, agent);
-        selectedIndex = 0;
-        viewportStart = 0;
-        selectedKey = null;
-        render();
-        return;
-      }
-      if (/^[1-9]$/.test(event.name)) {
-        const tab = providerTabs()[Number(event.name) - 1];
-        if (!tab || tab.provider === tabProvider) return;
-        tabProvider = tab.provider;
-        selectedIndex = 0;
-        viewportStart = 0;
-        selectedKey = null;
-        render();
-        return;
-      }
       if (event.name === "space") {
         const session = filteredSessions()[selectedIndex];
         if (!session) return;
@@ -1010,7 +1148,7 @@ export async function runSessionBrowser({
         render();
         return;
       }
-      if (event.name === "tab") {
+      if (event.name === "right") {
         const values = filteredSessions();
         const session = values[selectedIndex];
         if (!session) return;

@@ -53,6 +53,77 @@ test("filterSessions filters agent and provider while retaining all by default",
   assert.deepEqual(sessions.filterSessions(values, { provider: "openai" }), [values[0]]);
 });
 
+test("filterSessions supports all, repo, directory, and parent scopes from a linked worktree", () => {
+  const main = "/tmp/project";
+  const linked = "/tmp/worktrees/project-feature";
+  const cwd = path.join(linked, "src");
+  const values = [
+    { agent: "codex", id: "main", cwd: path.join(main, "src"), title: "main" },
+    { agent: "codex", id: "linked", cwd: path.join(linked, "src"), title: "linked" },
+    { agent: "codex", id: "cwd", cwd: path.join(cwd, "nested"), title: "cwd" },
+    { agent: "codex", id: "foreign", cwd: "/tmp/project-other", title: "foreign" },
+  ];
+  const roots = [main, linked];
+  assert.deepEqual(sessions.filterSessions(values, { scope: "all", cwd, roots }).map(({ id }) => id), ["main", "linked", "cwd", "foreign"]);
+  assert.deepEqual(sessions.filterSessions(values, { scope: "repo", cwd, roots }).map(({ id }) => id), ["main", "linked", "cwd"]);
+  assert.deepEqual(sessions.filterSessions(values, { scope: "directory", cwd, roots }).map(({ id }) => id), ["linked", "cwd"]);
+  assert.deepEqual(sessions.filterSessions(values, { scope: "parent", cwd, roots }).map(({ id }) => id), ["main"]);
+});
+
+test("parent scope excludes a linked worktree nested under the main checkout", () => {
+  const main = "/tmp/project";
+  const nested = path.join(main, "nested-worktree");
+  const values = [
+    { agent: "codex", id: "main", cwd: path.join(main, "src"), title: "main" },
+    { agent: "codex", id: "nested", cwd: path.join(nested, "src"), title: "nested" },
+    { agent: "codex", id: "foreign", cwd: "/tmp/project-other", title: "foreign" },
+  ];
+  assert.deepEqual(sessions.filterSessions(values, { scope: "repo", roots: [main, nested] }).map(({ id }) => id), ["main", "nested"]);
+  assert.deepEqual(sessions.filterSessions(values, { scope: "parent", roots: [main, nested] }).map(({ id }) => id), ["main"]);
+  assert.deepEqual(sessions.filterSessions(values, { scope: "directory", cwd: main, roots: [main, nested] }).map(({ id }) => id), ["main"]);
+});
+
+test("discoverRepositoryScope preserves main-first roots for a worktree path with spaces", async (t) => {
+  const fixture = await mkdtemp(path.join(os.tmpdir(), "zgap-git-scope-"));
+  t.after(() => rm(fixture, { recursive: true, force: true }));
+  const main = path.join(fixture, "main checkout");
+  const linked = path.join(fixture, "연결 feature");
+  await mkdir(main, { recursive: true });
+  const git = (args) => execFileAsync("git", args, { cwd: main });
+  await git(["init", "-q"]);
+  await git(["config", "user.email", "zgap@example.test"]);
+  await git(["config", "user.name", "zgap test"]);
+  await writeFile(path.join(main, "README"), "fixture\n");
+  await git(["add", "README"]);
+  await git(["commit", "-qm", "fixture"]);
+  await git(["worktree", "add", "-q", "-b", "feature", linked]);
+  await mkdir(path.join(linked, "subdirectory"));
+
+  const roots = await sessions.discoverRepositoryScope(path.join(linked, "subdirectory"));
+  assert.deepEqual(roots.map((root) => path.basename(root)), ["main checkout", "연결 feature"]);
+});
+
+test("listSessions applies one scope predicate to partial and final records", async () => {
+  const updates = [];
+  const options = {
+    cwd: "/tmp/project",
+    scope: "parent",
+    repositoryRoots: ["/tmp/project", "/tmp/project/nested-worktree"],
+    readCodex: async () => [
+      { id: "main", cwd: "/tmp/project/src", model_provider: "openai", title: "main", updated_at: 2 },
+      { id: "nested", cwd: "/tmp/project/nested-worktree/src", model_provider: "openai", title: "nested", updated_at: 3 },
+      { id: "foreign", cwd: "/tmp/project-other", model_provider: "openai", title: "foreign", updated_at: 4 },
+    ],
+    readClaude: async () => [{ sessionId: "main-claude", projectPath: "/tmp/project/docs", firstPrompt: "docs", modified: 1 }],
+    readOmp: async () => [],
+    onUpdate: (partial) => updates.push(partial.map(({ id }) => id)),
+  };
+  const result = await sessions.listSessions(options);
+  assert.ok(updates.length > 0);
+  assert.ok(updates.every((ids) => ids.every((id) => ["main", "main-claude"].includes(id))));
+  assert.deepEqual(result.map(({ id }) => id), ["main", "main-claude"]);
+});
+
 test("listSessions reads Codex sqlite and Claude index records", async (t) => {
   const root = "/fixture/repo";
   const result = await sessions.listSessions({
