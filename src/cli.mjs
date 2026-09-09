@@ -32,6 +32,7 @@ const BACK_TO_START_MENU = Symbol("back-to-start-menu");
 // Codex and Claude Code look the id up across every project, and OMP switches itself into
 // the recorded directory when it still exists.
 export async function resumeSession(session, configDir, {
+  native = false,
   origin,
   dangerousMode = false,
   leanMode = false,
@@ -40,24 +41,15 @@ export async function resumeSession(session, configDir, {
   claudeRunner = runClaude,
   ompRunner = runOmp,
 } = {}) {
-  if (session?.agent === "codex") {
-    const options = { configDir };
-    if (origin) options.origin = origin;
-    if (dangerousMode) options.dangerousMode = true;
-    return codexRunner(["resume", session.id], options);
-  }
-  if (session?.agent === "claude") {
-    const options = { configDir };
-    if (origin) options.origin = origin;
-    if (dangerousMode) options.dangerousMode = true;
-    return claudeRunner(["--resume", session.id], options);
-  }
-  if (session?.agent === "omp") {
-    const options = { configDir, leanMode, ompLeanSkills };
-    if (origin) options.origin = origin;
-    if (dangerousMode) options.dangerousMode = true;
-    return ompRunner([`--resume=${session.id}`], options);
-  }
+  const options = { configDir };
+  // Runners fall back to the default proxy origin when none is given, so a native resume must
+  // say so explicitly instead of merely omitting the origin.
+  if (native) options.native = true;
+  else if (origin) options.origin = origin;
+  if (dangerousMode) options.dangerousMode = true;
+  if (session?.agent === "codex") return codexRunner(["resume", session.id], options);
+  if (session?.agent === "claude") return claudeRunner(["--resume", session.id], options);
+  if (session?.agent === "omp") return ompRunner([`--resume=${session.id}`], { ...options, leanMode, ompLeanSkills });
   throw new Error(`Unsupported session agent: ${session?.agent ?? "unknown"}`);
 }
 
@@ -169,9 +161,10 @@ export async function main({
     return sessionBrowser({
       cwd,
       host,
-      onSelect: async (session, { remote = true } = {}) => {
+      onSelect: async (session, { native = false } = {}) => {
         return resumeSession(session, configDir, {
-          ...(remote ? { origin } : {}),
+          native,
+          origin,
           dangerousMode,
           codexRunner,
           claudeRunner,
@@ -241,10 +234,11 @@ export async function main({
             const browserResult = await sessionBrowser({
               cwd,
               host: proxyConfig.host,
-              onSelect: (session, { remote = true } = {}) => {
+              onSelect: (session, { native = false } = {}) => {
                 selected = true;
                 return resumeSession(session, configDir, {
-                  ...(remote ? { origin: proxyConfig.origin } : {}),
+                  native,
+                  origin: proxyConfig.origin,
                   dangerousMode,
                   leanMode: ompLeanMode,
                   ompLeanSkills,

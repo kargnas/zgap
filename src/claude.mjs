@@ -77,8 +77,9 @@ export async function runClaude(args, {
   cwd = process.cwd(),
   origin = ORIGIN,
   dangerousMode = false,
+  native = false,
 } = {}) {
-  if (args.some((arg) => arg === "--settings" || arg.startsWith("--settings="))) {
+  if (!native && args.some((arg) => arg === "--settings" || arg.startsWith("--settings="))) {
     throw new Error("zgap claude supplies --settings automatically; remove the user-provided --settings option.");
   }
   let receivedSignal;
@@ -100,19 +101,24 @@ export async function runClaude(args, {
     process.on(signal, handler);
   }
   const env = { ...process.env };
-  for (const name of CLEARED_ENV) delete env[name];
-  const requestHeaders = requestContextHeaders(createRequestContext({
-    tool: "claude",
-    cwd,
-    sessionId: resumeSessionId(args),
-  }));
-  env.ANTHROPIC_BASE_URL = origin;
-  env.ANTHROPIC_DEFAULT_OPUS_MODEL = "claude-opus-5[1m]";
-  env.ANTHROPIC_DEFAULT_SONNET_MODEL = "claude-sonnet-5[1m]";
-  env.ANTHROPIC_DEFAULT_FABLE_MODEL = "claude-fable-5-1[1m]";
-  env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY = "1";
-  env.CLAUDE_CODE_MAX_CONTEXT_TOKENS = "262144";
-  env.ANTHROPIC_CUSTOM_HEADERS = Object.entries(requestHeaders).map(([key, value]) => `${key}: ${value}`).join("\n");
+  const proxyArgs = [];
+  // A native launch is the user's own Claude Code: its environment and settings stay untouched.
+  if (!native) {
+    for (const name of CLEARED_ENV) delete env[name];
+    const requestHeaders = requestContextHeaders(createRequestContext({
+      tool: "claude",
+      cwd,
+      sessionId: resumeSessionId(args),
+    }));
+    env.ANTHROPIC_BASE_URL = origin;
+    env.ANTHROPIC_DEFAULT_OPUS_MODEL = "claude-opus-5[1m]";
+    env.ANTHROPIC_DEFAULT_SONNET_MODEL = "claude-sonnet-5[1m]";
+    env.ANTHROPIC_DEFAULT_FABLE_MODEL = "claude-fable-5-1[1m]";
+    env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY = "1";
+    env.CLAUDE_CODE_MAX_CONTEXT_TOKENS = "262144";
+    env.ANTHROPIC_CUSTOM_HEADERS = Object.entries(requestHeaders).map(([key, value]) => `${key}: ${value}`).join("\n");
+    proxyArgs.push("--settings", JSON.stringify({ apiKeyHelper: apiKeyHelper(credentialsPath(configDir)), env: claudeSettingsEnv(origin, requestHeaders) }));
+  }
   const abortIfSignaled = () => {
     if (receivedSignal) throw new Error(`runClaude interrupted by ${receivedSignal}`);
   };
@@ -121,8 +127,7 @@ export async function runClaude(args, {
     abortIfSignaled();
     return await new Promise((resolve, reject) => {
       child = spawn(claudePath, [
-        "--settings",
-        JSON.stringify({ apiKeyHelper: apiKeyHelper(credentialsPath(configDir)), env: claudeSettingsEnv(origin, requestHeaders) }),
+        ...proxyArgs,
         ...(dangerousMode && !args.includes("--dangerously-skip-permissions")
           ? ["--dangerously-skip-permissions"]
           : []),

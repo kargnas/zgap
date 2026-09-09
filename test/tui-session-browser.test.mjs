@@ -1104,7 +1104,7 @@ test("재개 선택 화면은 방향키로 프록시와 로컬을 고르고 Esc�
   setup.mockInput.pressArrow("down");
   await setup.mockInput.pressEnter();
   assert.equal(await result, 23);
-  assert.deepEqual(selections, [["codex-zgap", { remote: false }]]);
+  assert.deepEqual(selections, [["codex-zgap", { native: true }]]);
   assert.equal(setup.renderer.isDestroyed, true);
 });
 
@@ -1126,7 +1126,7 @@ test("재개 선택 화면에서 Enter는 기본으로 프록시 설정을 선�
   setup.mockInput.pressEnter();
   await setup.mockInput.pressEnter();
   assert.equal(await result, 23);
-  assert.deepEqual(options, { remote: true });
+  assert.deepEqual(options, { native: false });
 });
 
 test("session browser는 실행 중인 세션을 목록에서 Enter 두 번으로 재개한다", async (t) => {

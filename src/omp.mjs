@@ -60,6 +60,7 @@ export async function runOmp(launchArgs, {
   dangerousMode = false,
   leanMode = false,
   ompLeanSkills = [],
+  native = false,
 } = {}) {
   const args = launchArgs;
   assertOmpLaunchArgs(args);
@@ -107,22 +108,28 @@ export async function runOmp(launchArgs, {
     // OMP_SKIP_SETUP: the extension already supplies credentials and the model catalog, so
     // OMP's first-run wizard would only re-ask what zgap owns. Skip it for this child only
     // and leave a user-provided value untouched.
-    const env = { ...process.env, ZGAP_RUNTIME: process.execPath };
-    if (env.OMP_SKIP_SETUP === undefined) env.OMP_SKIP_SETUP = "1";
+    // A native launch is the user's own OMP: no provider extension, credential, or version gate.
+    const env = { ...process.env };
+    if (!native) {
+      env.ZGAP_RUNTIME = process.execPath;
+      if (env.OMP_SKIP_SETUP === undefined) env.OMP_SKIP_SETUP = "1";
+    }
     const ompPath = await resolveOmpExecutable({ env, cwd });
     abortIfSignaled();
-    // OMP rebuilds this extension for every session it creates, so the credential must stay
-    // re-readable for the whole run. Fail here instead of inside OMP when it is missing.
-    await resolveAccessToken({ credentialFile: credentialsPath(configDir) });
-    abortIfSignaled();
-    assertOmpVersion(await readOmpVersion(ompPath, env));
-    abortIfSignaled();
-    const handshakeArgument = createOmpProviderHandshakeArgument();
+    const proxyArgs = [];
+    if (!native) {
+      // OMP rebuilds this extension for every session it creates, so the credential must stay
+      // re-readable for the whole run. Fail here instead of inside OMP when it is missing.
+      await resolveAccessToken({ credentialFile: credentialsPath(configDir) });
+      abortIfSignaled();
+      assertOmpVersion(await readOmpVersion(ompPath, env));
+      abortIfSignaled();
+      // This random flag exists only if this exact extension loaded; otherwise OMP's second parse rejects it.
+      proxyArgs.push("-e", OMP_EXTENSION_FILE, createOmpProviderHandshakeArgument());
+    }
     return await new Promise((resolve, reject) => {
       child = spawn(ompPath, [
-        "-e", OMP_EXTENSION_FILE,
-        // This random flag exists only if this exact extension loaded; otherwise OMP's second parse rejects it.
-        handshakeArgument,
+        ...proxyArgs,
         ...(dangerousMode && !args.includes("--auto-approve") && !args.includes("--approval-mode") && !args.some((arg) => arg.startsWith("--approval-mode="))
           ? ["--auto-approve"]
           : []),

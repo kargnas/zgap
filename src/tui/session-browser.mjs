@@ -1016,7 +1016,7 @@ export async function runSessionBrowser({
           showResumeChoice = false;
           clearActiveResume();
           cleanup();
-          Promise.resolve().then(() => onSelect(session, { remote: resumeChoiceIndex === 0 })).then(resolveResult, rejectResult);
+          Promise.resolve().then(() => onSelect(session, { native: resumeChoiceIndex === 1 })).then(resolveResult, rejectResult);
         }
         return;
       }

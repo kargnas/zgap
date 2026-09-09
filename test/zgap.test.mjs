@@ -2831,3 +2831,58 @@ test("logout command는 local credential을 제거하고 완료를 출력한다"
 function credentialPathPattern(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
+
+test("native resume은 세 agent 모두 proxy 주입 없이 사용자 환경 그대로 실행한다", async (t) => {
+  const root = await tempDir(t);
+  const fakeBin = path.join(root, "bin");
+  const configDir = path.join(root, "config", "zgap");
+  await mkdir(fakeBin, { recursive: true });
+  await mkdir(configDir, { recursive: true });
+  // No credentials.json on purpose: a native launch must not need zgap credentials at all.
+  const marker = path.join(root, "invocation.json");
+  const script = (versionLine) => [
+    "#!/usr/bin/env node",
+    'import { writeFileSync } from "node:fs";',
+    "const args = process.argv.slice(2);",
+    `if (args[0] === "--version") { process.stdout.write(${JSON.stringify(versionLine)}); process.exit(0); }`,
+    "writeFileSync(process.env.FAKE_MARKER, JSON.stringify({",
+    "  argv: args,",
+    '  env: Object.fromEntries(["CODEX_HOME", "OPENAI_BASE_URL", "OPENAI_API_KEY", "ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_CUSTOM_HEADERS", "ZGAP_RUNTIME", "OMP_SKIP_SETUP"].map((key) => [key, process.env[key] ?? null])),',
+    "}));",
+    "process.exitCode = 3;",
+    "",
+  ].join("\n");
+  for (const [name, version] of [["codex", "codex-cli 9.8.7\n"], ["claude", "claude 1.0.0\n"], ["omp", "omp/18.0.3\n"]]) {
+    const file = path.join(fakeBin, name);
+    await writeFile(file, script(version));
+    await chmod(file, 0o755);
+  }
+  const userEnv = {
+    CODEX_HOME: path.join(root, "user-codex-home"),
+    OPENAI_BASE_URL: "https://user-openai.example",
+    OPENAI_API_KEY: "user-openai-key",
+    ANTHROPIC_BASE_URL: "https://user-anthropic.example",
+    ANTHROPIC_API_KEY: "user-anthropic-key",
+    ANTHROPIC_CUSTOM_HEADERS: "X-User: 1",
+  };
+  const previousEnv = { ...process.env };
+  Object.assign(process.env, userEnv, { PATH: `${fakeBin}${path.delimiter}${process.env.PATH}`, FAKE_MARKER: marker });
+  t.after(() => {
+    for (const key of Object.keys(process.env)) if (!(key in previousEnv)) delete process.env[key];
+    Object.assign(process.env, previousEnv);
+  });
+  const { resumeSession } = await import("../src/cli.mjs");
+
+  const cases = [
+    { session: { agent: "codex", id: "codex-id" }, args: ["resume", "codex-id"], dangerous: "--dangerously-bypass-approvals-and-sandbox" },
+    { session: { agent: "claude", id: "claude-id" }, args: ["--resume", "claude-id"], dangerous: "--dangerously-skip-permissions" },
+    { session: { agent: "omp", id: "omp-id" }, args: ["--resume=omp-id"], dangerous: "--auto-approve" },
+  ];
+  for (const { session, args, dangerous } of cases) {
+    const code = await resumeSession(session, configDir, { native: true, origin: "https://proxy.example.test", dangerousMode: true });
+    assert.equal(code, 3, session.agent);
+    const invocation = JSON.parse(await readFile(marker, "utf8"));
+    assert.deepEqual(invocation.argv, [dangerous, ...args], session.agent);
+    assert.deepEqual(invocation.env, { ...userEnv, ZGAP_RUNTIME: null, OMP_SKIP_SETUP: null }, session.agent);
+  }
+});

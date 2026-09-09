@@ -30,6 +30,7 @@ export async function runCodex(args, {
   cwd = process.cwd(),
   origin = ORIGIN,
   dangerousMode = false,
+  native = false,
 } = {}) {
   let receivedSignal;
   let child;
@@ -54,29 +55,38 @@ export async function runCodex(args, {
     if (receivedSignal) throw new Error(`runCodex interrupted by ${receivedSignal}`);
   };
   const env = { ...process.env };
-  delete env.CODEX_HOME;
-  delete env.OPENAI_BASE_URL;
-  delete env.OPENAI_API_KEY;
-  delete env.ZGAP_API_KEY;
-  const requestHeaders = requestContextHeaders(createRequestContext({
-    tool: "codex",
-    cwd,
-    sessionId: resumeSessionId(args),
-  }));
+  // A native launch is the user's own Codex: its environment, provider, and catalog stay untouched.
+  if (!native) {
+    delete env.CODEX_HOME;
+    delete env.OPENAI_BASE_URL;
+    delete env.OPENAI_API_KEY;
+    delete env.ZGAP_API_KEY;
+  }
 
   try {
     const codexPath = await resolveCodexExecutable({ env, cwd });
     abortIfSignaled();
-    ephemeral = await createEphemeralCatalog({ configDir, codexPath, env, origin });
-    abortIfSignaled();
-    return await new Promise((resolve, reject) => {
-      const launchArgs = [
+    const proxyArgs = [];
+    if (!native) {
+      ephemeral = await createEphemeralCatalog({ configDir, codexPath, env, origin });
+      abortIfSignaled();
+      const requestHeaders = requestContextHeaders(createRequestContext({
+        tool: "codex",
+        cwd,
+        sessionId: resumeSessionId(args),
+      }));
+      proxyArgs.push(
         "-c",
         providerConfig(credentialsPath(configDir), origin, requestHeaders),
         "-c",
         'model_provider="zgap"',
         "-c",
         `model_catalog_json=${JSON.stringify(ephemeral.target)}`,
+      );
+    }
+    return await new Promise((resolve, reject) => {
+      const launchArgs = [
+        ...proxyArgs,
         ...(dangerousMode && !args.includes("--dangerously-bypass-approvals-and-sandbox")
           ? ["--dangerously-bypass-approvals-and-sandbox"]
           : []),

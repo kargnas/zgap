@@ -502,7 +502,7 @@ test("sessions direct command는 현재 디렉터리의 browser를 연다", asyn
   assert.equal(options.cwd, "/repo/worktree");
 });
 
-test("session resume은 세션 id만 전달하고 작업 디렉터리 결정은 agent에 맡긴다", async () => {
+test("session resume은 세션 id와 native 여부만 전달하고 작업 디렉터리 결정은 agent에 맡긴다", async () => {
   const cli = await import("../src/cli.mjs");
   assert.equal(typeof cli.resumeSession, "function");
   const calls = [];
@@ -512,8 +512,8 @@ test("session resume은 세션 id만 전달하고 작업 디렉터리 결정은 
     ompRunner: async (args, options) => { calls.push({ agent: "omp", args, options }); return 13; },
   };
 
-  assert.equal(await cli.resumeSession({ agent: "codex", id: "codex-id", cwd: "/repo/codex" }, "/config", { ...runners, dangerousMode: true }), 11);
-  assert.equal(await cli.resumeSession({ agent: "claude", id: "claude-id", cwd: "/repo/claude" }, "/config", { ...runners, dangerousMode: true }), 12);
+  assert.equal(await cli.resumeSession({ agent: "codex", id: "codex-id", cwd: "/repo/codex" }, "/config", { ...runners, native: true, origin: "https://proxy.example.test", dangerousMode: true }), 11);
+  assert.equal(await cli.resumeSession({ agent: "claude", id: "claude-id", cwd: "/repo/claude" }, "/config", { ...runners, native: true, dangerousMode: true }), 12);
   assert.equal(await cli.resumeSession({ agent: "omp", id: "exact-omp-id", cwd: "/repo/omp" }, "/config", {
     ...runners,
     origin: "https://proxy.example.test",
@@ -521,9 +521,10 @@ test("session resume은 세션 id만 전달하고 작업 디렉터리 결정은 
     leanMode: true,
     ompLeanSkills: ["git", "testing"],
   }), 13);
+  // A native resume drops the origin so no runner can fall back to the proxy default.
   assert.deepEqual(calls, [
-    { agent: "codex", args: ["resume", "codex-id"], options: { configDir: "/config", dangerousMode: true } },
-    { agent: "claude", args: ["--resume", "claude-id"], options: { configDir: "/config", dangerousMode: true } },
+    { agent: "codex", args: ["resume", "codex-id"], options: { configDir: "/config", native: true, dangerousMode: true } },
+    { agent: "claude", args: ["--resume", "claude-id"], options: { configDir: "/config", native: true, dangerousMode: true } },
     {
       agent: "omp",
       args: ["--resume=exact-omp-id"],
@@ -538,7 +539,7 @@ test("session resume은 세션 id만 전달하고 작업 디렉터리 결정은 
   ]);
 });
 
-test("resume 명령은 browser에 설정 host를 넘기고 로컬 선택 시 origin 없이 재개한다", async () => {
+test("resume 명령은 browser에 설정 host를 넘기고 로컬 네이티브 선택 시 native로 재개한다", async () => {
   const { main } = await import("../src/cli.mjs");
   const calls = [];
   let browserOptions;
@@ -552,14 +553,14 @@ test("resume 명령은 browser에 설정 host를 넘기고 로컬 선택 시 ori
     claudeRunner: async (args, options) => { calls.push({ args, options }); return 21; },
     sessionBrowser: async (options) => {
       browserOptions = options;
-      return options.onSelect({ agent: "claude", id: "claude-id", cwd: "/repo/recorded" }, { remote: false });
+      return options.onSelect({ agent: "claude", id: "claude-id", cwd: "/repo/recorded" }, { native: true });
     },
   });
 
   assert.equal(result, 21);
   assert.equal(browserOptions.cwd, "/repo/launch");
   assert.equal(browserOptions.host, "proxy.example.test");
-  assert.deepEqual(calls, [{ args: ["--resume", "claude-id"], options: { configDir: "/config" } }]);
+  assert.deepEqual(calls, [{ args: ["--resume", "claude-id"], options: { configDir: "/config", native: true } }]);
 });
 
 test("start menu의 Resume에서 뒤로 오면 start menu를 다시 연다", async () => {
