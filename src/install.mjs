@@ -7,9 +7,11 @@ import { defaultConfigDir, writePrivateJson } from "./credentials.mjs";
 // Bun reuses the global lockfile's pinned commit when re-adding a branch spec, even with
 // --force and --no-cache, so updates must go through `bun update`, which re-resolves #main.
 const UPDATE_ARGS = ["update", "-g", "zgap", "--force", "--no-cache"];
-const GITHUB_MAIN_API = "https://api.github.com/repos/kargnas/zgap/commits/main";
-// GitHub allows 60 unauthenticated API requests per hour per IP, shared with every other
-// tool on the machine, so the last known main head is cached and refetched at most hourly.
+// The commits Atom feed has no per-IP request quota, carries the head sha and commit date in
+// its first entry, and honors If-None-Match with a 304.
+const GITHUB_MAIN_FEED = "https://github.com/kargnas/zgap/commits/main.atom";
+// Every menu launch would otherwise hit GitHub, so the last known main head is cached and
+// refetched at most hourly.
 const REMOTE_HEAD_TTL_MS = 60 * 60_000;
 const SHA_RE = /^[0-9a-f]{40}$/i;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -76,16 +78,28 @@ async function readRemoteHeadCache(cacheFile) {
   return null;
 }
 
+// The feed lists the newest commit first and its own <updated> precedes the entries, so only
+// the first <entry> is read.
+function parseFeedHead(feed) {
+  const start = feed.indexOf("<entry>");
+  if (start === -1) return null;
+  const entry = feed.slice(start, feed.indexOf("</entry>", start));
+  const sha = entry.match(/\/commit\/([0-9a-f]{40})"/i)?.[1];
+  const commitDate = entry.match(/<updated>(\d{4}-\d{2}-\d{2})/)?.[1];
+  if (!sha || !commitDate) return null;
+  return { sha: sha.toLowerCase(), commitDate };
+}
+
 // Resolves the GitHub main head as { sha, commitDate, etag?, checkedAt }, or null when GitHub
 // could not answer. A cache younger than the TTL is returned without touching the network.
 async function fetchRemoteHead({ fetcher, signal, timeoutMs, cacheFile }) {
   const cached = await readRemoteHeadCache(cacheFile);
   const now = Date.now();
   if (cached && now - cached.checkedAt < REMOTE_HEAD_TTL_MS) return cached;
-  const headers = { accept: "application/vnd.github+json" };
-  // A conditional request answered with 304 does not count against the rate limit.
+  const headers = {};
+  // A conditional request answered with 304 skips downloading the ~30KB feed body.
   if (typeof cached?.etag === "string") headers["if-none-match"] = cached.etag;
-  const response = await fetcher(GITHUB_MAIN_API, {
+  const response = await fetcher(GITHUB_MAIN_FEED, {
     headers,
     signal: signal
       ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)])
@@ -96,10 +110,8 @@ async function fetchRemoteHead({ fetcher, signal, timeoutMs, cacheFile }) {
     head = { ...cached };
   } else {
     if (!response.ok) return null;
-    const remote = await response.json();
-    const commitDate = (remote.commit?.author?.date ?? remote.commit?.committer?.date)?.slice(0, 10);
-    if (!SHA_RE.test(remote.sha) || !DATE_RE.test(commitDate)) return null;
-    head = { sha: remote.sha.toLowerCase(), commitDate };
+    head = parseFeedHead(await response.text());
+    if (!head) return null;
     const etag = response.headers.get("etag");
     if (etag) head.etag = etag;
   }

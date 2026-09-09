@@ -20,8 +20,25 @@ async function installedFixture(t, commit) {
   return { root, packageRoot, configDir: path.join(root, "config") };
 }
 
-function remoteResponse(sha, headers) {
-  return new Response(JSON.stringify({ sha, commit: { author: { date: "2026-08-13T00:00:00Z" } } }), { status: 200, headers });
+// The feed-level <updated> comes first and differs on purpose so a parser that reads the wrong
+// element fails these tests.
+function feedBody(sha, updated = "2026-08-13T00:00:00Z") {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xml:lang="en-US">
+  <id>tag:github.com,2008:/kargnas/zgap/commits/main</id>
+  <updated>2030-01-01T00:00:00Z</updated>
+  <entry>
+    <id>tag:github.com,2008:Grit::Commit/${sha}</id>
+    <link type="text/html" rel="alternate" href="https://github.com/kargnas/zgap/commit/${sha}"/>
+    <title>feat: test</title>
+    <updated>${updated}</updated>
+  </entry>
+</feed>
+`;
+}
+
+function feedResponse(sha, headers) {
+  return new Response(feedBody(sha), { status: 200, headers });
 }
 
 test("source checkout is skipped even when an update is available", async (t) => {
@@ -78,12 +95,10 @@ test("matching GitHub main commit returns current with its commit date", async (
     packageRoot,
     globalRoot: root,
     configDir,
-    fetcher: async (_url, options) => {
+    fetcher: async (url, options) => {
+      assert.equal(url, "https://github.com/kargnas/zgap/commits/main.atom");
       assert.ok(options.signal instanceof AbortSignal);
-      return new Response(JSON.stringify({
-        sha: commit,
-        commit: { author: { date: "2026-08-13T00:00:00Z" } },
-      }), { status: 200 });
+      return feedResponse(commit);
     },
   });
   assert.deepEqual(result, { state: "current", commitDate: "2026-08-13" });
@@ -96,10 +111,7 @@ test("custom Bun global root is derived from the running package path", async (t
   const result = await checkForGlobalUpdate({
     packageRoot,
     configDir,
-    fetcher: async () => new Response(JSON.stringify({
-      sha: commit,
-      commit: { author: { date: "2026-08-13T00:00:00Z" } },
-    }), { status: 200 }),
+    fetcher: async () => feedResponse(commit),
   });
 
   assert.deepEqual(result, { state: "current", commitDate: "2026-08-13" });
@@ -115,10 +127,7 @@ test("different GitHub main commit reinstalls and returns updated", async (t) =>
     packageRoot,
     globalRoot: root,
     configDir,
-    fetcher: async () => new Response(JSON.stringify({
-      sha: remote,
-      commit: { author: { date: "2026-08-13T00:00:00Z" } },
-    }), { status: 200 }),
+    fetcher: async () => feedResponse(remote),
     run: async (...args) => {
       calls.push(args);
       await writeFile(path.join(root, "bun.lock"), lockfileContent(remote));
@@ -138,10 +147,7 @@ test("reinstall that keeps the previous lockfile pin never reports updated", asy
     packageRoot,
     globalRoot: root,
     configDir,
-    fetcher: async () => new Response(JSON.stringify({
-      sha: remote,
-      commit: { author: { date: "2026-08-13T00:00:00Z" } },
-    }), { status: 200 }),
+    fetcher: async () => feedResponse(remote),
     // Bun exits 0 while silently reusing the pinned commit; the checker must treat that as failure.
     run: async () => 0,
   });
@@ -170,10 +176,7 @@ test("invalid GitHub commit metadata never starts an update", async (t) => {
     packageRoot,
     globalRoot: root,
     configDir,
-    fetcher: async () => new Response(JSON.stringify({
-      sha: "not-a-commit",
-      commit: { author: { date: "2026-08-13T00:00:00Z" } },
-    }), { status: 200 }),
+    fetcher: async () => feedResponse("not-a-commit"),
     run: async () => { updateCalls += 1; return 0; },
   });
 
@@ -190,10 +193,7 @@ test("automatic reinstall uses silent child stdio", async (t) => {
     packageRoot,
     globalRoot: root,
     configDir,
-    fetcher: async () => new Response(JSON.stringify({
-      sha: remote,
-      commit: { author: { date: "2026-08-13T00:00:00Z" } },
-    }), { status: 200 }),
+    fetcher: async () => feedResponse(remote),
     run: async (command, args) => {
       assert.equal(command, "bun");
       assert.deepEqual(args, ["update", "-g", "zgap", "--force", "--no-cache"]);
@@ -213,7 +213,7 @@ test("a fetched main head is cached with its ETag and reused within the hour", a
     packageRoot,
     globalRoot: root,
     configDir,
-    fetcher: async () => { fetches += 1; return remoteResponse(commit, { etag: 'W/"head-1"' }); },
+    fetcher: async () => { fetches += 1; return feedResponse(commit, { etag: 'W/"head-1"' }); },
   });
 
   assert.deepEqual(await check(), { state: "current", commitDate: "2026-08-13" });
