@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { ORIGIN } from "./constants.mjs";
+import { CODEX_PROVIDER_ID, ORIGIN } from "./constants.mjs";
 import { credentialsPath, defaultConfigDir } from "./credentials.mjs";
 import { createEphemeralCatalog, removeEphemeralCatalog, resolveCodexExecutable } from "./catalog.mjs";
 import { createRequestContext, requestContextHeaders, resumeSessionId } from "./request-context.mjs";
@@ -16,13 +16,13 @@ function providerTable(credentialFile, origin, headers, spaced = false) {
   const apiBaseUrl = `${origin}/v1`;
   const httpHeaders = `{${quote(Object.keys(headers)[0])}=${quote(Object.values(headers)[0])}}`;
   if (spaced) {
-    return `{ name = ${quote("zgap")}, base_url = ${quote(apiBaseUrl)}, http_headers = ${httpHeaders}, auth = { command = ${quote(process.execPath)}, args = [${quote(CLI_FILE)}, ${quote("auth-token")}, ${quote(credentialFile)}] } }`;
+    return `{ name = ${quote(CODEX_PROVIDER_ID)}, base_url = ${quote(apiBaseUrl)}, http_headers = ${httpHeaders}, auth = { command = ${quote(process.execPath)}, args = [${quote(CLI_FILE)}, ${quote("auth-token")}, ${quote(credentialFile)}] } }`;
   }
-  return `{name=${quote("zgap")},base_url=${quote(apiBaseUrl)},http_headers=${httpHeaders},auth={command=${quote(process.execPath)},args=[${quote(CLI_FILE)},${quote("auth-token")},${quote(credentialFile)}]}}`;
+  return `{name=${quote(CODEX_PROVIDER_ID)},base_url=${quote(apiBaseUrl)},http_headers=${httpHeaders},auth={command=${quote(process.execPath)},args=[${quote(CLI_FILE)},${quote("auth-token")},${quote(credentialFile)}]}}`;
 }
 
 function providerConfig(credentialFile, origin, headers) {
-  return `model_providers.zgap=${providerTable(credentialFile, origin, headers)}`;
+  return `model_providers.${CODEX_PROVIDER_ID}=${providerTable(credentialFile, origin, headers)}`;
 }
 
 export async function runCodex(args, {
@@ -79,7 +79,7 @@ export async function runCodex(args, {
         "-c",
         providerConfig(credentialsPath(configDir), origin, requestHeaders),
         "-c",
-        'model_provider="zgap"',
+        `model_provider=${JSON.stringify(CODEX_PROVIDER_ID)}`,
         "-c",
         `model_catalog_json=${JSON.stringify(ephemeral.target)}`,
       );

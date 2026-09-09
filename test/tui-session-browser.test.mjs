@@ -1068,9 +1068,10 @@ test("재개 선택 화면은 방향키로 프록시와 로컬을 고르고 Esc�
 
   const result = runSessionBrowser({
     rendererFactory: async () => setup,
-    host: "proxy.example.test",
     discoverScope: async () => ({ roots: ["/repo"] }),
     sessionLoader: async () => [{ ...sessions[0], cwd: "/repo" }],
+    nativeProviderReader: async () => "openai",
+    providerConverter: async (selected) => selected.length,
     onSelect: async (session, options) => { selections.push([session.id, options]); return 23; },
   });
   await flush(setup);
@@ -1080,15 +1081,15 @@ test("재개 선택 화면은 방향키로 프록시와 로컬을 고르고 Esc�
   let frame = setup.captureCharFrame();
   assert.match(frame, /Which provider do you want to use\?/);
   assert.match(frame, /CODEX {2}Add session switcher/);
-  assert.match(frame, /›\s+proxy\.example\.test/);
+  assert.match(frame, /›\s+zgap\s+\n\s+Resumes with provider zgap/);
   assert.match(frame, /\n\s+Local native/);
   assert.match(frame, /↑↓ move · Enter resume · Esc back/);
 
   setup.mockInput.pressArrow("down");
   await flush(setup);
   frame = setup.captureCharFrame();
-  assert.match(frame, /\n\s+proxy\.example\.test/);
-  assert.match(frame, /›\s+Local native/);
+  assert.match(frame, /\n\s+zgap\s+\n/);
+  assert.match(frame, /›\s+Local native\s+\n\s+Converts the session from zgap to openai, then resumes/);
 
   // Esc returns to the list without leaving the browser; the choice resets on the next Enter.
   setup.mockInput.pressEscape();
@@ -1100,7 +1101,7 @@ test("재개 선택 화면은 방향키로 프록시와 로컬을 고르고 Esc�
 
   setup.mockInput.pressEnter();
   await flush(setup);
-  assert.match(setup.captureCharFrame(), /›\s+proxy\.example\.test/);
+  assert.match(setup.captureCharFrame(), /›\s+zgap/);
   setup.mockInput.pressArrow("down");
   await setup.mockInput.pressEnter();
   assert.equal(await result, 23);
@@ -1127,6 +1128,136 @@ test("재개 선택 화면에서 Enter는 기본으로 프록시 설정을 선�
   await setup.mockInput.pressEnter();
   assert.equal(await result, 23);
   assert.deepEqual(options, { native: false });
+});
+
+test("재개 선택의 로컬 네이티브는 Codex 설정 provider로 변환한 뒤 native로 재개한다", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
+  const setup = await createTestRenderer({ width: 72, height: 12 });
+  t.after(() => setup.renderer.destroy());
+  const session = { ...sessions[0], cwd: "/repo" };
+  const converted = [];
+  const selections = [];
+
+  const result = runSessionBrowser({
+    rendererFactory: async () => setup,
+    discoverScope: async () => ({ roots: ["/repo"] }),
+    sessionLoader: async () => [session],
+    nativeProviderReader: async () => "agp",
+    providerConverter: async (selected, target) => { converted.push({ ids: selected.map(({ id }) => id), target }); return selected.length; },
+    onSelect: async (value, options) => { selections.push([value.provider, options]); return 23; },
+  });
+  await flush(setup);
+
+  setup.mockInput.pressEnter();
+  setup.mockInput.pressArrow("down");
+  await flush(setup);
+  assert.match(setup.captureCharFrame(), /›\s+Local native\s+\n\s+Converts the session from zgap to agp, then resumes/);
+  await setup.mockInput.pressEnter();
+  assert.equal(await result, 23);
+  assert.deepEqual(converted, [{ ids: ["codex-zgap"], target: "agp" }]);
+  assert.deepEqual(selections, [["agp", { native: true }]]);
+});
+
+test("재개 선택의 zgap은 다른 provider 세션을 zgap으로 변환하고 같은 provider면 변환하지 않는다", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
+  const setup = await createTestRenderer({ width: 72, height: 12 });
+  t.after(() => setup.renderer.destroy());
+  const session = { ...sessions[1], cwd: "/repo" };
+  const converted = [];
+
+  const result = runSessionBrowser({
+    rendererFactory: async () => setup,
+    discoverScope: async () => ({ roots: ["/repo"] }),
+    sessionLoader: async () => [session],
+    nativeProviderReader: async () => "openai",
+    providerConverter: async (selected, target) => { converted.push({ ids: selected.map(({ id }) => id), target }); return selected.length; },
+    onSelect: async (value, options) => [value.provider, options],
+  });
+  await flush(setup);
+
+  setup.mockInput.pressEnter();
+  await flush(setup);
+  assert.match(setup.captureCharFrame(), /›\s+zgap\s+\n\s+Converts the session from openai to zgap, then resumes/);
+  setup.mockInput.pressArrow("down");
+  await flush(setup);
+  assert.match(setup.captureCharFrame(), /›\s+Local native\s+\n\s+Resumes with provider openai/);
+  setup.mockInput.pressArrow("up");
+  await setup.mockInput.pressEnter();
+  assert.deepEqual(await result, ["zgap", { native: false }]);
+  assert.deepEqual(converted, [{ ids: ["codex-openai"], target: "zgap" }]);
+});
+
+test("재개 선택의 변환 실패는 선택 화면에 남아 오류를 보여주고 재개하지 않는다", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
+  const setup = await createTestRenderer({ width: 72, height: 12 });
+  t.after(() => setup.renderer.destroy());
+  let selected = false;
+
+  const result = runSessionBrowser({
+    rendererFactory: async () => setup,
+    discoverScope: async () => ({ roots: ["/repo"] }),
+    sessionLoader: async () => [{ ...sessions[0], cwd: "/repo" }],
+    nativeProviderReader: async () => "openai",
+    providerConverter: async () => { throw new Error("database is locked"); },
+    onSelect: async () => { selected = true; return 23; },
+  });
+  await flush(setup);
+
+  setup.mockInput.pressEnter();
+  setup.mockInput.pressArrow("down");
+  // Enter is ignored until the native provider is known, so wait for the note before pressing it.
+  await waitForFrame(setup, (frame) => frame.includes("Converts the session from zgap to openai"));
+  setup.mockInput.pressEnter();
+  await waitForFrame(setup, (frame) => frame.includes("Could not convert sessions: database is locked"));
+  assert.equal(selected, false);
+  assert.match(setup.captureCharFrame(), /Which provider do you want to use\?/);
+
+  setup.mockInput.pressEscape();
+  await flush(setup);
+  assert.match(setup.captureCharFrame(), /›\s+\[ \] CODEX · zgap {2}Add session switcher/);
+  setup.mockInput.pressEscape();
+  await flush(setup);
+  assert.equal(await result, 0);
+});
+
+test("재개 선택은 Codex 설정을 읽지 못하면 로컬 네이티브를 막고 Claude 세션은 자체 설정 안내를 보여준다", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
+  const setup = await createTestRenderer({ width: 72, height: 12 });
+  t.after(() => setup.renderer.destroy());
+  const selections = [];
+
+  const result = runSessionBrowser({
+    rendererFactory: async () => setup,
+    discoverScope: async () => ({ roots: ["/repo"] }),
+    sessionLoader: async () => [{ ...sessions[0], cwd: "/repo" }, { ...sessions[2], cwd: "/repo" }],
+    nativeProviderReader: async () => { throw new Error("bad toml"); },
+    providerConverter: async () => { throw new Error("must not convert"); },
+    onSelect: async (session, options) => { selections.push([session.id, options]); return 23; },
+  });
+  await flush(setup);
+
+  setup.mockInput.pressEnter();
+  setup.mockInput.pressArrow("down");
+  await waitForFrame(setup, (frame) => frame.includes("Could not read the Codex configuration: bad toml"));
+  setup.mockInput.pressEnter();
+  await flush(setup);
+  assert.deepEqual(selections, []);
+  assert.match(setup.captureCharFrame(), /Which provider do you want to use\?/);
+
+  // A lone Esc is held briefly to disambiguate escape sequences, so the next key waits for it.
+  setup.mockInput.pressEscape();
+  await flush(setup);
+  setup.mockInput.pressArrow("down");
+  setup.mockInput.pressEnter();
+  setup.mockInput.pressArrow("down");
+  await waitForFrame(setup, (frame) => frame.includes("Resumes with Claude's own configuration"));
+  await setup.mockInput.pressEnter();
+  assert.equal(await result, 23);
+  assert.deepEqual(selections, [["claude-one", { native: true }]]);
 });
 
 test("session browser는 실행 중인 세션을 목록에서 Enter 두 번으로 재개한다", async (t) => {

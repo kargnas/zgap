@@ -154,13 +154,12 @@ export async function main({
     return serveRunner(args, { configDir, origin, log });
   }
   if (command === "resume") {
-    const [{ host, origin }, dangerousMode] = await Promise.all([
+    const [{ origin }, dangerousMode] = await Promise.all([
       configReader(configDir),
       dangerousModeReader(configDir),
     ]);
     return sessionBrowser({
       cwd,
-      host,
       onSelect: async (session, { native = false } = {}) => {
         return resumeSession(session, configDir, {
           native,
@@ -233,7 +232,6 @@ export async function main({
             let selected = false;
             const browserResult = await sessionBrowser({
               cwd,
-              host: proxyConfig.host,
               onSelect: (session, { native = false } = {}) => {
                 selected = true;
                 return resumeSession(session, configDir, {

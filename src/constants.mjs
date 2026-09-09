@@ -1,6 +1,8 @@
 export const DEFAULT_HOST = "ai-proxy.zz.gg";
 export const ORIGIN = `https://${DEFAULT_HOST}`;
 export const CLIENT_ID = "zgap";
+// Codex provider id that zgap injects; converted sessions must carry the same id to resume through the proxy.
+export const CODEX_PROVIDER_ID = "zgap";
 export const LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
 export const REFRESH_START_MS = 4 * 60 * 60 * 1000;
 export const REFRESH_REQUIRED_MS = 15 * 60 * 1000;

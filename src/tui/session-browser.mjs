@@ -10,7 +10,8 @@ import {
   createCliRenderer,
 } from "@opentui/core";
 import cliSpinners from "cli-spinners";
-import { convertCodexSessionProviders, discoverRepositoryScope, filterSessions, listSessions, loadSessionDetails, loadSessionPreview, stripTerminalControls } from "../sessions.mjs";
+import { CODEX_PROVIDER_ID } from "../constants.mjs";
+import { convertCodexSessionProviders, discoverRepositoryScope, filterSessions, listSessions, loadSessionDetails, loadSessionPreview, readCodexNativeProvider, stripTerminalControls } from "../sessions.mjs";
 import { loadMenuTranslator } from "./menu.mjs";
 
 const AGENTS = ["all", "codex", "claude", "omp"];
@@ -314,7 +315,6 @@ function previewText(session, width, height, t, { compact = false } = {}) {
 export async function runSessionBrowser({
   rendererFactory = createCliRenderer,
   cwd = process.cwd(),
-  host,
   onSelect = async () => 0,
   language = process.env.LANG,
   now = Date.now,
@@ -330,6 +330,7 @@ export async function runSessionBrowser({
   detailsLoader = loadSessionDetails,
   sessionFilter = filterSessions,
   providerConverter = convertCodexSessionProviders,
+  nativeProviderReader = readCodexNativeProvider,
 } = {}) {
   let renderer;
   let keyHandler;
@@ -414,6 +415,10 @@ export async function runSessionBrowser({
     let showPreview = false;
     let showResumeChoice = false;
     let resumeChoiceIndex = 0;
+    let nativeProvider = null;
+    let nativeProviderError = null;
+    let resumeConverting = false;
+    let resumeConvertError = null;
     let previewLoading = false;
     let previewError = null;
     let previewGeneration = 0;
@@ -533,7 +538,7 @@ export async function runSessionBrowser({
     const render = () => {
       if (cleaned) return;
       const compact = renderer.width <= COMPACT_WIDTH;
-      const loading = state === "initializing" || state === "loading" || previewLoading || convertLoading;
+      const loading = state === "initializing" || state === "loading" || previewLoading || convertLoading || resumeConverting;
       const mainListVisible = !showConvert && !showPreview && !showHelp && !showResumeChoice;
       // Short terminals keep a session visible below the four filter rows and their divider.
       root.paddingTop = mainListVisible && renderer.height <= 12 ? 0 : 1;
@@ -630,12 +635,13 @@ export async function runSessionBrowser({
         filters.visible = false;
         previewContent.visible = false;
         list.visible = true;
-        hint.content = t("resumeChoiceHint");
+        hint.content = notice || t("resumeChoiceHint");
         const session = filteredSessions()[selectedIndex];
         const choices = [
-          [t("resumeChoiceProxy", { host }), COLORS.amber],
+          [t("resumeChoiceProxy"), COLORS.amber],
           [t("resumeChoiceLocal"), COLORS.green],
         ];
+        const [note, noteColor] = resumeChoiceNote(session);
         list.content = new StyledText([
           chunk(session ? `${displayText(session.agent).toUpperCase()}  ${truncateText(displayText(session.title), Math.max(4, renderer.width - 12))}` : "", COLORS.chip),
           chunk("\n\n", COLORS.text),
@@ -646,6 +652,8 @@ export async function runSessionBrowser({
               ...(index > 0 ? [chunk("\n", COLORS.text)] : []),
               chunk(selected ? "› " : "  ", COLORS.amber, background),
               chunk(label, color, background, selected),
+              // The note sits directly under the highlighted row so it reads as that choice's outcome.
+              ...(selected ? [chunk("\n    ", COLORS.text), chunk(truncateText(note, Math.max(4, renderer.width - 8)), noteColor)] : []),
             ];
           }),
         ]);
@@ -805,6 +813,23 @@ export async function runSessionBrowser({
       activeResumeTimer = null;
       activeResumeKey = null;
     };
+    // Only Codex sessions with an indexed provider can be rewritten; the c key uses the same rule.
+    const convertible = (session) => checkStateFor(session) !== null;
+    const resumeTarget = (native) => (native ? nativeProvider : CODEX_PROVIDER_ID);
+    const resumeChoiceNote = (session) => {
+      if (!session) return ["", COLORS.meta];
+      const native = resumeChoiceIndex === 1;
+      if (resumeConvertError) return [`${t("resumeProviderConvertFailed")}: ${resumeConvertError.message}`, "#F87171"];
+      if (resumeConverting) return [`${ORBIT_SPINNER.frames[spinnerIndex]} ${t("resumeChoiceConverting", { provider: resumeTarget(native) })}`, COLORS.meta];
+      if (native && session.agent !== "codex") return [t("resumeChoiceNoteNative", { agent: t(session.agent) }), COLORS.meta];
+      if (native && nativeProviderError) return [t("resumeChoiceNoteError", { message: nativeProviderError.message }), "#F87171"];
+      if (native && !nativeProvider) return [`${ORBIT_SPINNER.frames[spinnerIndex]} ${t("resumeChoiceNoteLoading")}`, COLORS.meta];
+      const target = resumeTarget(native);
+      if (convertible(session) && session.provider !== target) {
+        return [t("resumeChoiceNoteConvert", { from: displayText(session.provider), provider: target }), COLORS.amber];
+      }
+      return [t("resumeChoiceNoteProvider", { provider: target }), COLORS.meta];
+    };
     const resume = (session) => {
       const key = sessionKey(session);
       if (session.active && activeResumeKey !== key) {
@@ -816,7 +841,21 @@ export async function runSessionBrowser({
       }
       showResumeChoice = true;
       resumeChoiceIndex = 0;
+      resumeConvertError = null;
+      // The config can change between resumes, so the native provider is read every time the choice opens.
+      nativeProvider = null;
+      nativeProviderError = null;
+      Promise.resolve()
+        .then(() => nativeProviderReader())
+        .then((value) => { nativeProvider = value; }, (error) => { nativeProviderError = error; })
+        .then(() => { if (!cleaned && showResumeChoice) render(); });
       render();
+    };
+    const launch = (session, native) => {
+      showResumeChoice = false;
+      clearActiveResume();
+      cleanup();
+      Promise.resolve().then(() => onSelect(session, { native })).then(resolveResult, rejectResult);
     };
     const select = (index) => {
       const values = filteredSessions();
@@ -911,7 +950,9 @@ export async function runSessionBrowser({
           return;
         }
         if (showResumeChoice) {
+          if (resumeConverting) return;
           showResumeChoice = false;
+          resumeConvertError = null;
           render();
         } else if (showConvert) {
           if (convertLoading) return;
@@ -1004,19 +1045,43 @@ export async function runSessionBrowser({
         return;
       }
       if (showResumeChoice) {
+        if (resumeConverting) return;
         if (["up", "k"].includes(event.name)) {
           resumeChoiceIndex = 0;
+          resumeConvertError = null;
           render();
         } else if (["down", "j"].includes(event.name)) {
           resumeChoiceIndex = 1;
+          resumeConvertError = null;
           render();
         } else if (event.name === "return") {
           const session = filteredSessions()[selectedIndex];
           if (!session) return;
-          showResumeChoice = false;
-          clearActiveResume();
-          cleanup();
-          Promise.resolve().then(() => onSelect(session, { native: resumeChoiceIndex === 1 })).then(resolveResult, rejectResult);
+          const native = resumeChoiceIndex === 1;
+          const target = resumeTarget(native);
+          if (!convertible(session) || session.provider === target) {
+            launch(session, native);
+            return;
+          }
+          // Codex resolves the provider stored on the thread, so the row is rewritten before launch.
+          if (!target) return;
+          resumeConverting = true;
+          resumeConvertError = null;
+          render();
+          Promise.resolve()
+            .then(() => providerConverter([session], target))
+            .then(() => {
+              if (cleaned) return;
+              session.provider = target;
+              resumeConverting = false;
+              launch(session, native);
+            })
+            .catch((conversionError) => {
+              if (cleaned) return;
+              resumeConverting = false;
+              resumeConvertError = conversionError;
+              render();
+            });
         }
         return;
       }

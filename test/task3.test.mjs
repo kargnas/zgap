@@ -539,7 +539,7 @@ test("session resume은 세션 id와 native 여부만 전달하고 작업 디렉
   ]);
 });
 
-test("resume 명령은 browser에 설정 host를 넘기고 로컬 네이티브 선택 시 native로 재개한다", async () => {
+test("resume 명령은 로컬 네이티브 선택 시 native로 재개한다", async () => {
   const { main } = await import("../src/cli.mjs");
   const calls = [];
   let browserOptions;
@@ -559,7 +559,7 @@ test("resume 명령은 browser에 설정 host를 넘기고 로컬 네이티브 �
 
   assert.equal(result, 21);
   assert.equal(browserOptions.cwd, "/repo/launch");
-  assert.equal(browserOptions.host, "proxy.example.test");
+  assert.equal("host" in browserOptions, false);
   assert.deepEqual(calls, [{ args: ["--resume", "claude-id"], options: { configDir: "/config", native: true } }]);
 });
 

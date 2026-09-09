@@ -590,6 +590,24 @@ test("Codex provider conversion rolls back every row when one session is stale",
   assert.equal(verified.query("SELECT model_provider FROM threads WHERE id = ?").get("current").model_provider, "zgap");
 });
 
+test("Codex native provider follows profile, then top-level model_provider, then openai", async (t) => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "zgap-codex-native-provider-"));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const configPath = path.join(home, "config.toml");
+
+  assert.equal(await sessions.readCodexNativeProvider({ codexHome: home }), "openai");
+  await writeFile(configPath, 'model = "gpt"\n[model_providers.agp]\nname = "agp"\n');
+  assert.equal(await sessions.readCodexNativeProvider({ codexHome: home }), "openai");
+  await writeFile(configPath, 'model_provider = "agp"\n');
+  assert.equal(await sessions.readCodexNativeProvider({ codexHome: home }), "agp");
+  await writeFile(configPath, 'model_provider = "agp"\nprofile = "work"\n[profiles.work]\nmodel_provider = "zgap"\n[profiles.home]\nmodel_provider = "other"\n');
+  assert.equal(await sessions.readCodexNativeProvider({ codexHome: home }), "zgap");
+  await writeFile(configPath, 'model_provider = "agp"\nprofile = "missing"\n');
+  assert.equal(await sessions.readCodexNativeProvider({ codexHome: home }), "agp");
+  await writeFile(configPath, 'model_provider = "agp\n');
+  await assert.rejects(() => sessions.readCodexNativeProvider({ codexHome: home }));
+});
+
 test("lazy preview finds the last turn before a large trailing event", async (t) => {
   const home = await mkdtemp(path.join(os.tmpdir(), "zgap-large-preview-"));
   t.after(() => rm(home, { recursive: true, force: true }));

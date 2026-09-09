@@ -374,6 +374,24 @@ export async function convertCodexSessionProviders(selectedSessions, targetProvi
   }
 }
 
+// Codex resolves the active provider as profile override, then top-level model_provider, then its
+// built-in "openai"; a native resume converts the session to that id so the stored zgap provider
+// stops being resolved. A missing config is Codex's own default, but a broken one must surface.
+export async function readCodexNativeProvider(options = {}) {
+  const codexHome = options.codexHome ?? process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex");
+  let source;
+  try {
+    source = await readFile(path.join(codexHome, "config.toml"), "utf8");
+  } catch (error) {
+    if (error?.code === "ENOENT") return "openai";
+    throw error;
+  }
+  const config = Bun.TOML.parse(source);
+  const providerOf = (value) => (typeof value === "string" && value.trim() ? value.trim() : null);
+  const profile = typeof config.profile === "string" ? config.profiles?.[config.profile] : undefined;
+  return providerOf(profile?.model_provider) ?? providerOf(config.model_provider) ?? "openai";
+}
+
 async function readCodexFallback(codexHome, onRecords) {
   const paths = [];
   for (const directory of [path.join(codexHome, "sessions"), path.join(codexHome, "archived_sessions")]) paths.push(...await walkJsonl(directory));

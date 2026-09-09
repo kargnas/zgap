@@ -115,6 +115,12 @@
   "compactHintLean": "←↑↓→ · Space skills · L lean · ↵ select · ^C×2/Esc×2",
   "resumeChoiceTitle": "Which provider do you want to use?",
   "resumeChoiceHint": "↑↓ move · Enter resume · Esc back",
-  "resumeChoiceProxy": "{{host}}",
-  "resumeChoiceLocal": "Local native"
+  "resumeChoiceProxy": "zgap",
+  "resumeChoiceLocal": "Local native",
+  "resumeChoiceNoteProvider": "Resumes with provider {{provider}}",
+  "resumeChoiceNoteConvert": "Converts the session from {{from}} to {{provider}}, then resumes",
+  "resumeChoiceNoteNative": "Resumes with {{agent}}'s own configuration",
+  "resumeChoiceNoteLoading": "Reading the Codex configuration…",
+  "resumeChoiceNoteError": "Could not read the Codex configuration: {{message}}",
+  "resumeChoiceConverting": "Converting the session to {{provider}}…"
 }

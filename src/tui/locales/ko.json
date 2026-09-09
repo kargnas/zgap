@@ -115,6 +115,12 @@
   "compactHintLean": "←↑↓→ · Space 스킬 · L lean · ↵ 선택 · ^C×2/Esc×2",
   "resumeChoiceTitle": "어떤 프로바이더로 이용하시겠습니까?",
   "resumeChoiceHint": "↑↓ 이동 · Enter 재개 · Esc 뒤로",
-  "resumeChoiceProxy": "{{host}}",
-  "resumeChoiceLocal": "로컬 네이티브"
+  "resumeChoiceProxy": "zgap",
+  "resumeChoiceLocal": "로컬 네이티브",
+  "resumeChoiceNoteProvider": "{{provider}} 프로바이더로 재개합니다",
+  "resumeChoiceNoteConvert": "세션을 {{from}}에서 {{provider}}로 변환한 뒤 재개합니다",
+  "resumeChoiceNoteNative": "{{agent}} 자체 설정으로 재개합니다",
+  "resumeChoiceNoteLoading": "Codex 설정을 읽는 중…",
+  "resumeChoiceNoteError": "Codex 설정을 읽지 못했습니다: {{message}}",
+  "resumeChoiceConverting": "세션을 {{provider}}로 변환하는 중…"
 }
