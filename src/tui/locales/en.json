@@ -113,8 +113,8 @@
   "hintLean": "Arrows move · Space skills · Tab SAFE/YOLO · L OMP LEAN · Enter select · ^C×2/Esc×2 quit",
   "compactHint": "←↑↓→ · Tab mode · L lean · ↵ select · ^C×2/Esc×2",
   "compactHintLean": "←↑↓→ · Space skills · L lean · ↵ select · ^C×2/Esc×2",
-  "resumeChoiceTitle": "RESUME SESSION",
+  "resumeChoiceTitle": "Which provider do you want to use?",
   "resumeChoiceHint": "↑↓ move · Enter resume · Esc back",
   "resumeChoiceProxy": "{{host}}",
-  "resumeChoiceLocal": "Local configuration"
+  "resumeChoiceLocal": "Local native"
 }

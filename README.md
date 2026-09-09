@@ -38,7 +38,7 @@ Existing OMP extensions continue to load in the zgap child. A required extension
 
 `zgap omp` supports launch and ACP sessions. Run OMP management commands such as `models`, `config`, and `plugin` with `omp` directly.
 
-`zgap resume` lists Codex, Claude Code, and OMP sessions. Choose a session, then pick with the arrow keys whether it resumes through the configured proxy host or with the agent's own local configuration. zgap passes only the session id from the directory where you ran it; each agent decides on its own whether to work there or in the directory recorded in the session.
+`zgap resume` lists Codex, Claude Code, and OMP sessions. Choose a session, then pick a provider with the arrow keys: the configured proxy host or the agent's local native setup. zgap passes only the session id from the directory where you ran it; each agent decides on its own whether to work there or in the directory recorded in the session.
 
 The session browser displays Scope, Agent, Provider, and Sort as rows of choices. Use `Tab` or `Shift+Tab` to move between the session list and filter rows, arrow keys to choose a row or value, and `Enter` to apply it. `Esc` cancels the pending filter choice. The initial view includes all worktrees and the parent repository, with the newest sessions first. Scope can also show only the current directory and its descendants, only the parent repository, or all projects. The parent repository is Git's main checkout; separate linked worktrees are excluded from directory-only and parent-only views, even when stored beneath those directories.
 

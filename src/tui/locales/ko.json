@@ -113,8 +113,8 @@
   "hintLean": "화살표 이동 · Space 스킬 · Tab SAFE/YOLO · L OMP LEAN · Enter 선택 · ^C×2/Esc×2 종료",
   "compactHint": "←↑↓→ · Tab 모드 · L lean · ↵ 선택 · ^C×2/Esc×2",
   "compactHintLean": "←↑↓→ · Space 스킬 · L lean · ↵ 선택 · ^C×2/Esc×2",
-  "resumeChoiceTitle": "세션 재개",
+  "resumeChoiceTitle": "어떤 프로바이더로 이용하시겠습니까?",
   "resumeChoiceHint": "↑↓ 이동 · Enter 재개 · Esc 뒤로",
   "resumeChoiceProxy": "{{host}}",
-  "resumeChoiceLocal": "로컬 설정"
+  "resumeChoiceLocal": "로컬 네이티브"
 }

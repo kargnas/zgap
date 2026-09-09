@@ -1078,23 +1078,23 @@ test("재개 선택 화면은 방향키로 프록시와 로컬을 고르고 Esc�
   setup.mockInput.pressEnter();
   await flush(setup);
   let frame = setup.captureCharFrame();
-  assert.match(frame, /RESUME SESSION/);
+  assert.match(frame, /Which provider do you want to use\?/);
   assert.match(frame, /CODEX {2}Add session switcher/);
   assert.match(frame, /›\s+proxy\.example\.test/);
-  assert.match(frame, /\n\s+Local configuration/);
+  assert.match(frame, /\n\s+Local native/);
   assert.match(frame, /↑↓ move · Enter resume · Esc back/);
 
   setup.mockInput.pressArrow("down");
   await flush(setup);
   frame = setup.captureCharFrame();
   assert.match(frame, /\n\s+proxy\.example\.test/);
-  assert.match(frame, /›\s+Local configuration/);
+  assert.match(frame, /›\s+Local native/);
 
   // Esc returns to the list without leaving the browser; the choice resets on the next Enter.
   setup.mockInput.pressEscape();
   await flush(setup);
   frame = setup.captureCharFrame();
-  assert.doesNotMatch(frame, /RESUME SESSION/);
+  assert.doesNotMatch(frame, /Which provider do you want to use\?/);
   assert.match(frame, /›\s+\[ \] CODEX · zgap {2}Add session switcher/);
   assert.equal(selections.length, 0);
 
