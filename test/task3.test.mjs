@@ -1552,3 +1552,66 @@ printf '#!/bin/sh\\nexit 0\\n' > ${bunInstall}/bin/bun
   assert.equal(code, 0, stderr);
   assert.equal(await readFile(sudoArgs, "utf8"), "apt-get\nupdate\napt-get\ninstall\n-y\nunzip\n");
 });
+
+test("installer confirms zgap is ready when Bun's bin directory is already on PATH", async (t) => {
+  const root = await tempDir(t);
+  const fakeBin = path.join(root, "bin");
+  await mkdir(fakeBin, { recursive: true });
+  await writeFile(path.join(fakeBin, "bun"), "#!/bin/sh\nexit 0\n");
+  await chmod(path.join(fakeBin, "bun"), 0o755);
+  const child = spawn("/bin/bash", [path.join(repoDir, "install.sh")], {
+    env: { PATH: fakeBin, BUN_INSTALL: root },
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (chunk) => { stdout += chunk; });
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  const [code] = await once(child, "exit");
+  assert.equal(code, 0, stderr);
+  assert.ok(stdout.includes(`Installed zgap to ${root}/bin/zgap.`), stdout);
+  assert.ok(stdout.includes("Run `zgap` to get started."), stdout);
+  assert.equal(stdout.includes("is not on your PATH"), false, stdout);
+});
+
+test("installer explains the PATH step when Bun's bin directory is missing from PATH", async (t) => {
+  const root = await tempDir(t);
+  const fakeBin = path.join(root, "bin");
+  const bunInstall = path.join(root, "bun-install");
+  await mkdir(fakeBin, { recursive: true });
+  await mkdir(path.join(bunInstall, "bin"), { recursive: true });
+  await writeFile(path.join(bunInstall, "bin", "bun"), "#!/bin/sh\nexit 0\n");
+  await chmod(path.join(bunInstall, "bin", "bun"), 0o755);
+  const child = spawn("/bin/bash", [path.join(repoDir, "install.sh")], {
+    env: { PATH: fakeBin, BUN_INSTALL: bunInstall, HOME: root, SHELL: "/bin/zsh" },
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (chunk) => { stdout += chunk; });
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  const [code] = await once(child, "exit");
+  assert.equal(code, 0, stderr);
+  assert.ok(stdout.includes(`${bunInstall}/bin is not on your PATH yet`), stdout);
+  assert.ok(stdout.includes("add this line to ~/.zshrc:"), stdout);
+  assert.ok(stdout.includes('  export PATH="$HOME/bun-install/bin:$PATH"'), stdout);
+});
+
+test("installer prints a fish snippet when the login shell is fish", async (t) => {
+  const root = await tempDir(t);
+  const fakeBin = path.join(root, "bin");
+  const bunInstall = path.join(root, "bun-install");
+  await mkdir(fakeBin, { recursive: true });
+  await mkdir(path.join(bunInstall, "bin"), { recursive: true });
+  await writeFile(path.join(bunInstall, "bin", "bun"), "#!/bin/sh\nexit 0\n");
+  await chmod(path.join(bunInstall, "bin", "bun"), 0o755);
+  const child = spawn("/bin/bash", [path.join(repoDir, "install.sh")], {
+    env: { PATH: fakeBin, BUN_INSTALL: bunInstall, SHELL: "/opt/homebrew/bin/fish" },
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (chunk) => { stdout += chunk; });
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  const [code] = await once(child, "exit");
+  assert.equal(code, 0, stderr);
+  assert.ok(stdout.includes("add this line to ~/.config/fish/config.fish:"), stdout);
+  assert.ok(stdout.includes(`  fish_add_path "${bunInstall}/bin"`), stdout);
+});

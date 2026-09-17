@@ -8,7 +8,7 @@
 curl -fsSL https://raw.githubusercontent.com/kargnas/zgap/main/install.sh | bash
 ```
 
-The installer adds `zgap` through Bun and installs Bun first when needed.
+The installer adds `zgap` through Bun and installs Bun first when needed. When it finishes, it reports where `zgap` was installed and, if Bun's bin directory is missing from your PATH, prints the line to add to your shell profile.
 Keep the global install pointed at GitHub for automatic updates. For local
 development, run `bun run bin/zgap.mjs` from the checkout instead of linking it
 into Bun's global dependencies; linked checkouts intentionally skip updates.
