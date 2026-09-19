@@ -231,11 +231,30 @@ function expectedProviderTargets(registrations) {
   return targets;
 }
 
+// OMP 18.0.3 returns provider headers synchronously; 18.2 resolves them asynchronously.
+async function providerHeaders(modelRegistry, provider) {
+  return await modelRegistry.getProviderHeaders(provider);
+}
+
+// OMP 18.0.3 stores eager `headers` on each model; 18.2 exposes a lazy `resolveHeaders(signal)`.
+async function modelHeaders(model) {
+  if (model.headers !== undefined) return model.headers;
+  return typeof model.resolveHeaders === "function" ? await model.resolveHeaders() : undefined;
+}
+
 function validTargetModel(model, expected) {
   const expectedBaseUrl = expected.apis[model.api];
   return expectedBaseUrl !== undefined
     && model.transport === undefined
     && model.baseUrl === expectedBaseUrl;
+}
+
+async function validProviderOwnership(modelRegistry, provider, expected, requiredFlagName) {
+  // getProviderBaseUrl returns the first model-defined baseUrl, so with mixed
+  // per-model endpoints any member of the expected set proves override ownership.
+  return expected.baseUrls.has(modelRegistry.getProviderBaseUrl(provider))
+    && modelRegistry.hasCommandBackedApiKey(provider)
+    && headerValue(await providerHeaders(modelRegistry, provider), "x-zgap-provider-override") === requiredFlagName;
 }
 
 async function validProviderRequest(ctx, expectedProviders, requiredFlagName) {
@@ -244,21 +263,18 @@ async function validProviderRequest(ctx, expectedProviders, requiredFlagName) {
   const expected = expectedProviders[provider];
   if (
     !validTargetModel(model, expected)
-    // getProviderBaseUrl returns the first model-defined baseUrl, so with mixed
-    // per-model endpoints any member of the expected set proves override ownership.
-    || !expected.baseUrls.has(modelRegistry.getProviderBaseUrl(provider))
-    || !modelRegistry.hasCommandBackedApiKey(provider)
-    || headerValue(modelRegistry.getProviderHeaders(provider), "x-zgap-provider-override") !== requiredFlagName
+    || !(await validProviderOwnership(modelRegistry, provider, expected, requiredFlagName))
   ) return false;
 
   const resolvedKey = await modelRegistry.getApiKey(model);
   if (typeof resolvedKey !== "string" || resolvedKey.trim().length === 0) return false;
-  if (headerValue(model.headers, "authorization") !== `Bearer ${resolvedKey}`) return false;
-  if (model.api === "anthropic-messages" && headerValue(model.headers, "x-api-key") !== resolvedKey) return false;
+  const headers = await modelHeaders(model);
+  if (headerValue(headers, "authorization") !== `Bearer ${resolvedKey}`) return false;
+  if (model.api === "anthropic-messages" && headerValue(headers, "x-api-key") !== resolvedKey) return false;
   return true;
 }
 
-function validTargetCatalog(modelRegistry, expectedProviders, requiredFlagName) {
+async function validTargetCatalog(modelRegistry, expectedProviders, requiredFlagName) {
   const seen = new Set();
   for (const model of modelRegistry.getAll()) {
     const expected = expectedProviders[model.provider];
@@ -267,12 +283,7 @@ function validTargetCatalog(modelRegistry, expectedProviders, requiredFlagName) 
     if (!validTargetModel(model, expected)) return false;
   }
   for (const provider of seen) {
-    const expected = expectedProviders[provider];
-    if (
-      !expected.baseUrls.has(modelRegistry.getProviderBaseUrl(provider))
-      || !modelRegistry.hasCommandBackedApiKey(provider)
-      || headerValue(modelRegistry.getProviderHeaders(provider), "x-zgap-provider-override") !== requiredFlagName
-    ) return false;
+    if (!(await validProviderOwnership(modelRegistry, provider, expectedProviders[provider], requiredFlagName))) return false;
   }
   return true;
 }
@@ -335,7 +346,7 @@ export function installOmpProviderCompat(pi, {
         return;
       }
       registerProviders((name, config) => ctx.modelRegistry.registerProvider(name, config), registrations);
-      if (!validTargetCatalog(ctx.modelRegistry, expectedProviders, requiredFlagName)) {
+      if (!(await validTargetCatalog(ctx.modelRegistry, expectedProviders, requiredFlagName))) {
         failClosed();
         return;
       }

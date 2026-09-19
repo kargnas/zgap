@@ -1408,6 +1408,123 @@ test("OMP provider refresh는 현재 thinking selector를 유지한다", async (
   }
 });
 
+test("OMP provider 검증은 18.2 async getProviderHeaders와 model.resolveHeaders를 지원한다", async () => {
+  const { installOmpProviderCompat } = await import("../src/omp-provider-compat.mjs");
+  const requiredFlagName = "zgap-provider-override-required-async-headers-test";
+  const origin = "https://proxy.example.test";
+  const codexBaseUrl = `${origin}/v1/responses?omp_endpoint=/codex/responses`;
+  const apiKey = "proxy-token";
+  const terminations = [];
+  const handlers = new Map();
+  const selectedModels = [];
+  // OMP 18.2 builds model headers lazily: no `headers` property, only `resolveHeaders(signal)`.
+  const lazyModel = (definition, headers) => ({
+    ...definition,
+    async resolveHeaders() {
+      return { ...headers };
+    },
+  });
+  const codexModel = lazyModel(
+    { id: "codex", provider: "zzgg", api: "openai-codex-responses", baseUrl: codexBaseUrl },
+    { Authorization: `Bearer ${apiKey}` },
+  );
+  const anthropicModel = lazyModel(
+    { id: "claude", provider: "zzgg", api: "anthropic-messages", baseUrl: origin },
+    { Authorization: `Bearer ${apiKey}`, "X-Api-Key": apiKey },
+  );
+  const registry = {
+    authStorage: {},
+    getProviderBaseUrl() {
+      return codexBaseUrl;
+    },
+    // OMP 18.2 resolves provider headers asynchronously.
+    async getProviderHeaders(provider) {
+      return provider === "zzgg" ? { "X-Zgap-Provider-Override": requiredFlagName } : undefined;
+    },
+    hasCommandBackedApiKey() {
+      return true;
+    },
+    async getApiKey() {
+      return apiKey;
+    },
+    registerProvider() {},
+    find(provider, id) {
+      return [codexModel, anthropicModel].find((model) => model.provider === provider && model.id === id);
+    },
+    getAll() {
+      return [codexModel, anthropicModel];
+    },
+  };
+
+  installOmpProviderCompat({
+    registerFlag() {},
+    registerProvider() {},
+    getThinkingLevel() {
+      return undefined;
+    },
+    setThinkingLevel() {},
+    async setModel(model) {
+      selectedModels.push(model);
+      return true;
+    },
+    on(event, handler) {
+      handlers.set(event, handler);
+    },
+  }, {
+    requiredFlagName,
+    env: {},
+    providers: [["zzgg", {
+      baseUrl: origin,
+      models: [
+        { id: "codex", api: "openai-codex-responses", baseUrl: codexBaseUrl },
+        { id: "claude", api: "anthropic-messages", baseUrl: origin },
+      ],
+    }]],
+    terminate(message) {
+      terminations.push(message);
+    },
+  });
+
+  await handlers.get("session_start")(
+    { type: "session_start" },
+    { model: codexModel, modelRegistry: registry, sessionManager: { getBranch() { return []; } } },
+  );
+  assert.deepEqual(terminations, []);
+  assert.deepEqual(selectedModels, [codexModel]);
+
+  const beforeProviderRequest = handlers.get("before_provider_request");
+  for (const model of [codexModel, anthropicModel]) {
+    await beforeProviderRequest({ type: "before_provider_request", payload: {} }, { model, modelRegistry: registry });
+  }
+  assert.deepEqual(terminations, []);
+
+  await beforeProviderRequest(
+    { type: "before_provider_request", payload: {} },
+    {
+      model: lazyModel(
+        { id: "claude", provider: "zzgg", api: "anthropic-messages", baseUrl: origin },
+        { Authorization: `Bearer ${apiKey}`, "X-Api-Key": "wrong-token" },
+      ),
+      modelRegistry: registry,
+    },
+  );
+  assert.equal(terminations.length, 1);
+
+  await beforeProviderRequest(
+    { type: "before_provider_request", payload: {} },
+    {
+      model: codexModel,
+      modelRegistry: {
+        ...registry,
+        async getProviderHeaders() {
+          return undefined;
+        },
+      },
+    },
+  );
+  assert.equal(terminations.length, 2);
+});
+
 test("OMP extension은 zzgg 단일 provider로 catalog 모델을 등록한다", async () => {
   const { authTokenCommand, registerProxyProviders, PROVIDER_NAME } = await import("../src/omp-provider-extension.mjs");
   const { decodeRequestContext, REQUEST_CONTEXT_HEADER } = await import("../src/request-context.mjs");
