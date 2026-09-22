@@ -408,6 +408,7 @@ export async function runSessionBrowser({
     let filterFocus = -1;
     let selectedIndex = 0;
     let selectedKey = null;
+    let selectionAnchor = null;
     // Partial scans can insert newer sessions above the first partial row, so untouched initial focus stays position-based.
     let preserveSelectionIdentity = false;
     let viewportStart = 0;
@@ -857,10 +858,22 @@ export async function runSessionBrowser({
       cleanup();
       Promise.resolve().then(() => onSelect(session, { native })).then(resolveResult, rejectResult);
     };
-    const select = (index) => {
+    const select = (index, { extend = false } = {}) => {
       const values = filteredSessions();
+      const nextIndex = Math.max(0, Math.min(Math.max(0, values.length - 1), index));
+      if (extend) {
+        const anchor = selectionAnchor ?? selectedIndex;
+        selectionAnchor = anchor;
+        const start = Math.min(anchor, nextIndex);
+        const end = Math.max(anchor, nextIndex);
+        for (const session of values.slice(start, end + 1)) {
+          if (convertible(session)) checked.add(session.id);
+        }
+      } else {
+        selectionAnchor = null;
+      }
       preserveSelectionIdentity = true;
-      selectedIndex = Math.max(0, Math.min(Math.max(0, values.length - 1), index));
+      selectedIndex = nextIndex;
       selectedKey = values[selectedIndex] ? sessionKey(values[selectedIndex]) : null;
       render();
     };
@@ -902,6 +915,30 @@ export async function runSessionBrowser({
         error = loadError;
         render();
       }
+    };
+    const applyFilterSelection = () => {
+      const scopeChanged = filterFocus === 0 && pendingScope !== scope;
+      const agentChanged = filterFocus === 1 && pendingAgent !== agent;
+      const providerChanged = filterFocus === 2 && pendingProvider !== provider;
+      const sortChanged = filterFocus === 3 && pendingSort !== sort;
+      const changed = scopeChanged || agentChanged || providerChanged || sortChanged;
+      if (filterFocus === 0) scope = pendingScope;
+      if (filterFocus === 1) agent = pendingAgent;
+      if (filterFocus === 2) provider = pendingProvider;
+      if (filterFocus === 3) sort = pendingSort;
+      selectionAnchor = null;
+      if (changed) {
+        selectedIndex = 0;
+        viewportStart = 0;
+        selectedKey = null;
+      }
+      if (scopeChanged) checked.clear();
+      pendingScope = scope;
+      pendingAgent = agent;
+      pendingProvider = provider;
+      pendingSort = sort;
+      if (scopeChanged && state !== "initializing") void load(scope);
+      else render();
     };
     const initialize = async () => {
       render();
@@ -946,6 +983,7 @@ export async function runSessionBrowser({
           pendingProvider = provider;
           pendingSort = sort;
           filterFocus = -1;
+          selectionAnchor = null;
           render();
           return;
         }
@@ -965,6 +1003,7 @@ export async function runSessionBrowser({
           render();
         } else if (checked.size > 0) {
           checked.clear();
+          selectionAnchor = null;
           render();
         } else finish(0);
         return;
@@ -1013,6 +1052,7 @@ export async function runSessionBrowser({
                 if (cachedScope !== scope) sessionCache.delete(cachedScope);
               }
               checked.clear();
+              selectionAnchor = null;
               recentlyConverted = new Set(toConvert.map((session) => session.id));
               if (convertMarkTimer !== null) clearTimer(convertMarkTimer);
               convertMarkTimer = startTimer(() => {
@@ -1111,11 +1151,7 @@ export async function runSessionBrowser({
         const row = rows[filterFocus];
         if (!row) { filterFocus = 0; render(); return; }
         if (event.name === "tab") {
-          if (event.shift) {
-            filterFocus = filterFocus === 0 ? -1 : filterFocus - 1;
-          } else {
-            filterFocus = filterFocus === rows.length - 1 ? -1 : filterFocus + 1;
-          }
+          filterFocus = -1;
           pendingScope = scope;
           pendingAgent = agent;
           pendingProvider = provider;
@@ -1125,10 +1161,6 @@ export async function runSessionBrowser({
         }
         if ((event.name === "up" || event.name === "down") && !event.shift) {
           filterFocus = event.name === "up" ? (filterFocus + rows.length - 1) % rows.length : (filterFocus + 1) % rows.length;
-          pendingScope = scope;
-          pendingAgent = agent;
-          pendingProvider = provider;
-          pendingSort = sort;
           render();
           return;
         }
@@ -1140,35 +1172,15 @@ export async function runSessionBrowser({
           render();
           return;
         }
-        if (event.name === "return") {
-          const scopeChanged = filterFocus === 0 && pendingScope !== scope;
-          const agentChanged = filterFocus === 1 && pendingAgent !== agent;
-          const providerChanged = filterFocus === 2 && pendingProvider !== provider;
-          const sortChanged = filterFocus === 3 && pendingSort !== sort;
-          const changed = scopeChanged || agentChanged || providerChanged || sortChanged;
-          if (filterFocus === 0) scope = pendingScope;
-          if (filterFocus === 1) agent = pendingAgent;
-          if (filterFocus === 2) provider = pendingProvider;
-          if (filterFocus === 3) sort = pendingSort;
-          filterFocus = -1;
-          if (changed) {
-            selectedIndex = 0;
-            viewportStart = 0;
-            selectedKey = null;
-          }
-          if (scopeChanged) checked.clear();
-          pendingScope = scope;
-          pendingAgent = agent;
-          pendingProvider = provider;
-          pendingSort = sort;
-          if (scopeChanged && state !== "initializing") void load(scope);
-          else render();
+        if (event.name === "space") {
+          applyFilterSelection();
           return;
         }
         return;
       }
       if (event.name === "r") {
         sessionCache.delete(scope);
+        selectionAnchor = null;
         // A refresh rereads the database, which now owns the converted providers.
         convertedProviders.clear();
         void load(scope, { refresh: true });
@@ -1192,6 +1204,7 @@ export async function runSessionBrowser({
           showNotice(t("resumeNotConvertible"));
           return;
         }
+        selectionAnchor = null;
         if (!checked.delete(session.id)) checked.add(session.id);
         render();
         return;
@@ -1203,6 +1216,7 @@ export async function runSessionBrowser({
           return;
         }
         convertSessions = chosen;
+        selectionAnchor = null;
         // Keep the row object, not its key: conversion rewrites provider and sessionKey embeds it.
         convertReturnSession = filteredSessions()[selectedIndex] ?? null;
         convertTargets = knownCodexProviders(sessions).filter((target) => chosen.some((session) => session.provider !== target));
@@ -1252,12 +1266,12 @@ export async function runSessionBrowser({
       }
       if (["up", "down", "j", "k", "pageup", "pagedown", "home", "end"].includes(event.name)) {
         const delta = event.name === "down" || event.name === "j" ? 1 : -1;
-        if (event.name === "home") select(0);
-        else if (event.name === "end") select(filteredSessions().length - 1);
+        if (event.name === "home") select(0, { extend: event.shift });
+        else if (event.name === "end") select(filteredSessions().length - 1, { extend: event.shift });
         else if (["pageup", "pagedown"].includes(event.name)) {
           const direction = event.name === "pageup" ? -1 : 1;
-          select(selectedIndex + direction * visibleRows());
-        } else select(selectedIndex + delta);
+          select(selectedIndex + direction * visibleRows(), { extend: event.shift });
+        } else select(selectedIndex + delta, { extend: event.shift });
       }
     };
     renderer.keyInput.on("keypress", keyHandler);

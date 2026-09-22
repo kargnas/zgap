@@ -11,13 +11,16 @@ async function waitForFrame(setup, predicate) {
 }
 
 async function applyFilter(setup, rowIndex, optionIndex, currentIndex = 0) {
-  setup.mockInput.pressTab();
+  const filterFocused = /(?:Scope|Agent|Provider|Sort):.*\[[○●]/.test(setup.captureCharFrame());
+  if (!filterFocused) setup.mockInput.pressTab();
   for (let index = 0; index < rowIndex; index += 1) setup.mockInput.pressArrow("down");
   const delta = optionIndex - currentIndex;
   for (let index = 0; index < Math.abs(delta); index += 1) {
     setup.mockInput.pressArrow(delta < 0 ? "left" : "right");
   }
-  setup.mockInput.pressEnter();
+  setup.mockInput.pressKey(" ");
+  await flush(setup);
+  setup.mockInput.pressTab();
   await flush(setup);
 }
 
@@ -94,10 +97,15 @@ test("필터 매트릭스는 행을 오가며 후보를 적용 전까지 보류�
   assert.equal(loads, 1);
   setup.mockInput.pressEnter();
   await flush(setup);
+  assert.match(setup.captureCharFrame(), /Review parser/);
+  setup.mockInput.pressKey(" ");
+  await flush(setup);
   frame = setup.captureCharFrame();
+  assert.match(frame, /Scope:.*\[● This directory\]/);
   assert.match(frame, /This directory/);
   assert.doesNotMatch(frame, /Review parser/);
   assert.equal(loads, 2);
+  setup.mockInput.pressTab();
   await setup.mockInput.pressBackspace();
   assert.equal(await result, 0);
 });
@@ -858,6 +866,44 @@ test("session browser는 Page Up/Down, Home, End로 목록을 이동한다", asy
   assert.equal(await result, 0);
 });
 
+test("필터는 Tab으로 섹션을 오가고 Shift 이동키는 세션 범위를 선택한다", async (t) => {
+  const { createTestRenderer } = await import("@opentui/core/testing");
+  const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
+  const setup = await createTestRenderer({ width: 100, height: 16 });
+  t.after(() => setup.renderer.destroy());
+  const rangeSessions = Array.from({ length: 7 }, (_, index) => ({
+    ...sessions[0],
+    id: `range-${index}`,
+    cwd: "/repo",
+    title: `Range ${index + 1}`,
+  }));
+
+  const result = runSessionBrowser({
+    rendererFactory: async () => setup,
+    discoverScope: async () => ({ roots: ["/repo"] }),
+    sessionLoader: async () => rangeSessions,
+  });
+  await flush(setup);
+
+  setup.mockInput.pressTab();
+  await flush(setup);
+  assert.match(setup.captureCharFrame(), /Scope:.*\[.*\]/);
+  setup.mockInput.pressTab();
+  await flush(setup);
+  assert.doesNotMatch(setup.captureCharFrame(), /Scope: \[.*\]/);
+
+  setup.mockInput.pressArrow("down", { shift: true });
+  await flush(setup);
+  assert.match(setup.captureCharFrame(), /2 selected/);
+  setup.mockInput.pressKey("\x1b[F", { shift: true });
+  await flush(setup);
+  assert.match(setup.captureCharFrame(), /7 selected/);
+
+  await setup.mockInput.pressBackspace();
+  await setup.mockInput.pressBackspace();
+  assert.equal(await result, 0);
+});
+
 test("session browser는 Right로 첫 U/A와 마지막 U/A를 미리 본다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
@@ -1483,7 +1529,7 @@ test("session browser는 ? 키로 단축키 화면을 열고 닫는다", async (
   assert.match(frame, /Home\/End/);
   assert.match(frame, /→ preview/);
   assert.match(frame, /Space check · c convert/);
-  assert.match(frame, /Enter apply · Esc cancel/);
+  assert.match(frame, /Space apply · Esc cancel/);
   assert.match(frame, /\^C×2 quit/);
   assert.doesNotMatch(frame, /Add session switcher/);
 
@@ -1646,7 +1692,7 @@ test("session browser는 repo를 먼저 읽고 All 전환 시 전체 session을 
   setup.mockInput.pressArrow("right");
   setup.mockInput.pressArrow("right");
   setup.mockInput.pressArrow("right");
-  setup.mockInput.pressEnter();
+  setup.mockInput.pressKey(" ");
   await flush(setup);
   assert.deepEqual(calls, ["repo", "all"]);
   assert.match(setup.captureCharFrame(), /Loading sessions/);
@@ -1688,7 +1734,7 @@ test("session browser는 repository scope 탐색 중 All 전환을 유지한다"
   setup.mockInput.pressArrow("right");
   setup.mockInput.pressArrow("right");
   setup.mockInput.pressArrow("right");
-  setup.mockInput.pressEnter();
+  setup.mockInput.pressKey(" ");
   scope.resolve({ roots: ["/repo"] });
   await flush(setup);
 
@@ -1697,6 +1743,7 @@ test("session browser는 repository scope 탐색 중 All 전환을 유지한다"
   assert.match(frame, /Scope:.*All projects/);
   assert.match(frame, /Investigate auth/);
 
+  setup.mockInput.pressTab();
   await setup.mockInput.pressBackspace();
   assert.equal(await result, 0);
 });
@@ -1784,7 +1831,7 @@ test("session browser는 root Esc 한 번으로 뒤로 간다", async (t) => {
   ]), 0);
 });
 
-test("필터 행은 ShiftTab으로 목록과 순환하고 수정자 입력은 무시한다", async (t) => {
+test("필터 섹션은 Tab으로 목록과 이동하고 수정자 입력은 무시한다", async (t) => {
   const { createTestRenderer } = await import("@opentui/core/testing");
   const { runSessionBrowser } = await import("../src/tui/session-browser.mjs");
   const setup = await createTestRenderer({ width: 100, height: 24 });
