@@ -1238,7 +1238,7 @@ const args = process.argv.slice(2);
 if (args[0] === "--version") { process.stdout.write("omp/18.0.3\\n"); process.exit(0); }
 process.stdout.write(JSON.stringify({
   argv: args,
-  env: Object.fromEntries(["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "OPENAI_API_KEY", "OPENAI_BASE_URL", "ZGAP_API_KEY", "PI_CODEX_WEBSOCKET", "HOME", "OMP_PROFILE", "PI_CONFIG_DIR", "OMP_SKIP_SETUP"].map((key) => [key, process.env[key] ?? null])),
+  env: Object.fromEntries(["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "OPENAI_API_KEY", "OPENAI_BASE_URL", "ZGAP_API_KEY", "PI_CODEX_WEBSOCKET", "HOME", "OMP_PROFILE", "PI_CONFIG_DIR", "OMP_SKIP_SETUP", "ZGAP_OMP_CLIENT_VERSION"].map((key) => [key, process.env[key] ?? null])),
 
 }));
 process.exitCode = 5;
@@ -1288,6 +1288,7 @@ process.exitCode = 5;
     OMP_PROFILE: "work",
     PI_CONFIG_DIR: path.join(root, "omp-config"),
     OMP_SKIP_SETUP: "1",
+    ZGAP_OMP_CLIENT_VERSION: "18.0.3",
   });
 
   const userSkipResult = await runCli(["omp", "--print", "hello"], { ...cliEnv, OMP_SKIP_SETUP: "0" });
