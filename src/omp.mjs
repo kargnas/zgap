@@ -122,7 +122,11 @@ export async function runOmp(launchArgs, {
       // re-readable for the whole run. Fail here instead of inside OMP when it is missing.
       await resolveAccessToken({ credentialFile: credentialsPath(configDir) });
       abortIfSignaled();
-      assertOmpVersion(await readOmpVersion(ompPath, env));
+      const ompVersion = await readOmpVersion(ompPath, env);
+      assertOmpVersion(ompVersion);
+      // The proxy's catalog is version-gated; passing the real OMP version keeps
+      // newly supported models visible instead of selecting a fuzzy legacy mirror.
+      env.ZGAP_OMP_CLIENT_VERSION = ompVersion;
       abortIfSignaled();
       // This random flag exists only if this exact extension loaded; otherwise OMP's second parse rejects it.
       proxyArgs.push("-e", OMP_EXTENSION_FILE, createOmpProviderHandshakeArgument());
