@@ -4,8 +4,8 @@ import { constants as fsConstants } from "node:fs";
 import { realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ORIGIN } from "./constants.mjs";
-import { credentialsPath, defaultConfigDir } from "./credentials.mjs";
+import { ORIGIN, REQUEST_TIMEOUT_MS } from "./constants.mjs";
+import { credentialsPath, defaultConfigDir, resolveAccessToken } from "./credentials.mjs";
 import { createRequestContext, requestContextHeaders, resumeSessionId } from "./request-context.mjs";
 
 const CLI_FILE = realpathSync(fileURLToPath(new URL("../bin/zgap.mjs", import.meta.url)));
@@ -29,14 +29,34 @@ const CLEARED_ENV = [
   "CLAUDE_CODE_USE_FOUNDRY", "CLAUDE_CODE_USE_GATEWAY", "CLAUDE_CODE_USE_MANTLE", "CLAUDE_CODE_USE_ANTHROPIC_AWS",
   "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD", "CLAUDE_CODE_USE_CCR_V2", "CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST",
 ];
-function claudeSettingsEnv(origin, requestHeaders) {
+const MODEL_ALIASES = [
+  ["ANTHROPIC_DEFAULT_OPUS_MODEL", "claude-opus-"],
+  ["ANTHROPIC_DEFAULT_SONNET_MODEL", "claude-sonnet-"],
+  ["ANTHROPIC_DEFAULT_FABLE_MODEL", "claude-fable-"],
+];
+
+async function fetchClaudeModels(configDir, origin) {
+  const url = new URL("/v1/models", origin);
+  url.searchParams.set("flavor", "anthropic");
+  const token = await resolveAccessToken({ credentialFile: credentialsPath(configDir) });
+  const response = await fetch(url, {
+    headers: { "x-api-key": token },
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  const catalog = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(`Claude model catalog request failed (${response.status}).`);
+  if (!Array.isArray(catalog?.data) || catalog.data.length === 0
+    || catalog.data.some((model) => typeof model?.id !== "string" || !model.id.trim())) {
+    throw new Error("Claude model catalog returned an invalid response.");
+  }
+  return catalog.data;
+}
+
+function claudeSettingsEnv(origin, requestHeaders, modelAliases) {
   return {
     ...Object.fromEntries(CLEARED_ENV.map((name) => [name, ""])),
     ANTHROPIC_BASE_URL: origin,
-    ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-5[1m]",
-    ANTHROPIC_DEFAULT_SONNET_MODEL: "claude-sonnet-5[1m]",
-    // Claude Code hides Fable from the /advisor picker unless this is set or the base URL is api.anthropic.com.
-    ANTHROPIC_DEFAULT_FABLE_MODEL: "claude-fable-5-1[1m]",
+    ...modelAliases,
     CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
     CLAUDE_CODE_MAX_CONTEXT_TOKENS: "262144",
     CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK: "1",
@@ -102,29 +122,39 @@ export async function runClaude(args, {
   }
   const env = { ...process.env };
   const proxyArgs = [];
-  // A native launch is the user's own Claude Code: its environment and settings stay untouched.
-  if (!native) {
-    for (const name of CLEARED_ENV) delete env[name];
-    const requestHeaders = requestContextHeaders(createRequestContext({
-      tool: "claude",
-      cwd,
-      sessionId: resumeSessionId(args),
-    }));
-    env.ANTHROPIC_BASE_URL = origin;
-    env.ANTHROPIC_DEFAULT_OPUS_MODEL = "claude-opus-5[1m]";
-    env.ANTHROPIC_DEFAULT_SONNET_MODEL = "claude-sonnet-5[1m]";
-    env.ANTHROPIC_DEFAULT_FABLE_MODEL = "claude-fable-5-1[1m]";
-    env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY = "1";
-    env.CLAUDE_CODE_MAX_CONTEXT_TOKENS = "262144";
-    env.ANTHROPIC_CUSTOM_HEADERS = Object.entries(requestHeaders).map(([key, value]) => `${key}: ${value}`).join("\n");
-    proxyArgs.push("--settings", JSON.stringify({ apiKeyHelper: apiKeyHelper(credentialsPath(configDir)), env: claudeSettingsEnv(origin, requestHeaders) }));
-  }
   const abortIfSignaled = () => {
     if (receivedSignal) throw new Error(`runClaude interrupted by ${receivedSignal}`);
   };
   try {
     const claudePath = await resolveClaudeExecutable({ env, cwd });
     abortIfSignaled();
+    // A native launch is the user's own Claude Code: its environment and settings stay untouched.
+    const informational = args.some((arg) => ["--help", "-h", "--version", "-v"].includes(arg));
+    if (!native && !informational) {
+      const models = await fetchClaudeModels(configDir, origin);
+      abortIfSignaled();
+      for (const name of CLEARED_ENV) delete env[name];
+      for (const [name] of MODEL_ALIASES) delete env[name];
+      // Claude Code needs the family aliases for its built-in model and advisor pickers.
+      const modelAliases = Object.fromEntries(MODEL_ALIASES.flatMap(([name, prefix]) => {
+        const model = models.find(({ id }) => id.startsWith(prefix));
+        return model ? [[name, model.id]] : [];
+      }));
+      const requestHeaders = requestContextHeaders(createRequestContext({
+        tool: "claude",
+        cwd,
+        sessionId: resumeSessionId(args),
+      }));
+      env.ANTHROPIC_BASE_URL = origin;
+      Object.assign(env, modelAliases);
+      env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY = "1";
+      env.CLAUDE_CODE_MAX_CONTEXT_TOKENS = "262144";
+      env.ANTHROPIC_CUSTOM_HEADERS = Object.entries(requestHeaders).map(([key, value]) => `${key}: ${value}`).join("\n");
+      proxyArgs.push("--settings", JSON.stringify({ apiKeyHelper: apiKeyHelper(credentialsPath(configDir)), env: claudeSettingsEnv(origin, requestHeaders, modelAliases) }));
+      const hasSelectedModel = args.some((arg) => arg === "--model" || arg.startsWith("--model=")) || env.ANTHROPIC_MODEL;
+      const isResuming = args.some((arg) => ["--resume", "-r", "--continue", "-c"].includes(arg) || arg.startsWith("--resume="));
+      if (!hasSelectedModel && !isResuming) proxyArgs.push("--model", models[0].id);
+    }
     return await new Promise((resolve, reject) => {
       child = spawn(claudePath, [
         ...proxyArgs,

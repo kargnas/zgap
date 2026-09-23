@@ -1020,7 +1020,7 @@ else writeFileSync(process.env.FAKE_CODEX_MARKER, "ran");
   assert.equal(await readFile(path.join(codexHome, "config.toml"), "utf8"), existingConfig);
 });
 
-test("claude는 gateway 환경과 apiKeyHelper 설정만 프로세스에 주입한다", async (t) => {
+test("claude는 gateway 목록 첫 모델과 계열별 별칭을 실행 시 선택한다", async (t) => {
   const root = await tempDir(t);
   const home = path.join(root, "home");
   const configRoot = path.join(root, "config");
@@ -1029,9 +1029,34 @@ test("claude는 gateway 환경과 apiKeyHelper 설정만 프로세스에 주입�
   const marker = path.join(root, "claude.json");
   await mkdir(configDir, { recursive: true });
   await mkdir(fakeBin, { recursive: true });
+  const origin = "https://proxy.example.test";
+  const accessToken = jwt("old@example.com", "claude", origin);
+  let models = [
+    { id: "claude-fable-5-1[1m]" },
+    { id: "claude-opus-5-5[1m]" },
+    { id: "claude-opus-5[1m]" },
+    { id: "claude-sonnet-5[1m]" },
+  ];
+  let modelRequest;
+  const gateway = createServer((request, response) => {
+    modelRequest = { url: request.url, apiKey: request.headers["x-api-key"] };
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ data: models }));
+  });
+  gateway.listen(0, "127.0.0.1");
+  await once(gateway, "listening");
+  t.after(() => gateway.close());
+  const fetchRedirectModule = await installGatewayFetchRedirect(t, gateway.address().port, [origin]);
   await writeFile(path.join(configDir, "config.yml"), "host: proxy.example.test\n");
   await writeFile(path.join(configDir, "preferences.json"), '{"dangerousMode":true}\n');
-  await writeFile(path.join(configDir, "credentials.json"), "{}");
+  await writeFile(path.join(configDir, "credentials.json"), JSON.stringify({
+    access_expires_at: "2099-01-02T00:00:00.000Z",
+    access_token: accessToken,
+    device_id: "d".repeat(43),
+    origin,
+    refresh_expires_at: "2099-01-05T00:00:00.000Z",
+    refresh_token: REFRESH_OLD,
+  }), { mode: 0o600 });
   const fakeClaude = path.join(fakeBin, "claude");
   await writeFile(fakeClaude, `#!/usr/bin/env node
 import { writeFileSync } from "node:fs";
@@ -1042,19 +1067,21 @@ writeFileSync(process.env.FAKE_CLAUDE_MARKER, JSON.stringify({
 process.exitCode = 7;
 `);
   await chmod(fakeClaude, 0o755);
-  const cliEnv = { HOME: home, XDG_CONFIG_HOME: configRoot, PATH: `${fakeBin}${path.delimiter}${process.env.PATH}`, FAKE_CLAUDE_MARKER: marker, ANTHROPIC_BASE_URL: "https://wrong.example", ANTHROPIC_API_KEY: "wrong-key", ANTHROPIC_AUTH_TOKEN: "wrong-token", ANTHROPIC_FOUNDRY_API_KEY: "wrong-key", CLAUDE_CODE_API_BASE_URL: "https://wrong.example", CLAUDE_CODE_PROXY_URL: "https://wrong.example", CLAUDE_CODE_SESSION_ACCESS_TOKEN: "wrong-token", CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST: "1", CLAUDE_CODE_USE_BEDROCK: "1", CLAUDE_CONFIG_DIR: path.join(root, "wrong-claude") };
+  const cliEnv = { HOME: home, XDG_CONFIG_HOME: configRoot, PATH: `${fakeBin}${path.delimiter}${process.env.PATH}`, NODE_OPTIONS: `--import=${fetchRedirectModule}`, FAKE_CLAUDE_MARKER: marker, ANTHROPIC_BASE_URL: "https://wrong.example", ANTHROPIC_API_KEY: "wrong-key", ANTHROPIC_AUTH_TOKEN: "wrong-token", ANTHROPIC_FOUNDRY_API_KEY: "wrong-key", CLAUDE_CODE_API_BASE_URL: "https://wrong.example", CLAUDE_CODE_PROXY_URL: "https://wrong.example", CLAUDE_CODE_SESSION_ACCESS_TOKEN: "wrong-token", CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST: "1", CLAUDE_CODE_USE_BEDROCK: "1", CLAUDE_CONFIG_DIR: path.join(root, "wrong-claude") };
   const result = await runCli(["claude", "--print", "hello"], cliEnv);
   assert.equal(result.code, 7, result.stderr);
+  assert.deepEqual(modelRequest, { url: "/v1/models?flavor=anthropic", apiKey: accessToken });
   const invocation = JSON.parse(await readFile(marker, "utf8"));
   assert.equal(invocation.argv.includes("--dangerously-skip-permissions"), true);
   assert.deepEqual(invocation.argv.slice(-2), ["--print", "hello"]);
   const settingsIndex = invocation.argv.indexOf("--settings");
   assert.ok(settingsIndex >= 0);
+  assert.deepEqual(invocation.argv.slice(settingsIndex + 2, settingsIndex + 4), ["--model", "claude-fable-5-1[1m]"]);
   const settings = JSON.parse(invocation.argv[settingsIndex + 1]);
   assert.match(settings.apiKeyHelper, /auth-token/);
   assert.match(settings.apiKeyHelper, /credentials\.json/);
   assert.equal(settings.env.ANTHROPIC_BASE_URL, "https://proxy.example.test");
-  assert.equal(settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL, "claude-opus-5[1m]");
+  assert.equal(settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL, "claude-opus-5-5[1m]");
   assert.equal(settings.env.ANTHROPIC_DEFAULT_SONNET_MODEL, "claude-sonnet-5[1m]");
   assert.equal(settings.env.ANTHROPIC_DEFAULT_FABLE_MODEL, "claude-fable-5-1[1m]");
   assert.equal(settings.env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY, "1");
@@ -1077,7 +1104,7 @@ process.exitCode = 7;
   assert.equal(invocation.env.ANTHROPIC_API_KEY, null);
   assert.equal(invocation.env.ANTHROPIC_AUTH_TOKEN, null);
   assert.equal(invocation.env.ANTHROPIC_FOUNDRY_API_KEY, null);
-  assert.equal(invocation.env.ANTHROPIC_DEFAULT_OPUS_MODEL, "claude-opus-5[1m]");
+  assert.equal(invocation.env.ANTHROPIC_DEFAULT_OPUS_MODEL, "claude-opus-5-5[1m]");
   assert.equal(invocation.env.ANTHROPIC_DEFAULT_SONNET_MODEL, "claude-sonnet-5[1m]");
   assert.equal(invocation.env.ANTHROPIC_DEFAULT_FABLE_MODEL, "claude-fable-5-1[1m]");
   assert.equal(invocation.env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY, "1");
@@ -1091,9 +1118,35 @@ process.exitCode = 7;
   assert.equal(invocation.env.CLAUDE_CONFIG_DIR, path.join(root, "wrong-claude"));
 
   await writeFile(path.join(configDir, "preferences.json"), '{"dangerousMode":false}\n');
+  models = [models[1], models[0], ...models.slice(2)];
   const safeResult = await runCli(["claude", "--print", "hello"], cliEnv);
   assert.equal(safeResult.code, 7, safeResult.stderr);
-  assert.equal(JSON.parse(await readFile(marker, "utf8")).argv.includes("--dangerously-skip-permissions"), false);
+  const safeInvocation = JSON.parse(await readFile(marker, "utf8"));
+  assert.equal(safeInvocation.argv.includes("--dangerously-skip-permissions"), false);
+  assert.deepEqual(safeInvocation.argv.slice(2, 4), ["--model", "claude-opus-5-5[1m]"]);
+
+  const explicitResult = await runCli(["claude", "--model", "claude-sonnet-5[1m]"], cliEnv);
+  assert.equal(explicitResult.code, 7, explicitResult.stderr);
+  const explicitInvocation = JSON.parse(await readFile(marker, "utf8"));
+  assert.equal(explicitInvocation.argv.filter((arg) => arg === "--model").length, 1);
+  assert.deepEqual(explicitInvocation.argv.slice(-2), ["--model", "claude-sonnet-5[1m]"]);
+
+  const resumeResult = await runCli(["claude", "--resume", "session-id"], cliEnv);
+  assert.equal(resumeResult.code, 7, resumeResult.stderr);
+  const resumeInvocation = JSON.parse(await readFile(marker, "utf8"));
+  assert.equal(resumeInvocation.argv.includes("--model"), false);
+  assert.deepEqual(resumeInvocation.argv.slice(-2), ["--resume", "session-id"]);
+
+  models = [];
+  await rm(marker);
+  const invalidResult = await runCli(["claude"], cliEnv);
+  assert.equal(invalidResult.code, 1);
+  assert.match(invalidResult.stderr, /Claude model catalog returned an invalid response/);
+  await assert.rejects(access(marker), { code: "ENOENT" });
+
+  const versionResult = await runCli(["claude", "--version"], cliEnv);
+  assert.equal(versionResult.code, 7, versionResult.stderr);
+  assert.deepEqual(JSON.parse(await readFile(marker, "utf8")).argv, ["--version"]);
 });
 
 test("claude는 사용자 --settings를 거부한다", async (t) => {
