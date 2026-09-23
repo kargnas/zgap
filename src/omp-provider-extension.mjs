@@ -263,7 +263,8 @@ export default async function zgapProxy(pi) {
   const configDir = defaultConfigDir();
   const { origin } = await readProxyConfig(configDir);
   const credentialFile = credentialsPath(configDir);
-  const { models } = await fetchModelCatalog(await resolveAccessToken({ credentialFile }), "omp", origin);
+  const clientVersion = process.env.ZGAP_OMP_CLIENT_VERSION ?? "omp";
+  const { models } = await fetchModelCatalog(await resolveAccessToken({ credentialFile }), clientVersion, origin);
   registerProxyProviders(pi, {
     origin,
     apiKey: authTokenCommand(credentialFile),
