@@ -151,9 +151,6 @@ export async function runClaude(args, {
       env.CLAUDE_CODE_MAX_CONTEXT_TOKENS = "262144";
       env.ANTHROPIC_CUSTOM_HEADERS = Object.entries(requestHeaders).map(([key, value]) => `${key}: ${value}`).join("\n");
       proxyArgs.push("--settings", JSON.stringify({ apiKeyHelper: apiKeyHelper(credentialsPath(configDir)), env: claudeSettingsEnv(origin, requestHeaders, modelAliases) }));
-      const hasSelectedModel = args.some((arg) => arg === "--model" || arg.startsWith("--model=")) || env.ANTHROPIC_MODEL;
-      const isResuming = args.some((arg) => ["--resume", "-r", "--continue", "-c"].includes(arg) || arg.startsWith("--resume="));
-      if (!hasSelectedModel && !isResuming) proxyArgs.push("--model", models[0].id);
     }
     return await new Promise((resolve, reject) => {
       child = spawn(claudePath, [

@@ -1020,7 +1020,7 @@ else writeFileSync(process.env.FAKE_CODEX_MARKER, "ran");
   assert.equal(await readFile(path.join(codexHome, "config.toml"), "utf8"), existingConfig);
 });
 
-test("claude는 gateway 목록 첫 모델과 계열별 별칭을 실행 시 선택한다", async (t) => {
+test("claude는 gateway 목록으로 계열별 별칭만 채우고 모델 선택은 Claude Code에 맡긴다", async (t) => {
   const root = await tempDir(t);
   const home = path.join(root, "home");
   const configRoot = path.join(root, "config");
@@ -1076,7 +1076,8 @@ process.exitCode = 7;
   assert.deepEqual(invocation.argv.slice(-2), ["--print", "hello"]);
   const settingsIndex = invocation.argv.indexOf("--settings");
   assert.ok(settingsIndex >= 0);
-  assert.deepEqual(invocation.argv.slice(settingsIndex + 2, settingsIndex + 4), ["--model", "claude-fable-5-1[1m]"]);
+  // Claude Code's Default and the model saved by /model must apply, so zgap never passes --model.
+  assert.equal(invocation.argv.includes("--model"), false);
   const settings = JSON.parse(invocation.argv[settingsIndex + 1]);
   assert.match(settings.apiKeyHelper, /auth-token/);
   assert.match(settings.apiKeyHelper, /credentials\.json/);
@@ -1118,24 +1119,10 @@ process.exitCode = 7;
   assert.equal(invocation.env.CLAUDE_CONFIG_DIR, path.join(root, "wrong-claude"));
 
   await writeFile(path.join(configDir, "preferences.json"), '{"dangerousMode":false}\n');
-  models = [models[1], models[0], ...models.slice(2)];
   const safeResult = await runCli(["claude", "--print", "hello"], cliEnv);
   assert.equal(safeResult.code, 7, safeResult.stderr);
   const safeInvocation = JSON.parse(await readFile(marker, "utf8"));
   assert.equal(safeInvocation.argv.includes("--dangerously-skip-permissions"), false);
-  assert.deepEqual(safeInvocation.argv.slice(2, 4), ["--model", "claude-opus-5-5[1m]"]);
-
-  const explicitResult = await runCli(["claude", "--model", "claude-sonnet-5[1m]"], cliEnv);
-  assert.equal(explicitResult.code, 7, explicitResult.stderr);
-  const explicitInvocation = JSON.parse(await readFile(marker, "utf8"));
-  assert.equal(explicitInvocation.argv.filter((arg) => arg === "--model").length, 1);
-  assert.deepEqual(explicitInvocation.argv.slice(-2), ["--model", "claude-sonnet-5[1m]"]);
-
-  const resumeResult = await runCli(["claude", "--resume", "session-id"], cliEnv);
-  assert.equal(resumeResult.code, 7, resumeResult.stderr);
-  const resumeInvocation = JSON.parse(await readFile(marker, "utf8"));
-  assert.equal(resumeInvocation.argv.includes("--model"), false);
-  assert.deepEqual(resumeInvocation.argv.slice(-2), ["--resume", "session-id"]);
 
   models = [];
   await rm(marker);
