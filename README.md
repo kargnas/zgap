@@ -43,6 +43,22 @@ The first proxy-backed command creates `config.yml` when it is missing. The file
 
 Codex, Claude Code, and OMP are currently supported. Existing local configuration and session history remain in their normal locations. `zgap omp` loads its provider override only in the launched OMP process: the server model catalog and context-window metadata populate the `openai-codex` and `anthropic` providers, their requests use the configured proxy, direct official usage checks for those providers are disabled, and a regular `omp` process remains unchanged. The standalone `zgap omp usage` command is rejected.
 
+Put every `-c` / `--config` option **before** `exec` or other Codex subcommands:
+
+```sh
+zgap codex -c check_for_update_on_startup=false exec "your prompt"
+```
+
+These overrides after a subcommand can replace zgap's injected proxy settings in Codex,
+causing direct OpenAI requests and 401 errors. The session provider should be
+`zgap`. `zgap codex --help` and `zgap codex -h` show this guidance before Codex's
+own help, without requiring login or contacting the proxy.
+
+zgap passes exported `AWS_*` variables to Codex. Commands run by Codex also follow
+its `shell_environment_policy`; if a shell tool cannot see an exported key, check
+that policy before copying credentials into another file. See the
+[Codex configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference).
+
 `zgap claude` reads the proxy's Claude model catalog at launch and points the Opus, Sonnet, and Fable aliases at their first matching catalog entries. The model itself follows Claude Code's own selection, so Default and a model saved with `/model` apply as usual. Catalog errors stop the launch.
 
 Existing OMP extensions continue to load in the zgap child. A required extension handshake aborts startup before a session can run if the proxy override cannot load. The child also skips OMP's first-run setup wizard via `OMP_SKIP_SETUP=1` because the proxy already supplies its providers and models; exporting `OMP_SKIP_SETUP` yourself takes precedence. It also receives `ZGAP_RUNTIME`, the script runtime that resolves the proxy access token, because OMP runs as a single-file executable whose own `process.execPath` cannot run the zgap CLI.

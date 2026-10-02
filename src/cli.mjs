@@ -26,6 +26,13 @@ import { runLoginMenu, runStartMenu } from "./tui/menu.mjs";
 import { runSessionBrowser } from "./tui/session-browser.mjs";
 
 const BACK_TO_START_MENU = Symbol("back-to-start-menu");
+const CODEX_USAGE_NOTES = `zgap codex: put every -c / --config option BEFORE exec or other subcommands.
+  zgap codex -c check_for_update_on_startup=false exec "your prompt"
+Putting these overrides after a subcommand can replace zgap's proxy settings,
+causing direct OpenAI requests and 401 errors. The session provider should be zgap.
+
+zgap passes exported AWS_* variables to Codex. If shell tools cannot see a key,
+check Codex's shell_environment_policy before copying credentials elsewhere.`;
 
 // zgap passes only the session id and stays in the directory it was launched from. Each
 // agent decides on its own whether to work there or in the session's recorded directory:
@@ -67,7 +74,9 @@ function printHelp() {
   zgap serve [--port N]       Forward a loopback port to the proxy for local-only clients
   zgap update                 Update zgap from GitHub main
 
-zgap keeps each supported agent's normal local configuration and history.`);
+zgap keeps each supported agent's normal local configuration and history.
+
+${CODEX_USAGE_NOTES}`);
 }
 
 export async function main({
@@ -129,6 +138,11 @@ export async function main({
     return 0;
   }
   if (command === "codex") {
+    if (args.length === 1 && ["--help", "-h"].includes(args[0])) {
+      log(`${CODEX_USAGE_NOTES}\n`);
+      // Codex's help needs no proxy credentials, configuration, or model catalog.
+      return codexRunner(args, { native: true });
+    }
     const [{ origin }, dangerousMode] = await Promise.all([
       configReader(configDir),
       dangerousModeReader(configDir),

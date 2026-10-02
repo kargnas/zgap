@@ -770,6 +770,30 @@ test("login은 browser launcher가 멈춰도 전체 timeout에 종료한다", as
   }), /Login timed out/);
 });
 
+test("codex help는 로그인과 proxy 설정 없이 안내를 먼저 출력하고 원래 도움말을 전달한다", async (t) => {
+  const root = await tempDir(t);
+  const configRoot = path.join(root, "config");
+  const fakeBin = path.join(root, "bin");
+  await mkdir(fakeBin);
+  const fakeCodex = path.join(fakeBin, "codex");
+  await writeFile(fakeCodex, '#!/bin/sh\nprintf "Codex CLI help\\n"\nprintf "%s\\n" "$@"\n');
+  await chmod(fakeCodex, 0o755);
+
+  for (const flag of ["--help", "-h"]) {
+    const result = await runCli(["codex", flag], {
+      HOME: root,
+      XDG_CONFIG_HOME: configRoot,
+      PATH: `${fakeBin}${path.delimiter}${process.env.PATH}`,
+    });
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(result.stdout, /^zgap codex: put every -c \/ --config option BEFORE exec/);
+    assert.match(result.stdout, /zgap codex -c check_for_update_on_startup=false exec "your prompt"/);
+    assert.match(result.stdout, /shell_environment_policy/);
+    assert.ok(result.stdout.endsWith(`Codex CLI help\n${flag}\n`), result.stdout);
+    await assert.rejects(access(configRoot), { code: "ENOENT" });
+  }
+});
+
 test("codex는 기본 Codex home을 유지하고 refresh 가능한 auth command만 주입한다", async (t) => {
   const root = await tempDir(t);
   const home = path.join(root, "home");
@@ -819,6 +843,8 @@ else {
     openaiBaseUrl: process.env.OPENAI_BASE_URL ?? null,
     openaiApiKey: process.env.OPENAI_API_KEY ?? null,
     zgapApiKey: process.env.ZGAP_API_KEY ?? null,
+    awsAccessKeyId: process.env.AWS_ACCESS_KEY_ID ?? null,
+    awsSecretAccessKey: process.env.AWS_SECRET_ACCESS_KEY ?? null,
     catalog: JSON.parse(readFileSync(JSON.parse(catalogPath), "utf8")),
     catalogMode: statSync(JSON.parse(catalogPath)).mode & 0o777,
     catalogDirectoryMode: statSync(JSON.parse(catalogPath).replace(/\\/catalog\\.json$/, "")).mode & 0o777,
@@ -833,6 +859,8 @@ else {
     PATH: `${fakeBin}${path.delimiter}${process.env.PATH}`,
     CODEX_HOME: path.join(root, "separate-codex-home"),
     OPENAI_BASE_URL: "https://wrong.example",
+    AWS_ACCESS_KEY_ID: "test-access-key",
+    AWS_SECRET_ACCESS_KEY: "test-secret-key",
     NODE_OPTIONS: `--import=${fetchRedirectModule}`,
   };
   const result = await runCli(["codex", "exec", "hello"], cliEnv);
@@ -842,6 +870,8 @@ else {
   assert.equal(invocation.openaiBaseUrl, null);
   assert.equal(invocation.openaiApiKey, null);
   assert.equal(invocation.zgapApiKey, null);
+  assert.equal(invocation.awsAccessKeyId, "test-access-key");
+  assert.equal(invocation.awsSecretAccessKey, "test-secret-key");
   assert.equal(invocation.argv.includes("--dangerously-bypass-approvals-and-sandbox"), true);
   assert.deepEqual(invocation.argv.slice(-2), ["exec", "hello"]);
   assert.deepEqual(modelRequest, {

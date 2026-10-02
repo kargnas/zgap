@@ -1382,6 +1382,7 @@ test("CLI help는 logout direct command를 안내한다", async () => {
   assert.match(stdout, /zgap logout\s+Sign out on this device/);
   assert.match(stdout, /zgap resume\s+Resume an agent session/);
   assert.match(stdout, /zgap update\s+Update zgap from GitHub main/);
+  assert.match(stdout, /put every -c \/ --config option BEFORE exec/);
 });
 
 test("global update re-resolves GitHub main past the lockfile pin", async () => {
