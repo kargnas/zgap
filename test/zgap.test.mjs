@@ -216,44 +216,62 @@ test("심볼릭 링크로 실행해도 CLI main이 시작된다", async (t) => {
   assert.match(stdout, /zgap login\s+Choose OAuth or API key/);
   assert.match(stdout, /zgap login oauth\s+Sign in through browser OAuth/);
   assert.match(stdout, /zgap login api\s+Configure a static proxy API key/);
+  assert.match(stdout, /zgap login --api-key <key>\s+Save a static proxy API key without prompting/);
   assert.match(stdout, /each supported agent's normal local configuration and history/);
 });
 
-test("login api 명령은 stdin의 key만 0600 credential로 저장한다", async (t) => {
-  const root = await tempDir(t);
-  const configRoot = path.join(root, "config");
-  const credentialPath = path.join(configRoot, "zgap", "credentials.json");
-  const apiKey = "sk-test-static-key";
+for (const inputMethod of ["stdin", "--api-key"]) {
+  test(`login은 ${inputMethod}의 key를 출력하지 않고 0600 credential로 저장한다`, async (t) => {
+    const root = await tempDir(t);
+    const configRoot = path.join(root, "config");
+    const credentialPath = path.join(configRoot, "zgap", "credentials.json");
+    const apiKey = "sk-test-static-key";
 
-  const result = await runCli(["login", "api"], {
-    ...process.env,
-    XDG_CONFIG_HOME: configRoot,
-  }, `${apiKey}\n`);
+    const result = await runCli(inputMethod === "stdin" ? ["login", "api"] : ["login", "--api-key", apiKey], {
+      ...process.env,
+      XDG_CONFIG_HOME: configRoot,
+    }, inputMethod === "stdin" ? `${apiKey}\n` : undefined);
 
-  assert.equal(result.code, 0, result.stderr);
-  assert.equal(result.stdout, "Static API key configured.\n");
-  assert.equal(result.stdout.includes(apiKey), false);
-  assert.equal(result.stderr.includes(apiKey), false);
-  assert.deepEqual(JSON.parse(await readFile(credentialPath, "utf8")), { api_key: apiKey });
-  assert.equal((await stat(credentialPath)).mode & 0o777, 0o600);
-});
-
-test("login api 명령은 key를 argv로 받지 않는다", async (t) => {
-  const root = await tempDir(t);
-  const configRoot = path.join(root, "config");
-  const credentialPath = path.join(configRoot, "zgap", "credentials.json");
-  const apiKey = "sk-test-static-key";
-
-  const result = await runCli(["login", "api", apiKey], {
-    ...process.env,
-    XDG_CONFIG_HOME: configRoot,
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(result.stdout, "Static API key configured.\n");
+    assert.equal(result.stdout.includes(apiKey), false);
+    assert.equal(result.stderr.includes(apiKey), false);
+    assert.deepEqual(JSON.parse(await readFile(credentialPath, "utf8")), { api_key: apiKey });
+    assert.equal((await stat(credentialPath)).mode & 0o777, 0o600);
+    assert.equal((await stat(path.dirname(credentialPath))).mode & 0o777, 0o700);
   });
+}
 
-  assert.equal(result.code, 1);
-  assert.match(result.stderr, /accepts only `oauth` or `api`/);
-  assert.equal(result.stdout.includes(apiKey), false);
-  assert.equal(result.stderr.includes(apiKey), false);
-  await assert.rejects(access(credentialPath), { code: "ENOENT" });
+test("login은 잘못된 인자나 key를 출력하지 않고 기존 credential을 보존한다", async (t) => {
+  const root = await tempDir(t);
+  const configRoot = path.join(root, "config");
+  const credentialPath = path.join(configRoot, "zgap", "credentials.json");
+  const apiKey = "sk-test-static-key";
+  await mkdir(path.dirname(credentialPath), { recursive: true });
+  const original = JSON.stringify({ api_key: apiKey });
+  await writeFile(credentialPath, original, { mode: 0o600 });
+
+  for (const args of [
+    ["api", apiKey],
+    ["--api-key"],
+    ["--api-key", "--help"],
+    ["--api-key", apiKey, "extra"],
+    ["oauth", "--api-key", apiKey],
+    ["--api-key", ""],
+    ["--api-key", `${apiKey} with spaces`],
+    ["--api-key", `${apiKey}\n`],
+  ]) {
+    const result = await runCli(["login", ...args], {
+      ...process.env,
+      XDG_CONFIG_HOME: configRoot,
+    });
+
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /Usage: zgap login|Invalid API key/);
+    assert.equal(result.stdout.includes(apiKey), false);
+    assert.equal(result.stderr.includes(apiKey), false);
+    assert.equal(await readFile(credentialPath, "utf8"), original);
+  }
 });
 
 test("API key TTY 입력은 화면에 key를 출력하지 않고 raw mode를 복원한다", async () => {

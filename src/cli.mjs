@@ -55,16 +55,17 @@ export async function resumeSession(session, configDir, {
 
 function printHelp() {
   console.log(`Usage:
-  zgap login             Choose OAuth or API key
-  zgap login oauth       Sign in through browser OAuth
-  zgap login api         Configure a static proxy API key
-  zgap logout            Sign out on this device
-  zgap codex [args...]   Run Codex through the configured proxy
-  zgap claude [args...]  Run Claude through the configured proxy
-  zgap omp [args...]     Run OMP through the configured proxy
-  zgap resume          Resume an agent session
-  zgap serve [--port N]  Forward a loopback port to the proxy for local-only clients
-  zgap update            Update zgap from GitHub main
+  zgap login                  Choose OAuth or API key
+  zgap login oauth            Sign in through browser OAuth
+  zgap login api              Configure a static proxy API key
+  zgap login --api-key <key>  Save a static proxy API key without prompting
+  zgap logout                 Sign out on this device
+  zgap codex [args...]        Run Codex through the configured proxy
+  zgap claude [args...]       Run Claude through the configured proxy
+  zgap omp [args...]          Run OMP through the configured proxy
+  zgap resume                 Resume an agent session
+  zgap serve [--port N]       Forward a loopback port to the proxy for local-only clients
+  zgap update                 Update zgap from GitHub main
 
 zgap keeps each supported agent's normal local configuration and history.`);
 }
@@ -96,11 +97,14 @@ export async function main({
 } = {}) {
   const [command, ...args] = argv;
   const runLoginCommand = async (loginArgs, knownProxyConfig) => {
-    if (loginArgs.length > 1 || (loginArgs.length === 1 && !["oauth", "api"].includes(loginArgs[0]))) {
-      throw new Error("`zgap login` accepts only `oauth` or `api`.");
+    const hasApiKey = loginArgs[0] === "--api-key";
+    if (hasApiKey
+      ? loginArgs.length !== 2 || loginArgs[1].startsWith("--")
+      : loginArgs.length > 1 || (loginArgs.length === 1 && !["oauth", "api"].includes(loginArgs[0]))) {
+      throw new Error("Usage: zgap login [oauth | api | --api-key <key>]");
     }
     let proxyConfig = knownProxyConfig;
-    let method = loginArgs[0];
+    let method = hasApiKey ? "api" : loginArgs[0];
     if (method === undefined) {
       proxyConfig ??= await configReader(configDir);
       method = await loginMenu({ host: proxyConfig.host, origin: proxyConfig.origin });
@@ -112,7 +116,7 @@ export async function main({
       return 0;
     }
     if (method === "api") {
-      await apiKeySaver({ configDir, apiKey: await apiKeyReader() });
+      await apiKeySaver({ configDir, apiKey: hasApiKey ? loginArgs[1] : await apiKeyReader() });
       log("Static API key configured.");
       return 0;
     }

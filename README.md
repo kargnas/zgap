@@ -20,7 +20,16 @@ zgap login
 zgap
 ```
 
-Use a subcommand to skip the selector. `zgap login oauth` starts browser OAuth immediately. `zgap login api` opens the hidden API-key prompt immediately; it does not accept the key through argv, while a pipeline may provide one line through standard input for automation.
+Use a subcommand to skip the selector. `zgap login oauth` starts browser OAuth immediately. `zgap login api` opens the hidden API-key prompt immediately.
+
+To save a key without interaction, pass it directly or provide one line through standard input:
+
+```sh
+zgap login --api-key 'YOUR_API_KEY'
+zgap login api < /path/to/api-key.txt
+```
+
+Keys passed with `--api-key` may appear in shell history and process listings. Standard input keeps the key out of the command arguments. Both methods validate the key's format locally and save it without contacting the proxy.
 
 Browser OAuth and API-key login replace each other because only one credential is active. Both modes use the same private `credentials.json`; zgap writes it with mode `0600` and its directory with mode `0700` on macOS and Linux. `zgap logout` removes either credential.
 
@@ -56,16 +65,17 @@ Inside `zgap omp`, use OMP's built-in `/fast on` and `/fast off` commands to tog
 ```
 
 ```text
-zgap login             Choose Browser OAuth or an API key
-zgap login oauth       Configure browser OAuth
-zgap login api         Configure a static proxy API key
-zgap logout            Remove the active credential
-zgap codex [args...]   Run Codex
-zgap claude [args...]  Run Claude Code
-zgap omp [args...]     Run OMP with process-local provider overrides
-zgap serve [--port N]  Forward a loopback port to the proxy for local-only clients
-zgap resume            Resume an agent session
-zgap --help            Show all commands
+zgap login                  Choose Browser OAuth or an API key
+zgap login oauth            Configure browser OAuth
+zgap login api              Configure a static proxy API key
+zgap login --api-key <key>  Save a static proxy API key without prompting
+zgap logout                 Remove the active credential
+zgap codex [args...]        Run Codex
+zgap claude [args...]       Run Claude Code
+zgap omp [args...]          Run OMP with process-local provider overrides
+zgap serve [--port N]       Forward a loopback port to the proxy for local-only clients
+zgap resume                 Resume an agent session
+zgap --help                 Show all commands
 ```
 
 `zgap serve` runs a loopback forwarder for clients whose provider settings only accept a local server, such as Aside's Ollama and LM Studio connections. It listens on `127.0.0.1:11434` (Ollama's default port; change it with `--port`), drops whatever key the client sends, and forwards every request to the configured proxy with the zgap credential. Enter `http://127.0.0.1:11434/v1` as the client's Base URL and any placeholder as its API key. The forwarder does not add the diagnostic request context described above.

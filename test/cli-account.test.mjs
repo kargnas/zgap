@@ -71,6 +71,25 @@ test("login api는 선택 메뉴 없이 API key를 바로 저장한다", async (
   ]);
 });
 
+test("login --api-key는 메뉴, 입력, OAuth 없이 API key를 저장한다", async () => {
+  const { main } = await import("../src/cli.mjs");
+  const unexpected = async () => { throw new Error("Unexpected interactive login or OAuth configuration"); };
+  let saved;
+  const result = await main({
+    argv: ["login", "--api-key", "sk-test-static-key"],
+    configDir: "/tmp/zgap-config",
+    configReader: unexpected,
+    loginMenu: unexpected,
+    loginRunner: unexpected,
+    apiKeyReader: unexpected,
+    apiKeySaver: async (options) => { saved = options; },
+    log: () => {},
+  });
+
+  assert.equal(result, 0);
+  assert.deepEqual(saved, { configDir: "/tmp/zgap-config", apiKey: "sk-test-static-key" });
+});
+
 test("login oauth는 선택 메뉴 없이 OAuth 로그인을 바로 시작한다", async () => {
   const { main } = await import("../src/cli.mjs");
   const originalFetch = globalThis.fetch;
