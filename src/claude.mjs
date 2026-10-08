@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { access, realpath, stat } from "node:fs/promises";
+import { access, readFile, realpath, stat } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import { realpathSync } from "node:fs";
 import path from "node:path";
@@ -55,6 +55,7 @@ async function fetchClaudeModels(configDir, origin) {
 function claudeSettingsEnv(origin, requestHeaders, modelAliases) {
   return {
     ...Object.fromEntries(CLEARED_ENV.map((name) => [name, ""])),
+    ...Object.fromEntries(MODEL_ALIASES.map(([name]) => [name, ""])),
     ANTHROPIC_BASE_URL: origin,
     ...modelAliases,
     CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
@@ -92,6 +93,53 @@ function apiKeyHelper(credentialFile) {
   return [process.execPath, CLI_FILE, "auth-token", credentialFile].map(shellQuote).join(" ");
 }
 
+async function extractClaudeSettings(args, cwd) {
+  const forwarded = [];
+  let value;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--") {
+      forwarded.push(...args.slice(index));
+      break;
+    }
+    if (arg !== "--settings" && !arg.startsWith("--settings=")) {
+      forwarded.push(arg);
+      continue;
+    }
+    value = arg === "--settings" ? args[++index] : arg.slice("--settings=".length);
+    if (!value?.trim() || value.startsWith("-")) {
+      throw new Error("Claude --settings requires a JSON object or a file path.");
+    }
+  }
+  if (value === undefined) return { args: forwarded, settings: {} };
+
+  let settings;
+  try {
+    settings = JSON.parse(value);
+  } catch {
+    if (/^\s*[\[{]/.test(value)) throw new Error("Claude --settings contains invalid JSON.");
+    let contents;
+    try {
+      contents = await readFile(path.resolve(cwd, value), "utf8");
+    } catch (error) {
+      throw new Error(`Could not read Claude --settings file (${error.code}).`);
+    }
+    try {
+      settings = JSON.parse(contents);
+    } catch {
+      throw new Error("Claude --settings file contains invalid JSON.");
+    }
+  }
+  if (!settings || typeof settings !== "object" || Array.isArray(settings)) {
+    throw new Error("Claude --settings must contain a JSON object.");
+  }
+  if (Object.hasOwn(settings, "env") && (!settings.env || typeof settings.env !== "object"
+    || Array.isArray(settings.env) || Object.values(settings.env).some((entry) => typeof entry !== "string"))) {
+    throw new Error("Claude --settings env must be an object with string values.");
+  }
+  return { args: forwarded, settings };
+}
+
 export async function runClaude(args, {
   configDir = defaultConfigDir(),
   cwd = process.cwd(),
@@ -99,9 +147,6 @@ export async function runClaude(args, {
   dangerousMode = false,
   native = false,
 } = {}) {
-  if (!native && args.some((arg) => arg === "--settings" || arg.startsWith("--settings="))) {
-    throw new Error("zgap claude supplies --settings automatically; remove the user-provided --settings option.");
-  }
   let receivedSignal;
   let child;
   let handlersRemoved = false;
@@ -129,8 +174,13 @@ export async function runClaude(args, {
     const claudePath = await resolveClaudeExecutable({ env, cwd });
     abortIfSignaled();
     // A native launch is the user's own Claude Code: its environment and settings stay untouched.
-    const informational = args.some((arg) => ["--help", "-h", "--version", "-v"].includes(arg));
+    const separator = args.indexOf("--");
+    const informational = args.slice(0, separator < 0 ? args.length : separator)
+      .some((arg) => ["--help", "-h", "--version", "-v"].includes(arg));
     if (!native && !informational) {
+      const extracted = await extractClaudeSettings(args, cwd);
+      args = extracted.args;
+      abortIfSignaled();
       const models = await fetchClaudeModels(configDir, origin);
       abortIfSignaled();
       for (const name of CLEARED_ENV) delete env[name];
@@ -150,7 +200,12 @@ export async function runClaude(args, {
       env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY = "1";
       env.CLAUDE_CODE_MAX_CONTEXT_TOKENS = "262144";
       env.ANTHROPIC_CUSTOM_HEADERS = Object.entries(requestHeaders).map(([key, value]) => `${key}: ${value}`).join("\n");
-      proxyArgs.push("--settings", JSON.stringify({ apiKeyHelper: apiKeyHelper(credentialsPath(configDir)), env: claudeSettingsEnv(origin, requestHeaders, modelAliases) }));
+      // SDK callers supply hooks and permissions here; only proxy-owned settings take precedence.
+      proxyArgs.push("--settings", JSON.stringify({
+        ...extracted.settings,
+        apiKeyHelper: apiKeyHelper(credentialsPath(configDir)),
+        env: { ...extracted.settings.env, ...claudeSettingsEnv(origin, requestHeaders, modelAliases) },
+      }));
     }
     return await new Promise((resolve, reject) => {
       child = spawn(claudePath, [

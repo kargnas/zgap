@@ -61,6 +61,8 @@ that policy before copying credentials into another file. See the
 
 `zgap claude` reads the proxy's Claude model catalog at launch and points the Opus, Sonnet, and Fable aliases at their first matching catalog entries. The model itself follows Claude Code's own selection, so Default and a model saved with `/model` apply as usual. Catalog errors stop the launch.
 
+`zgap claude --settings <file-or-json>` accepts a JSON object or a JSON file path, including the `--settings=...` form. Relative paths resolve from the working directory; when repeated, the last `--settings` value is used. zgap preserves settings such as hooks and permissions, merges `env` by key, and gives its own authentication, proxy, and model-discovery settings precedence. Invalid JSON, a non-object `env`, non-string environment values, or unreadable files stop the launch. The combined settings apply only to the child process; the source file stays unchanged. This also supports SDK clients such as T3 Code that supply their own `--settings`.
+
 Existing OMP extensions continue to load in the zgap child. A required extension handshake aborts startup before a session can run if the proxy override cannot load. The child also skips OMP's first-run setup wizard via `OMP_SKIP_SETUP=1` because the proxy already supplies its providers and models; exporting `OMP_SKIP_SETUP` yourself takes precedence. It also receives `ZGAP_RUNTIME`, the script runtime that resolves the proxy access token, because OMP runs as a single-file executable whose own `process.execPath` cannot run the zgap CLI.
 
 `zgap omp` supports launch and ACP sessions. Run OMP management commands such as `models`, `config`, and `plugin` with `omp` directly.

@@ -1172,6 +1172,61 @@ process.exitCode = 7;
   const safeInvocation = JSON.parse(await readFile(marker, "utf8"));
   assert.equal(safeInvocation.argv.includes("--dangerously-skip-permissions"), false);
 
+  const externalSettings = {
+    disableAllHooks: true,
+    permissions: { deny: ["Bash(rm:*)"] },
+    apiKeyHelper: "wrong-helper",
+    env: {
+      APP_MODE: "test",
+      ANTHROPIC_API_KEY: "wrong-key",
+      ANTHROPIC_BASE_URL: "https://wrong.example",
+      ANTHROPIC_DEFAULT_OPUS_MODEL: "wrong-model",
+      ANTHROPIC_CUSTOM_HEADERS: "X-Wrong: value",
+      CLAUDE_CODE_USE_BEDROCK: "1",
+      CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "0",
+    },
+  };
+  const externalJson = JSON.stringify(externalSettings);
+  const settingsFile = path.join(root, "custom settings.json");
+  await writeFile(settingsFile, externalJson);
+  for (const settingsArgs of [
+    ["--settings", externalJson],
+    [`--settings=${externalJson}`],
+    ["--settings", settingsFile],
+    [`--settings=${path.relative(process.cwd(), settingsFile)}`],
+    ["--settings", '{"disableAllHooks":false,"unused":true}', "--settings", externalJson],
+  ]) {
+    const mergedResult = await runCli(["claude", ...settingsArgs, "--print", "hello"], cliEnv);
+    assert.equal(mergedResult.code, 7, mergedResult.stderr);
+    const mergedArgs = JSON.parse(await readFile(marker, "utf8")).argv;
+    assert.equal(mergedArgs.filter((arg) => arg === "--settings").length, 1);
+    assert.equal(mergedArgs.some((arg) => arg.startsWith("--settings=")), false);
+    assert.deepEqual(mergedArgs.slice(-2), ["--print", "hello"]);
+    const merged = JSON.parse(mergedArgs[1]);
+    assert.deepEqual(merged, {
+      ...externalSettings,
+      apiKeyHelper: settings.apiKeyHelper,
+      env: { ...settings.env, APP_MODE: "test", ANTHROPIC_CUSTOM_HEADERS: merged.env.ANTHROPIC_CUSTOM_HEADERS },
+    });
+    assert.equal(decodeRequestContext(merged.env.ANTHROPIC_CUSTOM_HEADERS.split(": ")[1]).tool, "claude");
+  }
+  assert.equal(await readFile(settingsFile, "utf8"), externalJson);
+
+  const literalArgs = ["--print", "--", "--settings", "--help"];
+  const literalResult = await runCli(["claude", ...literalArgs], cliEnv);
+  assert.equal(literalResult.code, 7, literalResult.stderr);
+  const literalInvocation = JSON.parse(await readFile(marker, "utf8")).argv;
+  assert.deepEqual(literalInvocation.slice(2), literalArgs);
+  assert.match(JSON.parse(literalInvocation[1]).apiKeyHelper, /auth-token/);
+
+  models = models.filter(({ id }) => !id.startsWith("claude-fable-"));
+  const absentAliasResult = await runCli(["claude", "--settings", JSON.stringify({
+    env: { ANTHROPIC_DEFAULT_FABLE_MODEL: "wrong-model" },
+  }), "--print", "hello"], cliEnv);
+  assert.equal(absentAliasResult.code, 7, absentAliasResult.stderr);
+  const absentAliasSettings = JSON.parse(JSON.parse(await readFile(marker, "utf8")).argv[1]);
+  assert.equal(absentAliasSettings.env.ANTHROPIC_DEFAULT_FABLE_MODEL, "");
+
   models = [];
   await rm(marker);
   const invalidResult = await runCli(["claude"], cliEnv);
@@ -1182,9 +1237,14 @@ process.exitCode = 7;
   const versionResult = await runCli(["claude", "--version"], cliEnv);
   assert.equal(versionResult.code, 7, versionResult.stderr);
   assert.deepEqual(JSON.parse(await readFile(marker, "utf8")).argv, ["--version"]);
+
+  const helpArgs = ["--settings", settingsFile, "--help"];
+  const helpResult = await runCli(["claude", ...helpArgs], cliEnv);
+  assert.equal(helpResult.code, 7, helpResult.stderr);
+  assert.deepEqual(JSON.parse(await readFile(marker, "utf8")).argv, helpArgs);
 });
 
-test("claude는 사용자 --settings를 거부한다", async (t) => {
+test("claude는 잘못된 --settings로 자식 프로세스를 실행하지 않는다", async (t) => {
   const root = await tempDir(t);
   const fakeBin = path.join(root, "bin");
   await mkdir(fakeBin, { recursive: true });
@@ -1192,10 +1252,51 @@ test("claude는 사용자 --settings를 거부한다", async (t) => {
   const fakeClaude = path.join(fakeBin, "claude");
   await writeFile(fakeClaude, `#!/bin/sh\ntouch ${marker}\n`);
   await chmod(fakeClaude, 0o755);
-  const result = await runCli(["claude", "--settings", "{}"], { PATH: `${fakeBin}${path.delimiter}${process.env.PATH}` });
-  assert.equal(result.code, 1);
-  assert.match(result.stderr, /--settings/);
-  await assert.rejects(access(marker), { code: "ENOENT" });
+  const malformedFile = path.join(root, "malformed.json");
+  await writeFile(malformedFile, '{"secret":"do-not-print",');
+  for (const settingsArgs of [
+    ["--settings"], ["--settings="], ["--settings", "--print"],
+    ["--settings", '{"secret":"do-not-print",'],
+    ["--settings", "null"], ["--settings", "[]"],
+    ["--settings", '{"env":null}'], ["--settings", '{"env":[]}'],
+    ["--settings", '{"env":{"TOKEN":123}}'],
+    ["--settings", malformedFile], ["--settings", path.join(root, "missing.json")],
+  ]) {
+    const result = await runCli(["claude", ...settingsArgs], {
+      HOME: root, XDG_CONFIG_HOME: root, PATH: `${fakeBin}${path.delimiter}${process.env.PATH}`,
+    });
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /--settings/);
+    assert.doesNotMatch(result.stderr, /do-not-print/);
+    await assert.rejects(access(marker), { code: "ENOENT" });
+  }
+});
+
+test("claude native 실행은 외부 설정과 환경을 그대로 전달한다", async (t) => {
+  const root = await tempDir(t);
+  const marker = path.join(root, "native.json");
+  const fakeClaude = path.join(root, "claude");
+  await writeFile(fakeClaude, `#!/usr/bin/env node
+import { writeFileSync } from "node:fs";
+writeFileSync(process.env.FAKE_CLAUDE_MARKER, JSON.stringify({
+  args: process.argv.slice(2), apiKey: process.env.ANTHROPIC_API_KEY,
+}));
+`);
+  await chmod(fakeClaude, 0o755);
+  const runner = path.join(root, "native.mjs");
+  await writeFile(runner, `import { runClaude } from ${JSON.stringify(path.join(repoDir, "src/claude.mjs"))};
+process.exitCode = await runClaude(process.argv.slice(2), { native: true, configDir: ${JSON.stringify(root)}, cwd: ${JSON.stringify(root)} });
+`);
+  const args = ["--settings", "missing.json", "--print", "hello"];
+  const child = spawn(nodePath, [runner, ...args], { env: {
+    HOME: root, PATH: `${root}${path.delimiter}${process.env.PATH}`,
+    FAKE_CLAUDE_MARKER: marker, ANTHROPIC_API_KEY: "native-key",
+  } });
+  let stderr = "";
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  const [code] = await once(child, "exit");
+  assert.equal(code, 0, stderr);
+  assert.deepEqual(JSON.parse(await readFile(marker, "utf8")), { args, apiKey: "native-key" });
 });
 
 test("claude가 PATH에 없으면 명확한 오류를 반환한다", async () => {
