@@ -61,6 +61,10 @@ function claudeSettingsEnv(origin, requestHeaders, modelAliases) {
     CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
     CLAUDE_CODE_MAX_CONTEXT_TOKENS: "262144",
     CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK: "1",
+    // Claude Code caches prompts for an hour only on its own subscription sign-in and for
+    // 5 minutes behind an API key such as the apiKeyHelper below. With 5 minutes, a session
+    // idle for longer writes its whole context to the cache again instead of reading it.
+    ENABLE_PROMPT_CACHING_1H: "1",
     ANTHROPIC_CUSTOM_HEADERS: Object.entries(requestHeaders).map(([key, value]) => `${key}: ${value}`).join("\n"),
   };
 }

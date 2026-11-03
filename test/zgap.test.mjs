@@ -1136,6 +1136,7 @@ process.exitCode = 7;
   assert.equal(settings.env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY, "1");
   assert.equal(settings.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, "262144");
   assert.equal(settings.env.CLAUDE_CODE_SKIP_FAST_MODE_ORG_CHECK, "1");
+  assert.equal(settings.env.ENABLE_PROMPT_CACHING_1H, "1");
   const { decodeRequestContext } = await import("../src/request-context.mjs");
   const claudeContextValue = settings.env.ANTHROPIC_CUSTOM_HEADERS.match(/X-Zgap-Request-Context: ([A-Za-z0-9_-]+)/)?.[1];
   assert.equal(decodeRequestContext(claudeContextValue).tool, "claude");
